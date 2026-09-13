@@ -3,20 +3,24 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vision-node"
+name = "sentry-node"
 version = "0.1.0"
 description = "Headless, local-first Raspberry Pi hardware node"
 requires-python = ">=3.11"
 dependencies = ["opencv-python-headless>=4.8", "PyYAML>=6", "pydantic>=2", "pydantic-settings>=2"]
 
 [project.optional-dependencies]
+speech = ["piper-tts>=1.3,<2"]
 dev = ["pytest>=8", "pytest-cov", "ruff", "mypy", "types-PyYAML"]
 
 [project.scripts]
-vision-node = "vision_node.cli:main"
+sentry-node = "sentry_node.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sentry_node = ["*.html", "*.js", "*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

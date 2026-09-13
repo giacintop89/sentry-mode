@@ -5,24 +5,25 @@ from unittest.mock import patch
 
 import pytest
 
-from vision_node.audio.playback import command, generate_tone
-from vision_node.config import SpeakerConfig
-from vision_node.core.errors import HardwareError
-from vision_node.core.models import AudioDevice
-from vision_node.hardware.microphone import discover_devices, select_device
-from vision_node.hardware.speaker import Speaker
+from sentry_node.audio.playback import command, generate_tone
+from sentry_node.config import SpeakerConfig
+from sentry_node.core.errors import HardwareError
+from sentry_node.core.models import AudioDevice
+from sentry_node.hardware.microphone import discover_devices, select_device
+from sentry_node.hardware.speaker import Speaker
 
 
 def test_discovery_filters_monitor_sources():
     data = [{"name": "streamcam", "description": "Logitech StreamCam"}, {"name": "speaker.monitor"}]
-    with patch("vision_node.hardware.microphone.command", return_value=json.dumps(data)):
+    with patch("sentry_node.hardware.microphone.command", return_value=json.dumps(data)):
         assert [d.name for d in discover_devices("sources")] == ["streamcam"]
 
 
 def test_alsa_fallback():
     with patch(
-        "vision_node.hardware.microphone.command",
+        "sentry_node.hardware.microphone.command",
         side_effect=[
+            HardwareError("missing"),
             HardwareError("missing"),
             HardwareError("missing"),
             "card 2: Camera [StreamCam], device 0: USB Audio [USB Audio]",
@@ -49,9 +50,9 @@ def test_generated_tone_is_valid(tmp_path):
 
 def test_timeout_becomes_hardware_error():
     with (
-        patch("vision_node.audio.playback.shutil.which", return_value="/bin/tool"),
+        patch("sentry_node.audio.playback.shutil.which", return_value="/bin/tool"),
         patch(
-            "vision_node.audio.playback.subprocess.run",
+            "sentry_node.audio.playback.subprocess.run",
             side_effect=subprocess.TimeoutExpired("tool", 8),
         ),
     ):
@@ -62,8 +63,145 @@ def test_timeout_becomes_hardware_error():
 def test_speaker_uses_name_without_changing_session_defaults():
     device = AudioDevice("bluez_sink.current", "Living room", "pulse")
     with (
-        patch("vision_node.hardware.speaker.discover_devices", return_value=[device]),
-        patch("vision_node.hardware.speaker.command") as call,
+        patch("sentry_node.hardware.speaker.discover_devices", return_value=[device]),
+        patch("sentry_node.hardware.speaker.command") as call,
     ):
         Speaker(SpeakerConfig(device="Living room")).test_output()
     assert call.call_args.args[0][:2] == ["paplay", "--device=bluez_sink.current"]
+
+
+def test_native_pipewire_discovery_without_pactl():
+    objects = [
+        {
+            "type": "PipeWire:Interface:Node",
+            "info": {
+                "props": {
+                    "media.class": "Audio/Sink",
+                    "node.name": "bluez_output.current",
+                    "node.description": "Bluetooth speaker",
+                }
+            },
+        },
+        {
+            "type": "PipeWire:Interface:Node",
+            "info": {"props": {"media.class": "Audio/Source", "node.name": "streamcam"}},
+        },
+        {
+            "type": "PipeWire:Interface:Port",
+            "info": {"props": {"media.class": "Audio/Sink", "node.name": "monitor-port"}},
+        },
+    ]
+    with patch(
+        "sentry_node.hardware.microphone.command",
+        side_effect=[
+            HardwareError("pactl missing"),
+            HardwareError("pactl missing"),
+            json.dumps(objects),
+        ],
+    ):
+        devices = discover_devices("sinks")
+    assert devices == [AudioDevice("bluez_output.current", "Bluetooth speaker", "pipewire")]
+
+
+@pytest.mark.parametrize(
+    "backend,name", [("pipewire", "auto"), ("pulse", "auto"), ("alsa", "default")]
+)
+def test_auto_uses_session_default_instead_of_first_hdmi_card(backend, name):
+    selected = select_device([AudioDevice("first-hdmi", "HDMI", backend)], "auto")
+    assert selected.name == name and selected.backend == backend
+
+
+def test_native_pipewire_playback_uses_default_target():
+    devices = [
+        AudioDevice("hdmi", "HDMI", "pipewire"),
+        AudioDevice("bluetooth", "Bluetooth speaker", "pipewire"),
+    ]
+    with (
+        patch("sentry_node.hardware.speaker.discover_devices", return_value=devices),
+        patch("sentry_node.hardware.speaker.command") as command,
+    ):
+        Speaker(SpeakerConfig()).test_output()
+    assert command.call_args.args[0][:3] == ["pw-play", "--target", "auto"]
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_native_pipewire_recording_stops_gracefully(exit_code):
+    import signal
+
+    from sentry_node.audio.playback import record_for
+
+    with (
+        patch("sentry_node.audio.playback.shutil.which", return_value="/usr/bin/pw-record"),
+        patch("sentry_node.audio.playback.subprocess.Popen") as popen,
+    ):
+        process = popen.return_value
+        process.communicate.side_effect = [subprocess.TimeoutExpired("pw-record", 2), ("", "")]
+        process.returncode = exit_code
+        process.poll.return_value = exit_code
+        record_for(["pw-record", "file.wav"], seconds=2)
+        process.send_signal.assert_called_once_with(signal.SIGINT)
+        process.kill.assert_not_called()
+
+
+def test_native_pipewire_recording_reaps_unresponsive_child():
+    from sentry_node.audio.playback import record_for
+
+    with (
+        patch("sentry_node.audio.playback.shutil.which", return_value="/usr/bin/pw-record"),
+        patch("sentry_node.audio.playback.subprocess.Popen") as popen,
+    ):
+        process = popen.return_value
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired("pw-record", 2),
+            subprocess.TimeoutExpired("pw-record", 3),
+            ("", ""),
+        ]
+        process.poll.return_value = None
+        with pytest.raises(HardwareError):
+            record_for(["pw-record", "file.wav"], seconds=2)
+        process.kill.assert_called_once()
+        assert process.communicate.call_count == 3
+
+
+def test_recording_early_failure_is_not_treated_as_signal_stop():
+    from sentry_node.audio.playback import record_for
+
+    with (
+        patch("sentry_node.audio.playback.shutil.which", return_value="/usr/bin/pw-record"),
+        patch("sentry_node.audio.playback.subprocess.Popen") as popen,
+    ):
+        process = popen.return_value
+        process.communicate.return_value = ("", "")
+        process.returncode = 1
+        process.poll.return_value = 1
+        with pytest.raises(HardwareError):
+            record_for(["pw-record", "file.wav"], seconds=2)
+
+
+def test_shutdown_cancels_and_reaps_active_audio_process():
+    import sys
+    import threading
+
+    stopped = threading.Event()
+    timer = threading.Timer(0.3, stopped.set)
+    timer.start()
+    try:
+        with patch("sentry_node.audio.playback.subprocess.Popen", wraps=subprocess.Popen) as spawn:
+            with pytest.raises(HardwareError, match="cancelled"):
+                command([sys.executable, "-c", "import time; time.sleep(60)"], stop_event=stopped)
+            spawn.assert_called_once()
+    finally:
+        timer.cancel()
+        timer.join()
+
+
+def test_cancellable_command_preserves_stdin_and_output():
+    import sys
+    import threading
+
+    result = command(
+        [sys.executable, "-c", "import sys; print(sys.stdin.read().upper())"],
+        input_text="hello",
+        stop_event=threading.Event(),
+    )
+    assert result == "HELLO\n"

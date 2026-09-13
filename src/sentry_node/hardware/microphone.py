@@ -6,10 +6,10 @@ import tempfile
 import wave
 from pathlib import Path
 
-from vision_node.audio.playback import command
-from vision_node.config import AudioConfig
-from vision_node.core.errors import HardwareError
-from vision_node.core.models import AudioDevice
+from sentry_node.audio.playback import command, record_for
+from sentry_node.config import AudioConfig
+from sentry_node.core.errors import HardwareError
+from sentry_node.core.models import AudioDevice
 
 
 def discover_devices(kind: str) -> list[AudioDevice]:
@@ -37,6 +37,22 @@ def discover_devices(kind: str) -> list[AudioDevice]:
             return devices
     except HardwareError:
         pass
+    # Native PipeWire works even without pactl or a Pulse compatibility server.
+    try:
+        objects = json.loads(command(["pw-dump"]))
+        media_class = "Audio/Source" if kind == "sources" else "Audio/Sink"
+        devices = []
+        for item in objects:
+            props = item.get("info", {}).get("props", {})
+            if item.get("type") != "PipeWire:Interface:Node":
+                continue
+            if props.get("media.class") == media_class and props.get("node.name"):
+                name = props["node.name"]
+                devices.append(AudioDevice(name, props.get("node.description", name), "pipewire"))
+        if devices:
+            return devices
+    except (HardwareError, ValueError, KeyError, TypeError, AttributeError):
+        pass
     tool = "arecord" if kind == "sources" else "aplay"
     try:
         output = command([tool, "-l"])
@@ -54,9 +70,8 @@ def select_device(devices: list[AudioDevice], configured: str) -> AudioDevice:
     if not devices:
         raise HardwareError("no audio devices available; check user audio session and connection")
     if configured == "auto":
-        if devices[0].backend == "pulse":
-            return AudioDevice("auto", "session default", "pulse")
-        return devices[0]
+        backend = devices[0].backend
+        return AudioDevice("default" if backend == "alsa" else "auto", "session default", backend)
     matches = [
         device
         for device in devices
@@ -88,7 +103,7 @@ class Microphone:
 
     def test_input(self) -> dict[str, float]:
         device = self.device()
-        with tempfile.TemporaryDirectory(prefix="vision-node-input-") as directory:
+        with tempfile.TemporaryDirectory(prefix="sentry-node-input-") as directory:
             path = Path(directory) / "input.wav"
             if device.backend == "pulse":
                 args = [
@@ -110,6 +125,19 @@ class Microphone:
                     "pcm_s16le",
                     str(path),
                 ]
+            elif device.backend == "pipewire":
+                args = [
+                    "pw-record",
+                    "--target",
+                    device.name,
+                    "--rate",
+                    "16000",
+                    "--channels",
+                    "1",
+                    "--format",
+                    "s16",
+                    str(path),
+                ]
             else:
                 args = [
                     "arecord",
@@ -125,7 +153,10 @@ class Microphone:
                     "1",
                     str(path),
                 ]
-            command(args, timeout=10)
+            if device.backend == "pipewire":
+                record_for(args, seconds=2)
+            else:
+                command(args, timeout=10)
             try:
                 with wave.open(str(path), "rb") as stream:
                     frames = stream.getnframes()

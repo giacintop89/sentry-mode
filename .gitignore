@@ -13,3 +13,5 @@ build/
 logs/
 captures/
 .DS_Store
+models/
+.local/

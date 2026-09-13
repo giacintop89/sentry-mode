@@ -14,7 +14,7 @@ if ! tr -d '\0' < /proc/device-tree/model 2>/dev/null | grep -q 'Raspberry Pi'; 
 fi
 sudo apt-get update
 packages=()
-for package in python3 python3-venv python3-pip v4l-utils ffmpeg pipewire-utils pulseaudio-utils alsa-utils; do
+for package in python3 python3-venv python3-pip v4l-utils ffmpeg espeak-ng pipewire-bin pipewire-utils pulseaudio-utils alsa-utils openssh-client; do
     if apt-cache show "$package" >/dev/null 2>&1; then
         packages+=("$package")
     else
@@ -26,5 +26,5 @@ sudo apt-get install -y "${packages[@]}"
 "$root_dir/.venv/bin/python" -m pip install -e "$root_dir"
 "$root_dir/scripts/detect_camera.sh"
 "$root_dir/scripts/detect_audio.sh"
-"$root_dir/.venv/bin/vision-node" config validate
-printf '\nNext: source %s/.venv/bin/activate\nvision-node status\nvision-node camera test\nvision-node audio test-output\n' "$root_dir"
+"$root_dir/.venv/bin/sentry-node" config validate
+printf '\nNext: source %s/.venv/bin/activate\nsentry-node status\nsentry-node camera test\nsentry-node audio test-output\n' "$root_dir"

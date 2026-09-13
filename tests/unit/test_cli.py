@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
-from vision_node.cli import main
-from vision_node.core.errors import HardwareError
+from sentry_node.cli import main
+from sentry_node.core.errors import HardwareError
 
 
 def test_config_validate(capsys):
@@ -10,6 +10,6 @@ def test_config_validate(capsys):
 
 
 def test_failed_camera_test_returns_nonzero():
-    with patch("vision_node.cli.Camera") as camera:
+    with patch("sentry_node.cli.Camera") as camera:
         camera.return_value.__enter__.side_effect = HardwareError("missing camera")
         assert main(["camera", "test"]) == 1

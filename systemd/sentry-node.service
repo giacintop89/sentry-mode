@@ -1,14 +1,14 @@
 [Unit]
-Description=Vision Node hardware runtime
+Description=Sentry Node hardware runtime
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
-User=vision-node
-WorkingDirectory=/opt/vision-node
-EnvironmentFile=-/opt/vision-node/.env
-ExecStart=/opt/vision-node/.venv/bin/vision-node run
+User=sentry-node
+WorkingDirectory=/opt/sentry-node
+EnvironmentFile=-/opt/sentry-node/.env
+ExecStart=/opt/sentry-node/.venv/bin/sentry-node run
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

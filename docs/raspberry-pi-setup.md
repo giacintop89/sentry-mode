@@ -6,7 +6,7 @@ this repository into the normal user's home directory. Then run:
 ```bash
 ./scripts/bootstrap_pi.sh
 source .venv/bin/activate
-cp config/vision-node.example.yaml config/vision-node.yaml
+cp config/sentry-node.example.yaml config/sentry-node.yaml
 ./scripts/detect_camera.sh
 ./scripts/detect_audio.sh
 ```
@@ -36,15 +36,15 @@ user session as appropriate for your OS release. If needed, explicitly enable li
 sudo loginctl enable-linger "$USER"
 systemctl --user status pipewire pipewire-pulse
 sudo ./scripts/install_service.sh
-systemctl cat vision-node
-sudo systemctl enable --now vision-node
-journalctl -u vision-node -f
+systemctl cat sentry-node
+sudo systemctl enable --now sentry-node
+journalctl -u sentry-node -f
 ```
 
 The installer configures XDG_RUNTIME_DIR and the user's Pulse socket. That does not itself
 start PipeWire or guarantee Bluetooth reconnection at boot. Confirm audio after reboot.
-The template uses /opt/vision-node and a non-root vision-node account; use the installer to
+The template uses /opt/sentry-node and a non-root sentry-node account; use the installer to
 render your actual checkout and account. Environment values can be stored in the checkout's
-ignored .env file; use VISION_NODE_CONFIG with an absolute YAML path. The service runs the
+ignored .env file; use SENTRY_NODE_CONFIG with an absolute YAML path. The service runs the
 idle `run` command. To host the dashboard persistently, review a systemd override replacing
-ExecStart with the absolute venv command `vision-node serve --port 8083`.
+ExecStart with the absolute venv command `sentry-node serve --port 8083`.

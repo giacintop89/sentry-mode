@@ -4,16 +4,20 @@
 
 Repository structure; camera discovery and headless OpenCV capture; microphone and speaker
 detection; CLI; configuration; logging; mocked and opt-in hardware tests; systemd preparation.
-Explicit read-only dashboard on port 8083 added for local hosting.
+Main video/speech UI on port 8083; hardware control dashboard at `/tests`.
 
 ## Phase 1 — Perception
 
-Continuous capture loop, frame-rate control, local motion/person/object detection, event
-generation, and snapshot/event storage.
+Explicit live capture, shared MJPEG viewing, and a toggle for local OpenCV DNN object
+detection are implemented. Sentry adds confirmed-appearance rules, optional preview, and an
+event log. Next: motion detection, tracking, and snapshot/event storage.
 
 ## Phase 2 — Speech
 
-Microphone capture, wake-word or push-to-talk, speech-to-text and TTS adapters, Bluetooth output.
+Microphone tests, local Piper/eSpeak NG synthesis, and live phone push-to-talk through
+the node speaker are implemented, including Demon/Chipmunk/custom pitch and volume controls.
+Phone microphone access uses optional local HTTPS.
+Next: wake-word detection, speech-to-text, and additional TTS adapters.
 
 ## Phase 3 — Agent
 
@@ -22,6 +26,7 @@ safety boundaries for system commands.
 
 ## Phase 4 — Integrations
 
+Saved SSH command actions and local TTS announcements are available in Sentry rules.
 Potential MQTT, Telegram, Home Assistant, self-hosted applications, local HTTP APIs, and
 Pi/server orchestration integrations.
 

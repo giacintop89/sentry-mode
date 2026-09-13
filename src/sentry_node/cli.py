@@ -6,26 +6,32 @@ from pathlib import Path
 from pydantic import ValidationError
 from yaml import YAMLError
 
-from vision_node.app import run
-from vision_node.config import load_config
-from vision_node.core.errors import HardwareError
-from vision_node.hardware.camera import Camera, list_cameras
-from vision_node.hardware.microphone import Microphone
-from vision_node.hardware.speaker import Speaker
-from vision_node.hardware.status import inspect_hardware
-from vision_node.logging_config import configure_logging
-from vision_node.vision.capture import capture_image
+from sentry_node.app import run
+from sentry_node.config import load_config
+from sentry_node.core.errors import HardwareError
+from sentry_node.hardware.camera import Camera, list_cameras
+from sentry_node.hardware.microphone import Microphone
+from sentry_node.hardware.speaker import Speaker
+from sentry_node.hardware.status import inspect_hardware
+from sentry_node.logging_config import configure_logging
+from sentry_node.vision.capture import capture_image
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(description="Headless Vision Node hardware CLI")
-    root.add_argument("--config", type=Path, help="YAML configuration (or VISION_NODE_CONFIG)")
+    root = argparse.ArgumentParser(description="Headless Sentry Node hardware CLI")
+    root.add_argument("--config", type=Path, help="YAML configuration (or SENTRY_NODE_CONFIG)")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="Inspect hardware and local network")
     commands.add_parser("run", help="Run until SIGINT/SIGTERM")
-    web = commands.add_parser("serve", help="Host the read-only hardware dashboard")
+    web = commands.add_parser("serve", help="Host the hardware control dashboard")
     web.add_argument("--host", default="0.0.0.0")
     web.add_argument("--port", type=int, default=8083)
+    web.add_argument(
+        "--https-port", type=int, help="Additional HTTPS listener for phone microphone"
+    )
+    web.add_argument("--tls-cert", type=Path)
+    web.add_argument("--tls-key", type=Path)
+    web.add_argument("--tls-ca", type=Path, help="Public local CA certificate for phone setup")
     config = commands.add_parser("config").add_subparsers(dest="action", required=True)
     config.add_parser("show")
     config.add_parser("validate")
@@ -51,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "status":
             status = inspect_hardware(config)
-            print("Vision Node\n-----------")
+            print("Sentry Node\n-----------")
             for name in ("camera", "microphone", "speaker", "network"):
                 print(
                     f"{name.capitalize() + ':':14} "
@@ -88,9 +94,17 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"Microphone capture successful: {microphone.test_input()}")
         elif args.command == "serve":
-            from vision_node.web import serve
+            from sentry_node.web import serve
 
-            serve(config, args.host, args.port)
+            serve(
+                config,
+                args.host,
+                args.port,
+                https_port=args.https_port,
+                tls_cert=args.tls_cert,
+                tls_key=args.tls_key,
+                tls_ca=args.tls_ca,
+            )
         elif args.command == "run":
             run(config)
         return 0

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#06110b"><title>Sentry Node · Video &amp; audio</title><link rel="stylesheet" href="/dashboard.css"></head>
+<body data-page="monitor"><a class="skip-link" href="#main-content">Skip to controls</a><main id="main-content"><nav class="app-views" aria-label="App views"><a href="/" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8m-4-4v4"/></svg>Video</a><a href="/#speech" data-voice-link><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg>Voice</a><a href="/sentry"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/></svg>Sentry mode</a><a href="/tests"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/></svg>Hardware tests</a><span class="connection-status" role="img" aria-label="Connecting" title="Connecting"><svg class="connection-mark" data-connection-dot viewBox="0 0 211.82 45.35" aria-hidden="true" focusable="false"><circle class="connection-outline" cx="176.62" cy="3.79" r="3.42" /><circle class="connection-outline" cx="3.79" cy="41.56" r="3.42" /><circle class="connection-outline" cx="167.09" cy="3.79" r="3.42" /><line class="connection-rounded" x1="173.2" y1="16.94" x2="82.56" y2="16.94" /><line class="connection-rounded" x1="75.72" y1="16.94" x2="27.56" y2="16.94" /><line class="connection-rounded" x1="174.61" y1="14.17" x2="169.09" y2="6.56" /><circle class="connection-outline" cx="24.14" cy="16.94" r="3.42" /><circle class="connection-outline" cx="79.14" cy="16.94" r="3.42" /><circle class="connection-outline" cx="176.62" cy="16.94" r="3.42" /><circle class="connection-outline" cx="204.93" cy="22.17" r="3.42" /><circle class="connection-outline" cx="204.93" cy="11.7" r="3.42" /><circle class="connection-outline" cx="194.47" cy="22.17" r="3.42" /><circle class="connection-outline" cx="194.47" cy="11.7" r="3.42" /><path d="M211.82,16.56h-6.84c-2.71,0-4.9-2.2-4.9-4.9v-6.84h-.75v6.84c0,2.71-2.2,4.9-4.9,4.9h-14.39v.75h14.39c2.71,0,4.9,2.2,4.9,4.9v6.84h.75v-6.84c0-2.71,2.2-4.9,4.9-4.9h6.84v-.75Z" /><line class="connection-outline" x1="22.07" y1="19.65" x2="5.98" y2="38.94" /></svg></span></nav><div class="monitor-layout"><div class="visual-column"><section class="camera-panel"><div class="heading"><div class="panel-title"><h2>Live video</h2></div><span id="video-state" class="badge">Paused</span></div>
+<div class="view"><img id="video" alt="Live camera video" hidden><div id="placeholder" class="placeholder">
+
+<strong>Preview hidden</strong><small>Start video to view the camera.</small></div><p id="video-result" class="result error" role="alert"></p></div>
+<div class="actions"><button id="start-video">Start video</button><button id="stop-video" class="secondary" disabled>Stop video</button></div>
+<div class="detection-control"><button id="detection-toggle" type="button" role="switch" aria-checked="false" class="secondary" disabled>Object detection: off</button><small id="detection-result" role="status"></small></div>
+</section><aside class="video-sidebar" aria-label="Sentry status and detected objects"><div class="telemetry-grid"><div class="telemetry-card"><div class="telemetry-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></svg>Sentry</div><strong data-stat="sentry">—</strong><small data-stat="sentry-detail">Waiting for node</small></div><div class="telemetry-card"><div class="telemetry-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5zM8 7h8M8 12h8M8 17h5"/></svg>Pending actions</div><strong data-stat="queue">—</strong><small data-stat="queue-detail">Waiting for node</small></div></div><section class="readout-panel"><div class="panel-heading"><div><h2>Detected objects</h2></div></div><div id="detection-readout" class="detection-readout"><p>Enable object detection to inspect the scene.</p></div><div class="panel-footnote"><span>Inference time</span><span data-stat="inference">—</span></div></section></aside></div><div class="comms-column"><section id="panel-speech" aria-label="Text to speech" class="comms-panel"><div class="panel-heading"><div><h2>Text to speech</h2></div></div><p>Type a message to play through the configured node speaker.</p>
+<form id="speech-form"><label for="speech-text">Message</label><textarea id="speech-text" maxlength="1000" required placeholder="Hello! Sentry Node is ready."></textarea>
+<small id="count" class="count">0 / 1000</small><div class="fields"><div><label for="voice">Language</label>
+<select id="voice"><option value="en">English</option><option value="it">Italiano</option><option value="es">Español</option>
+<option value="fr">Français</option><option value="de">Deutsch</option><option value="pt">Português</option></select></div>
+<div><label for="rate">Speed · <output id="rate-value" for="rate">175</output> wpm</label>
+<input id="rate" type="range" min="80" max="450" step="5" value="175"></div></div>
+<fieldset id="tts-effects" class="effect-fields"><legend>Voice modification</legend>
+<label for="tts-preset">Voice preset</label><select id="tts-preset"><option value="natural">Natural</option><option value="demon">Demon</option><option value="chipmunk">Chipmunk</option><option value="custom">Custom pitch</option></select>
+<div class="fields"><div><label for="tts-pitch">Pitch · <output id="tts-pitch-value">0</output> semitones</label><input id="tts-pitch" type="range" min="-12" max="12" step="1" value="0"></div>
+<div><label for="tts-volume">Volume · <output id="tts-volume-value">70</output>%</label><input id="tts-volume" type="range" min="0" max="100" step="5" value="70"></div></div></fieldset>
+<div class="actions"><button id="speak" type="submit">Speak on node</button></div></form>
+<p id="speech-result" class="result" role="status"></p><small>Voice synthesis runs locally. Speech plays on the node, not in your browser.</small></section><section id="panel-push-to-talk" aria-label="Push to talk" class="phone-talk comms-panel"><div class="panel-heading"><div><h2>Push to talk</h2></div></div><p>Use your phone’s microphone to speak through the node speaker. Hold to transmit live, then release. Up to 60 seconds per press; a short Bluetooth delay is normal.</p>
+<fieldset id="ptt-effects" class="effect-fields"><legend>Voice modification</legend>
+<label for="ptt-preset">Voice preset</label><select id="ptt-preset"><option value="natural">Natural</option><option value="demon">Demon</option><option value="chipmunk">Chipmunk</option><option value="custom">Custom pitch</option></select>
+<div class="fields"><div><label for="ptt-pitch">Pitch · <output id="ptt-pitch-value">0</output> semitones</label><input id="ptt-pitch" type="range" min="-12" max="12" step="1" value="0"></div>
+<div><label for="ptt-volume">Volume · <output id="ptt-volume-value">70</output>%</label><input id="ptt-volume" type="range" min="0" max="100" step="5" value="70"></div></div></fieldset>
+<div class="actions"><button id="enable-mic" class="secondary">Enable phone microphone</button></div>
+<div class="actions"><button id="hold-talk" class="hold" disabled aria-describedby="talk-result">Hold to talk</button></div>
+<p id="talk-result" class="result" role="status">Microphone is off.</p>
+<div id="phone-setup" hidden><p>Phone microphone access needs HTTPS. Open <a id="phone-https">the secure app address</a> after the one-time setup below.</p>
+<details><summary>Set up this phone</summary><ol>
+<li id="phone-ca">Download the <a href="/local-ca.crt" download="sentry-node-ca.crt">Sentry Node local certificate</a> on this phone.</li>
+<li>iPhone: install the downloaded profile in Settings → General → VPN &amp; Device Management. Then enable Sentry Node Local CA in Settings → General → About → Certificate Trust Settings.</li>
+<li>Android: in Settings, search for “Install a certificate”, choose CA certificate, and select the downloaded file. The menu name varies by phone.</li>
+<li>Open the HTTPS link above. Tap Enable phone microphone and allow microphone access.</li>
+</ol><p>This certificate trusts this node’s local HTTPS connection. Keep the app on your trusted local network.</p></details></div>
+</section></div></div></main><script src="/dashboard.js"></script><script src="/voice-effects.js"></script><script>
+const image=document.getElementById('video'),placeholder=document.getElementById('placeholder');
+const start=document.getElementById('start-video'),stop=document.getElementById('stop-video');
+const videoResult=document.getElementById('video-result');let videoBusy=false,videoRunning=false;
+const detectionToggle=document.getElementById('detection-toggle'),detectionResult=document.getElementById('detection-result');let detectionBusy=false,detectionEnabled=false;
+async function request(path,method='GET',body){const headers=method==='POST'?{'X-Sentry-Node-Control':'1'}:{};
+ if(body!==undefined)headers['Content-Type']='application/json';const response=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
+ const data=await response.json();if(!response.ok)throw Error(data.error||'Command failed');return data;}
+function showVideo(state){if(state.detection&&!detectionBusy){const d=state.detection;detectionEnabled=d.enabled;detectionToggle.disabled=state.monitoring;detectionToggle.setAttribute('aria-checked',String(d.enabled));detectionToggle.textContent='Object detection: '+(d.enabled?'on':'off');detectionResult.textContent=d.error||(!d.enabled?'':!state.capture_running&&!state.running?'Ready — start video.':d.inference_ms===null?'Looking for objects…':((d.objects.length?d.objects.map(o=>o.label).filter((x,i,a)=>a.indexOf(x)===i).join(', '):'No objects detected')+' · '+d.inference_ms+' ms'));if(state.monitoring)detectionResult.textContent+=' · Sentry active';}
+videoRunning=state.running;start.disabled=videoBusy||state.running;stop.disabled=videoBusy||!state.running;
+ document.getElementById('video-state').textContent=state.running?'Live · '+state.fps+' fps':state.monitoring?'Sentry · preview hidden':'Paused';
+ if(state.running){placeholder.hidden=true;image.hidden=false;if(!image.hasAttribute('src'))image.src='/api/video';}
+ else{image.removeAttribute('src');image.hidden=true;placeholder.hidden=false;}
+ if(state.error){videoResult.className='result error';videoResult.textContent=state.error;}}
+async function refreshVideo(){if(videoBusy)return;try{showVideo(await request('/api/video/status'));}
+ catch(error){videoResult.className='result error';videoResult.textContent=error.message;}}
+async function videoAction(action){if(videoBusy)return;videoBusy=true;start.disabled=true;stop.disabled=true;
+ videoResult.textContent='';
+ if(action==='stop'){videoRunning=false;image.removeAttribute('src');}
+ try{const state=await request('/api/video/'+action,'POST');videoBusy=false;showVideo(state);}
+ catch(error){videoResult.className='result error';videoResult.textContent=error.message;videoBusy=false;start.disabled=videoRunning;stop.disabled=!videoRunning;}}
+detectionToggle.addEventListener('click',async()=>{if(detectionBusy)return;detectionBusy=true;detectionToggle.disabled=true;detectionResult.textContent='Updating detection…';try{const state=await request('/api/video/detection','POST',{enabled:!detectionEnabled});detectionBusy=false;showVideo(state);}catch(error){detectionBusy=false;detectionToggle.disabled=false;detectionResult.textContent=error.message;}});
+start.addEventListener('click',()=>videoAction('start'));stop.addEventListener('click',()=>videoAction('stop'));
+image.addEventListener('error',()=>{if(videoRunning){videoResult.className='result error';videoResult.textContent='Video connection lost. Stop and restart video.';}});
+const text=document.getElementById('speech-text'),voice=document.getElementById('voice'),rate=document.getElementById('rate');
+text.addEventListener('input',()=>{document.getElementById('count').textContent=text.value.length+' / 1000';});
+rate.addEventListener('input',()=>{document.getElementById('rate-value').textContent=rate.value;});
+document.getElementById('speech-form').addEventListener('submit',async event=>{event.preventDefault();
+ const button=document.getElementById('speak'),result=document.getElementById('speech-result');const message=text.value.trim();
+ if(!message){result.className='result error';result.textContent='Enter a message first.';return;}
+ document.getElementById('tts-effects').disabled=true;button.disabled=true;button.textContent='Speaking…';result.className='result';result.textContent='Synthesizing and playing on the node…';
+ try{const data=await request('/api/speech','POST',{text:message,voice:voice.value,rate:Number(rate.value),effects:getVoiceEffects('tts')});
+ result.className='result success';result.textContent=data.message;}
+ catch(error){result.className='result error';result.textContent=error.message;}
+ finally{document.getElementById('tts-effects').disabled=false;button.disabled=false;button.textContent='Speak on node';}});
+async function defaults(){try{const [config,available]=await Promise.all([request('/api/config'),request('/api/speech/voices')]);voice.replaceChildren();
+ for(const choice of available.voices){const option=document.createElement('option');option.value=choice.id;option.textContent=choice.label+' · '+choice.quality;voice.add(option);}
+ setVoiceVolume('tts',config.speaker.volume);setVoiceVolume('ptt',config.speaker.volume);voice.value=config.speech.voice;rate.value=config.speech.rate;document.getElementById('rate-value').textContent=rate.value;
+ }catch{}}
+refreshVideo();defaults();setInterval(refreshVideo,3000);
+</script><script src="/talk.js"></script></body></html>

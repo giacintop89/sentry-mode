@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from cv2 import VideoCapture
 
-from vision_node.config import CameraConfig
-from vision_node.core.errors import HardwareError
+from sentry_node.config import CameraConfig
+from sentry_node.core.errors import HardwareError
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ class Camera:
             self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)
             self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)
             self._capture.set(cv2.CAP_PROP_FPS, self.config.fps)
+            self._capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception as exc:
             self.close()
             raise HardwareError(f"camera initialization failed: {exc}") from exc
@@ -66,6 +67,17 @@ class Camera:
             raise HardwareError(f"cannot write image {output}: {exc}") from exc
         if not saved:
             raise HardwareError(f"cannot write image {output}")
+
+    def encode_jpeg(self, frame, max_width: int = 960) -> bytes:
+        import cv2
+
+        height, width = frame.shape[:2]
+        if width > max_width:
+            frame = cv2.resize(frame, (max_width, int(height * max_width / width)))
+        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            raise HardwareError("camera frame JPEG encoding failed")
+        return encoded.tobytes()
 
     def info(self) -> dict[str, float]:
         import cv2

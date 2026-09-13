@@ -1,0 +1,62 @@
+node:
+  name: sentry-node
+camera:
+  enabled: true
+  device: 0
+  width: 1920
+  height: 1080
+  fps: 30
+microphone:
+  enabled: true
+  device: auto
+speaker:
+  enabled: true
+  device: auto
+  volume: 70
+  pipewire_latency_ms: 250
+logging:
+  level: INFO
+speech:
+  enabled: true
+  engine: auto
+  model_directory: models/piper
+  lead_in_ms: 1000
+  tail_ms: 750
+  voice: en
+  rate: 175
+detection:
+  enabled: false
+  model: models/yolox/yolox_nano.onnx
+  confidence: 0.45
+  max_fps: 2
+sentry_state_file: .local/sentry.json
+# Exact dashboard origins allowed to embed this app; empty blocks embedding.
+web_frame_origins: []
+sentry:
+  test_mode: true
+  detection_fps: 2
+  action_ttl_seconds: 15
+  rules:
+    - name: Person at entrance
+      enabled: true
+      object: person
+      min_confidence: 0.7
+      consecutive_detections: 3
+      rearm_after_absence_seconds: 10
+      cooldown_seconds: 60
+      actions:
+        - type: tts
+          text: Hello. Please wait here.
+          voice: en
+          effects:
+            preset: natural
+            volume: 60
+  ssh_commands: {}
+  # Configure in the HTTPS web editor; keep real tokens out of tracked YAML.
+  telegram:
+    bot_token: ""
+    chat_id: ""
+  # Additional rule action:
+  # - type: telegram
+  #   text: Sentry detected a person at the entrance.
+  #   silent: false

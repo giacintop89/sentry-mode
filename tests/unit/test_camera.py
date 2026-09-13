@@ -2,10 +2,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vision_node.config import CameraConfig
-from vision_node.core.errors import HardwareError
-from vision_node.hardware.camera import Camera
-from vision_node.vision.capture import capture_image
+from sentry_node.config import CameraConfig
+from sentry_node.core.errors import HardwareError
+from sentry_node.hardware.camera import Camera
+from sentry_node.vision.capture import capture_image
 
 
 def test_failed_open_releases_handle():
