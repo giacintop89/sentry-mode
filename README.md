@@ -91,6 +91,10 @@ sentry-node serve --port 8083   # hardware controls on http://localhost:8083
 sentry-node serve --host 127.0.0.1 --port 8083
 ```
 
+Both commands are also packaged as systemd units. `scripts/install_service.sh` renders
+`sentry-node` (idle `run`) and `sentry-node-web` (the dashboard on HTTP 8083 and HTTPS 8443)
+against your checkout and account, enabling neither; see the Raspberry Pi guide.
+
 `run` handles SIGINT/SIGTERM and releases inspection resources. The main page offers live MJPEG video and local text-to-speech through the node speaker.
 The hardware dashboard at `/tests` offers the same operational controls as the CLI: refresh status, list/test/capture camera, list audio,
 test microphone/speaker, show/validate effective configuration, and start/stop an idle runtime.
@@ -278,7 +282,8 @@ local CA certificate and follow the iPhone/Android trust instructions. Then open
 link and allow microphone access. Installing/trusting the CA is a one-time phone setup;
 the helper does not change any device's trust settings. It stores private keys in ignored
 `.local/tls/`, reuses the CA on reruns, and issues a one-year server certificate. Rerun it
-and restart after changing the Pi address or before the server certificate expires.
+and restart after changing the Pi address or before the server certificate expires
+(`sudo systemctl restart sentry-node-web` when the dashboard runs as a service).
 Only the public CA is served at `/local-ca.crt`. A certificate already trusted by your
 phone can instead be supplied through the same TLS options without `--tls-ca`.
 
