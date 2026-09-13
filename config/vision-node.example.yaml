@@ -1,0 +1,17 @@
+node:
+  name: vision-node
+camera:
+  enabled: true
+  device: 0
+  width: 1920
+  height: 1080
+  fps: 30
+microphone:
+  enabled: true
+  device: auto
+speaker:
+  enabled: true
+  device: auto
+  volume: 70
+logging:
+  level: INFO

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vision-node"
+version = "0.1.0"
+description = "Headless, local-first Raspberry Pi hardware node"
+requires-python = ">=3.11"
+dependencies = ["opencv-python-headless>=4.8", "PyYAML>=6", "pydantic>=2", "pydantic-settings>=2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov", "ruff", "mypy", "types-PyYAML"]
+
+[project.scripts]
+vision-node = "vision_node.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib -m 'not hardware'"
+markers = ["hardware: explicitly invoked physical hardware tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]

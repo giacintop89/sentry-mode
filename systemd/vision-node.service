@@ -1,0 +1,20 @@
+[Unit]
+Description=Vision Node hardware runtime
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=vision-node
+WorkingDirectory=/opt/vision-node
+EnvironmentFile=-/opt/vision-node/.env
+ExecStart=/opt/vision-node/.venv/bin/vision-node run
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
