@@ -1,6 +1,7 @@
 import json
 import subprocess
 import threading
+from contextlib import contextmanager
 from dataclasses import asdict
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
@@ -8,8 +9,11 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
+import yaml
 
 from sentry_node.audio.effects import VoiceEffects
+from sentry_node.audio.monitor import MAX_LISTENERS
+from sentry_node.audio.monitor import RATE as AUDIO_RATE
 from sentry_node.config import Settings
 from sentry_node.core.errors import HardwareError
 from sentry_node.core.models import AudioDevice, HardwareStatus
@@ -302,6 +306,33 @@ def test_shared_video_stream_and_snapshot(web):
         assert not controls.hardware_lock.locked()
         adapter.return_value.__enter__.assert_called_once()
         adapter.return_value.__exit__.assert_called_once()
+
+
+def test_live_microphone_streams_to_the_browser(web):
+    controls, base = web
+
+    @contextmanager
+    def listen(settings):
+        assert settings is controls.config
+        yield iter([b"pcm-block-one", b"pcm-block-two"])
+
+    with patch.object(controls.monitor, "listen", listen):
+        with urlopen(base + "/api/audio/monitor?t=1", timeout=5) as response:
+            assert response.headers.get_content_type() == "audio/l16"
+            assert response.headers.get_param("rate") == str(AUDIO_RATE)
+            assert response.read() == b"pcm-block-onepcm-block-two"
+    held = [controls.monitor.listeners.acquire(blocking=False) for _ in range(MAX_LISTENERS)]
+    try:
+        status, data, _ = request(base, "/api/audio/monitor")
+        assert status == 409
+        assert "listeners" in data["error"]
+    finally:
+        for _ in held:
+            controls.monitor.listeners.release()
+    with patch.object(controls.monitor, "listen", side_effect=HardwareError("no microphone")):
+        status, data, _ = request(base, "/api/audio/monitor")
+    assert status == 503
+    assert data["error"] == "no microphone"
 
 
 def test_phone_assets_and_setup(web, tmp_path):
@@ -693,3 +724,47 @@ def test_the_video_view_records_to_the_captures_tab(web):
         "error": False,
     }
     assert [c.args for c in add_recording.call_args_list] == [(1,), (-1,)]
+
+
+def test_hardware_page_lists_devices_and_saves_the_choice(web, tmp_path, monkeypatch):
+    from sentry_node.core.models import AudioDevice
+
+    controls, base = web
+    page = request(base, "/hardware")[1]
+    assert b'id="device-form"' in page and b"Hardware settings" in page
+    assert request(base, "/tests")[1] == page
+    speaker = AudioDevice("bluez_output.aukey", "Aukey SK-M7", "pipewire")
+    microphone = AudioDevice("alsa_input.cam", "StreamCam", "pipewire")
+    with (
+        patch("sentry_node.web.list_cameras", return_value=["/dev/video0"]),
+        patch("sentry_node.web.Microphone.list_devices", return_value=[microphone]),
+        patch("sentry_node.web.Speaker.list_devices", return_value=[speaker]),
+    ):
+        listing = request(base, "/api/hardware")[1]
+    assert listing["cameras"] == ["/dev/video0", "0"]
+    assert listing["camera"] == "0" and listing["microphone"] == "auto"
+    assert listing["speakers"][0]["description"] == "Aukey SK-M7"
+    assert listing["saved_to"] is None
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("node:\n  name: doorstep\nspeaker:\n  volume: 70\n")
+    monkeypatch.setenv("SENTRY_NODE_CONFIG", str(config_file))
+    choice = {
+        "camera": "/dev/video0",
+        "microphone": microphone.name,
+        "speaker": speaker.name,
+        "speaker_volume": 45,
+    }
+    status, saved, _ = request(base, "/api/hardware", "POST", body=choice)
+    assert status == 200 and saved["saved_to"] == str(config_file)
+    written = yaml.safe_load(config_file.read_text())
+    assert written["node"] == {"name": "doorstep"}
+    assert written["speaker"] == {"volume": 45, "device": speaker.name}
+    assert written["camera"] == {"device": "/dev/video0"}
+    # The running dashboard uses the new devices without a restart.
+    assert controls.config.speaker.volume == 45
+    assert controls.config.camera.device == "/dev/video0"
+    assert request(base, "/api/hardware", "POST", body={**choice, "speaker_volume": 120})[0] == 400
+    with patch.object(controls.video, "status", return_value={"capture_running": True}):
+        busy = request(base, "/api/hardware", "POST", body={**choice, "camera": "1"})
+    assert busy[0] == 409 and "Stop video" in busy[1]["error"]

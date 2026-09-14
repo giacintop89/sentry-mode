@@ -105,8 +105,14 @@ HTTPS 8443 for the network) against your checkout and account, enabling neither;
 Raspberry Pi guide.
 
 `run` handles SIGINT/SIGTERM and releases inspection resources. The main page offers live MJPEG video and local text-to-speech through the node speaker.
-The hardware dashboard at `/tests` offers the same operational controls as the CLI: refresh status, list/test/capture camera, list audio,
+**Hardware settings** at `/hardware` (`/tests` still resolves) offers the same operational controls as the CLI: refresh status, list/test/capture camera, list audio,
 test microphone/speaker, show/validate effective configuration, and start/stop an idle runtime.
+Its **Input and output devices** panel picks the camera, microphone, speaker, and speaker
+volume from what the node reports; POST `/api/hardware` merges them into the YAML file named
+by `SENTRY_NODE_CONFIG`, leaving every other setting untouched, and applies them to the
+running dashboard without a restart. Without that variable there is no file to write and the
+change lasts until the next restart. Changing the camera requires stopping video and
+disarming Sentry first.
 The UI matches Cyber Dashboard's DejaVu Sans Mono typography, green palette, angled banners,
 and dark green modules. It supplies app navigation only; the dashboard owns the outer frame.
 Video and Voice are separate views, and Sentry separates Rules, Integrations, and Event log.
@@ -140,6 +146,14 @@ while recording; press it again (or stop video) to finish early and keep the rec
 video is still saved without sound. POST `/api/video/record/start` and
 `/api/video/record/stop` do the same, and `/api/video/status` reports the recording under
 `recording`.
+
+**Enable audio**, on the right of the video controls, listens to the node microphone in your
+browser while the preview runs; it is on by default and stops with the video or a hidden tab.
+GET `/api/audio/monitor` streams raw 16-bit mono PCM at 16 kHz from `pw-record`, which the
+page schedules through the Web Audio API with about a fifth of a second of delay. A media
+element buffers on its own schedule and drifts; scheduling each block keeps the sound close
+to the picture. Two listeners can hear the node at once; a third is refused. Browsers keep
+the page silent until you interact with it, so the first click starts playback.
 
 **Object detection** beside the video controls toggles labeled boxes and confidence scores
 for 80 common COCO categories. It starts off by default and can be changed during playback.
@@ -312,14 +326,14 @@ PTT effects add a small processing delay while retaining one continuous playback
 
 ### Phone push-to-talk
 
-Open the main page on a phone, tap **Enable phone microphone**, allow access, then hold
+Open the main page on a phone, tap **Enable mic**, allow access, then hold
 **Hold to talk**. Your voice plays live through the configured node speaker with a short
 buffering/Bluetooth delay. Release to finish; the microphone stays enabled for another press
 until you turn it off or leave the page. Each press is limited to 60 seconds. Touch cancellation,
 leaving the page, and connection loss stop transmission. The speaker is shared with speech
 and hardware audio tests; concurrent actions report busy. Video can run during transmission.
 
-**Record message** under Hold to talk records from the same phone microphone and saves the
+**Record**, beside Hold to talk, records from the same phone microphone and saves the
 message to the Sentry **Captures** tab instead of playing it, up to 120 seconds. Like Record
 on the Video view it lights up red while recording; press it again to stop and save. It uploads
 the browser's recording (WebM, Ogg or MP4) to POST `/api/captures/message` as

@@ -120,6 +120,36 @@ class Settings(BaseSettings):
         return env_settings, init_settings, file_secret_settings
 
 
+def config_path() -> Path | None:
+    """The YAML file this process was started with, if any."""
+    selected = os.environ.get("SENTRY_NODE_CONFIG")
+    return Path(selected) if selected else None
+
+
+def save_sections(path: Path, sections: dict[str, dict]) -> None:
+    """Merge section values into the YAML file, leaving every other setting untouched."""
+    data = {}
+    if path.exists():
+        with path.open(encoding="utf-8") as stream:
+            data = yaml.safe_load(stream) or {}
+        if not isinstance(data, dict):
+            raise ValueError("configuration must be a YAML mapping")
+    for section, values in sections.items():
+        current = data.get(section)
+        data[section] = {**current, **values} if isinstance(current, dict) else dict(values)
+    Settings(**data)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.new")
+    try:
+        with temporary.open("w", encoding="utf-8") as stream:
+            yaml.safe_dump(data, stream, sort_keys=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def load_config(path: str | Path | None = None) -> Settings:
     selected = path or os.environ.get("SENTRY_NODE_CONFIG")
     if selected is None:

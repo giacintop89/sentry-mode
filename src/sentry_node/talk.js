@@ -3,7 +3,6 @@
   const result = document.getElementById('talk-result'), setup = document.getElementById('phone-setup');
   const speakButton = document.getElementById('speak');
   const recordButton = document.getElementById('record-message');
-  const recordResult = document.getElementById('message-result');
   let stream, context, source, processor, muted, current, pressed = false, enabling = false;
   let recorder, recordTimer, recordStarted;
   const MAX_MESSAGE_SECONDS = 120;
@@ -24,11 +23,8 @@
     source?.disconnect(); processor?.disconnect(); muted?.disconnect();
     source = processor = muted = undefined;
     context?.close().catch(() => {}); context = undefined;
-    hold.disabled = true; enable.disabled = false; enable.textContent = 'Enable phone microphone';
+    hold.disabled = true; enable.disabled = false; enable.textContent = 'Enable mic';
     recordButton.disabled = true;
-  }
-  function messageStatus(message, kind = '') {
-    recordResult.textContent = message; recordResult.className = 'result ' + kind;
   }
   function messageFormat() {
     // Browsers differ: Chrome and Firefox record WebM, Safari MP4. ffmpeg reads both.
@@ -37,11 +33,11 @@
   }
   function showRecording() {
     const seconds = Math.round((Date.now() - recordStarted) / 1000);
-    messageStatus('Recording · ' + seconds + ' s of ' + MAX_MESSAGE_SECONDS + ' s');
+    status('Recording · ' + seconds + ' s of ' + MAX_MESSAGE_SECONDS + ' s');
   }
   function startMessage() {
     const type = messageFormat();
-    if (!stream || !type) { messageStatus('This browser cannot record messages.', 'error'); return; }
+    if (!stream || !type) { status('This browser cannot record messages.', 'error'); return; }
     const chunks = [];
     recorder = new MediaRecorder(stream, {mimeType: type});
     recorder.addEventListener('dataavailable', event => { if (event.data.size) chunks.push(event.data); });
@@ -57,8 +53,8 @@
           body: blob, signal: AbortSignal.timeout(60000)});
         const info = await response.json();
         if (!response.ok) throw Error(info.error || 'The message could not be saved.');
-        messageStatus(info.message + ' Open the Sentry Captures tab to play it.', 'success');
-      } catch (error) { messageStatus(error.message, 'error'); }
+        status(info.message + ' Play it in the Sentry Captures tab.', 'success');
+      } catch (error) { status(error.message, 'error'); }
       finally { recordButton.disabled = !stream; }
     });
     recorder.start();
@@ -73,7 +69,7 @@
   }
   function stopMessage() {
     if (!recorder || recorder.state === 'inactive') return;
-    recordButton.disabled = true; messageStatus('Saving the message…');
+    recordButton.disabled = true; status('Saving the message…');
     recorder.stop();
   }
   recordButton.addEventListener('click', () => {
@@ -104,11 +100,10 @@
       stream.getAudioTracks()[0].addEventListener('ended', () => {
         if (current) cancel(current, 'Phone microphone disconnected.'); else releaseMicrophone();
       });
-      hold.disabled = false; enable.disabled = false; enable.textContent = 'Turn microphone off';
+      hold.disabled = false; enable.disabled = false; enable.textContent = 'Mic off';
       recordButton.disabled = !messageFormat();
-      status('Microphone ready. Hold to transmit; release to stop.');
-      messageStatus(messageFormat() ? 'Ready to record a message to Captures.'
-        : 'This browser cannot record messages.', messageFormat() ? '' : 'error');
+      status(messageFormat() ? 'Microphone ready. Hold to talk, or record a message to Captures.'
+        : 'Microphone ready. Hold to talk; this browser cannot record messages.');
     } catch (error) {
       releaseMicrophone();
       status(error.name === 'NotAllowedError' ? 'Microphone permission denied. Allow it in your browser’s site settings.' : error.message, 'error');

@@ -19,12 +19,21 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
 from sentry_node.app import run
 from sentry_node.audio.effects import VoiceEffects
+from sentry_node.audio.monitor import RATE as AUDIO_RATE
+from sentry_node.audio.monitor import AudioMonitor
 from sentry_node.audio.soundboard import Soundboard, SoundboardMessage
 from sentry_node.audio.sounds import MAX_UPLOAD_BYTES
 from sentry_node.audio.speech import available_voices, speak
 from sentry_node.audio.talk import MAX_CHUNK, TalkStream
 from sentry_node.audio.tunes import TUNES, play_tune
-from sentry_node.config import Settings
+from sentry_node.config import (
+    AudioConfig,
+    CameraConfig,
+    Settings,
+    SpeakerConfig,
+    config_path,
+    save_sections,
+)
 from sentry_node.core.errors import HardwareError
 from sentry_node.hardware.camera import Camera, list_cameras
 from sentry_node.hardware.microphone import Microphone
@@ -61,6 +70,14 @@ class SoundReference(BaseModel):
 MANUAL_VIDEO_SECONDS = 60
 
 
+class HardwareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    camera: int | str
+    microphone: str = Field(min_length=1, max_length=200)
+    speaker: str = Field(min_length=1, max_length=200)
+    speaker_volume: int = Field(ge=0, le=100)
+
+
 class DetectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: StrictBool
@@ -81,6 +98,7 @@ class NodeControls:
         self.hardware_lock = threading.Lock()
         self.audio_lock = threading.Lock()
         self.talk = TalkStream(config, self.audio_lock)
+        self.monitor = AudioMonitor()
         self.https_port: int | None = None
         self.tls_ca: Path | None = None
         self.video = VideoStream(config.camera, self.hardware_lock, config.detection)
@@ -146,6 +164,20 @@ class NodeControls:
             return available_voices(self.config)
         if path == "/api/soundboard":
             return self.soundboard.listing()
+        if path == "/api/hardware":
+            saved = config_path()
+            return {
+                "cameras": sorted({*list_cameras(), str(self.config.camera.device)}),
+                "microphones": [
+                    asdict(d) for d in Microphone(self.config.microphone).list_devices()
+                ],
+                "speakers": [asdict(d) for d in Speaker(self.config.speaker).list_devices()],
+                "camera": str(self.config.camera.device),
+                "microphone": self.config.microphone.device,
+                "speaker": self.config.speaker.device,
+                "speaker_volume": self.config.speaker.volume,
+                "saved_to": str(saved) if saved else None,
+            }
         if path == "/api/sounds":
             return self.sentry.sounds.listing()
         if path == "/api/captures":
@@ -269,6 +301,43 @@ class NodeControls:
                 self.recording["thread"].join(timeout=30)
             return self.video_status()
 
+    def set_hardware(self, request: HardwareRequest) -> dict:
+        camera = CameraConfig(**{**self.config.camera.model_dump(), "device": request.camera})
+        if camera.device != self.config.camera.device and (
+            self.video.status()["capture_running"] or self.sentry.status()["armed"]
+        ):
+            raise BlockingIOError("Stop video and disarm Sentry before changing the camera.")
+        microphone = AudioConfig(
+            **{**self.config.microphone.model_dump(), "device": request.microphone}
+        )
+        speaker = SpeakerConfig(
+            **{
+                **self.config.speaker.model_dump(),
+                "device": request.speaker,
+                "volume": request.speaker_volume,
+            }
+        )
+        saved = config_path()
+        if saved is not None:
+            save_sections(
+                saved,
+                {
+                    "camera": {"device": camera.device},
+                    "microphone": {"device": microphone.device},
+                    "speaker": {"device": speaker.device, "volume": speaker.volume},
+                },
+            )
+        # Adapters read these objects on every use, so the change applies to the next
+        # capture, recording or announcement without a restart.
+        self.config.camera.device = camera.device
+        self.config.microphone.device = microphone.device
+        self.config.speaker.device, self.config.speaker.volume = speaker.device, speaker.volume
+        self.cached_status = None
+        return {
+            "message": "Devices saved." if saved else "Devices applied until the next restart.",
+            "saved_to": str(saved) if saved else None,
+        }
+
     def post(self, path: str, body: dict | None = None) -> dict | bytes:
         if self.shutdown_requested.is_set():
             raise HardwareError("Server is shutting down.")
@@ -305,6 +374,8 @@ class NodeControls:
             return self.soundboard.save(SoundboardMessage.model_validate(body))
         if path == "/api/soundboard/delete":
             return self.soundboard.delete(SoundboardReference.model_validate(body).id)
+        if path == "/api/hardware":
+            return self.set_hardware(HardwareRequest.model_validate(body))
         if path == "/api/sounds/delete":
             sound = SoundReference.model_validate(body).id
             used = [
@@ -397,6 +468,7 @@ JSON_POSTS = {
     "/api/soundboard/delete",
     "/api/soundboard/play",
     "/api/captures/delete",
+    "/api/hardware",
     "/api/sounds/delete",
     "/api/sounds/play",
     "/api/tunes/play",
@@ -415,6 +487,7 @@ def make_handler(controls: NodeControls):
         "/voice-effects.js": files("sentry_node").joinpath("voice-effects.js").read_bytes(),
         "/sentry.js": files("sentry_node").joinpath("sentry.js").read_bytes(),
         "/soundboard.js": files("sentry_node").joinpath("soundboard.js").read_bytes(),
+        "/listen.js": files("sentry_node").joinpath("listen.js").read_bytes(),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -451,7 +524,7 @@ def make_handler(controls: NodeControls):
         def do_GET(self):
             if self.path == "/":
                 self.respond(page, content_type="text/html; charset=utf-8")
-            elif self.path in {"/tests", "/tests/"}:
+            elif self.path in {"/hardware", "/hardware/", "/tests", "/tests/"}:
                 self.respond(tests_page, content_type="text/html; charset=utf-8")
             elif self.path in {"/sentry", "/sentry/"}:
                 self.respond(sentry_page, content_type="text/html; charset=utf-8")
@@ -465,6 +538,9 @@ def make_handler(controls: NodeControls):
                 )
             elif self.path == "/api/video":
                 self.stream_video()
+            # The browser adds a cache-busting query when it reconnects to the microphone.
+            elif self.path.partition("?")[0] == "/api/audio/monitor":
+                self.stream_audio()
             elif self.path.startswith("/captures/"):
                 self.send_capture(self.path.removeprefix("/captures/"))
             else:
@@ -515,6 +591,26 @@ def make_handler(controls: NodeControls):
                         remaining -= len(chunk)
             except (OSError, TimeoutError):
                 pass  # Viewer closed the player or seeked elsewhere.
+
+        def stream_audio(self):
+            streaming = False
+            try:
+                with controls.monitor.listen(controls.config) as audio:
+                    self.send_response(200)
+                    self.send_header("Content-Type", f"audio/L16; rate={AUDIO_RATE}; channels=1")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    streaming = True
+                    for block in audio:
+                        self.wfile.write(block)
+                        self.wfile.flush()
+            except BlockingIOError as exc:
+                self.respond({"error": str(exc)}, 409)
+            except (HardwareError, OSError) as exc:
+                # Once audio flows the headers are gone; a failure just closes the socket.
+                if not streaming:
+                    self.respond({"error": str(exc)}, 503)
 
         def stream_video(self):
             controls.video.add_viewer(1)
