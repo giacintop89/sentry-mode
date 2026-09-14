@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Create a local CA and a server certificate; never install trust on any device."""
+"""Create a local CA and a server certificate; never install trust on any device.
+
+The authority is named after the host, not after this application: the same
+certificate fronts every service on the Pi that a phone must reach over TLS.
+"""
 
 import argparse
 import ipaddress
@@ -46,7 +50,7 @@ def main():
             "-days",
             "3650",
             "-subj",
-            "/CN=Sentry Node Local CA",
+            "/CN=pi5 Local CA",
             "-addext",
             "basicConstraints=critical,CA:TRUE,pathlen:0",
             "-addext",
@@ -72,7 +76,7 @@ def main():
             "rsa:2048",
             "-nodes",
             "-subj",
-            "/CN=Sentry Node",
+            "/CN=pi5",
             "-keyout",
             str(folder / "server.key"),
             "-out",
