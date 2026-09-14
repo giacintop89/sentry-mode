@@ -29,6 +29,7 @@ def parser() -> argparse.ArgumentParser:
     web.add_argument(
         "--https-port", type=int, help="Additional HTTPS listener for phone microphone"
     )
+    web.add_argument("--https-host", help="Bind address for HTTPS; defaults to --host")
     web.add_argument("--tls-cert", type=Path)
     web.add_argument("--tls-key", type=Path)
     web.add_argument("--tls-ca", type=Path, help="Public local CA certificate for phone setup")
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
                 config,
                 args.host,
                 args.port,
+                https_host=args.https_host,
                 https_port=args.https_port,
                 tls_cert=args.tls_cert,
                 tls_key=args.tls_key,

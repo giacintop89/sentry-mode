@@ -16,7 +16,7 @@ import sys
 
 TEMPLATE_ROOT = '/opt/sentry-node'
 UNITS = ('sentry-node.service', 'sentry-node-web.service')
-TLS_OPTIONS = ('--https-port', '--tls-cert', '--tls-key', '--tls-ca')
+TLS_OPTIONS = ('--https-host', '--https-port', '--tls-cert', '--tls-key', '--tls-ca')
 SAFE = re.compile(r'[A-Za-z0-9_@:./,=+-]+')
 root, user = sys.argv[1:]
 uid = pwd.getpwnam(user).pw_uid
@@ -54,7 +54,7 @@ def exec_start(line):
         if token.startswith('--tls-') and not pathlib.Path(tokens[index + 1]).exists()
     ]
     if missing:
-        print('Missing ' + ', '.join(missing) + '; installing HTTP only.')
+        print('Missing ' + ', '.join(missing) + '; installing without the HTTPS listener.')
         print('Run scripts/setup_phone_https.py, then rerun this installer for HTTPS.')
         tokens = without_tls(tokens)
     return 'ExecStart=' + ' '.join(quoted(token) for token in tokens)

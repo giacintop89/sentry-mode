@@ -49,8 +49,11 @@ render your actual checkout and account. Environment values can be stored in the
 ignored .env file; use SENTRY_NODE_CONFIG with an absolute YAML path.
 
 Two units are installed and neither is enabled for you. `sentry-node` runs the idle `run`
-command; `sentry-node-web` hosts the dashboard on HTTP 8083 and HTTPS 8443, serving the
-phone microphone view from the local certificate in `.local/tls`. Most setups need only
+command; `sentry-node-web` hosts the dashboard, serving the phone microphone view from the
+local certificate in `.local/tls`. It binds plain HTTP 8083 to 127.0.0.1 and exposes only
+HTTPS 8443 to the network, so nothing reaches the controls in clear text and a browser on
+the node itself still uses `http://127.0.0.1:8083`. Drop `--https-host` from the unit's
+`ExecStart` to serve both listeners on every interface. Most setups need only
 `sentry-node-web`; enabling both means the idle unit also probes the camera and audio
 devices once at start. Create the certificate before installing:
 
@@ -60,7 +63,8 @@ sudo ./scripts/install_service.sh
 ```
 
 Without `.local/tls/server.crt`, `server.key`, and `ca.crt`, the installer says so and
-renders the dashboard unit HTTP-only; rerun it after creating them to pick up HTTPS. The
+renders the dashboard unit as loopback HTTP only, reachable from the node alone; rerun it
+after creating them to pick up HTTPS. The
 certificate and key stay readable only by the account the units run as. Change ports or
 add flags with `sudo systemctl edit sentry-node-web` and a full `ExecStart=` override, or
 edit `systemd/sentry-node-web.service` in the checkout and rerun the installer.

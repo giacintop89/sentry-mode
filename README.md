@@ -91,9 +91,18 @@ sentry-node serve --port 8083   # hardware controls on http://localhost:8083
 sentry-node serve --host 127.0.0.1 --port 8083
 ```
 
+`--https-host` binds the HTTPS listener separately from `--host`, so plain HTTP can stay on
+loopback while phones reach HTTPS across the network:
+
+```bash
+sentry-node serve --host 127.0.0.1 --port 8083 --https-host 0.0.0.0 --https-port 8443 \
+  --tls-cert .local/tls/server.crt --tls-key .local/tls/server.key --tls-ca .local/tls/ca.crt
+```
+
 Both commands are also packaged as systemd units. `scripts/install_service.sh` renders
-`sentry-node` (idle `run`) and `sentry-node-web` (the dashboard on HTTP 8083 and HTTPS 8443)
-against your checkout and account, enabling neither; see the Raspberry Pi guide.
+`sentry-node` (idle `run`) and `sentry-node-web` (the dashboard on loopback HTTP 8083 and
+HTTPS 8443 for the network) against your checkout and account, enabling neither; see the
+Raspberry Pi guide.
 
 `run` handles SIGINT/SIGTERM and releases inspection resources. The main page offers live MJPEG video and local text-to-speech through the node speaker.
 The hardware dashboard at `/tests` offers the same operational controls as the CLI: refresh status, list/test/capture camera, list audio,
@@ -278,7 +287,9 @@ sentry-node serve --port 8083 --https-port 8443 \
 ```
 
 On the phone, visit the HTTP page and expand **Set up this phone** to download the public
-local CA certificate and follow the iPhone/Android trust instructions. Then open the HTTPS
+local CA certificate and follow the iPhone/Android trust instructions. Where HTTP is bound to
+loopback, fetch `/local-ca.crt` from the HTTPS address instead, accepting the browser warning
+once, or copy `.local/tls/ca.crt` to the phone by other means. Then open the HTTPS
 link and allow microphone access. Installing/trusting the CA is a one-time phone setup;
 the helper does not change any device's trust settings. It stores private keys in ignored
 `.local/tls/`, reuses the CA on reruns, and issues a one-year server certificate. Rerun it

@@ -429,6 +429,7 @@ def serve(
     host: str = "0.0.0.0",
     port: int = 8083,
     *,
+    https_host: str | None = None,
     https_port: int | None = None,
     tls_cert: Path | None = None,
     tls_key: Path | None = None,
@@ -436,6 +437,7 @@ def serve(
 ) -> None:
     controls = NodeControls(config)
     controls.https_port, controls.tls_ca = https_port, tls_ca
+    secure_host = https_host if https_host is not None else host
     tls = None
     if https_port is not None:
         if tls_cert is None or tls_key is None:
@@ -443,7 +445,7 @@ def serve(
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.minimum_version = ssl.TLSVersion.TLSv1_2
         tls.load_cert_chain(tls_cert, tls_key)
-    elif tls_cert or tls_key or tls_ca:
+    elif tls_cert or tls_key or tls_ca or https_host:
         raise ValueError("TLS options require --https-port.")
     if tls_ca:
         tls_ca.read_bytes()
@@ -473,12 +475,14 @@ def serve(
                             connection, server_side=True, do_handshake_on_connect=False
                         ), address
 
-                secure = stack.enter_context(SecureServer((host, https_port), handler))
+                secure = stack.enter_context(SecureServer((secure_host, https_port), handler))
                 secure_thread = threading.Thread(
                     target=secure.serve_forever, name="sentry-node-https"
                 )
                 secure_thread.start()
-                logger.info("Serving phone controls over HTTPS on %s:%s", host, https_port)
+                logger.info(
+                    "Serving phone controls over HTTPS on %s:%s", secure_host, https_port
+                )
             server.daemon_threads = False
             server.timeout = 0.5
             logger.info("Serving Sentry Node on %s:%s", host, port)

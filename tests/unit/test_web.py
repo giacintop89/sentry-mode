@@ -12,7 +12,7 @@ from sentry_node.audio.effects import VoiceEffects
 from sentry_node.config import Settings
 from sentry_node.core.errors import HardwareError
 from sentry_node.core.models import AudioDevice, HardwareStatus
-from sentry_node.web import NodeControls, make_handler
+from sentry_node.web import NodeControls, make_handler, serve
 
 
 @pytest.fixture
@@ -406,3 +406,9 @@ def test_telegram_config_api_never_returns_token_even_on_validation_error(web):
     assert code == 400
     assert token not in json.dumps(result)
     assert controls.sentry.revision == 1
+
+
+def test_https_bind_address_requires_an_https_port(tmp_path):
+    config = Settings(sentry_state_file=tmp_path / "sentry.json")
+    with pytest.raises(ValueError, match="require --https-port"):
+        serve(config, "127.0.0.1", 0, https_host="0.0.0.0")
