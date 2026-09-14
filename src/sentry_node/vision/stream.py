@@ -8,6 +8,7 @@ from sentry_node.config import CameraConfig, DetectionConfig
 from sentry_node.core.errors import HardwareError
 from sentry_node.hardware.camera import Camera
 from sentry_node.vision.detection import DetectionWorker
+from sentry_node.vision.recording import VIDEO_FPS, VIDEO_MAX_WIDTH
 
 
 class VideoStream:
@@ -32,6 +33,7 @@ class VideoStream:
         self.monitoring = False
         self.monitor_fps = 2.0
         self.viewers = 0
+        self.recordings = 0
         self.encoded_frames = 0
         self.capture_size: tuple[int, int] | None = None
         self.on_error: Callable[[str], None] | None = None
@@ -141,14 +143,32 @@ class VideoStream:
     def _camera_config(self) -> CameraConfig:
         if self.preview:
             return self.config
-        width = min(self.config.width, 640)
+        # A Sentry recording raises the resolution and rate only while it runs.
+        width = min(self.config.width, VIDEO_MAX_WIDTH if self.recordings else 640)
         return self.config.model_copy(
             update={
                 "width": width,
                 "height": max(1, round(self.config.height * width / self.config.width)),
-                "fps": self.monitor_fps,
+                "fps": min(self.config.fps, VIDEO_FPS) if self.recordings else self.monitor_fps,
             }
         )
+
+    def _rate(self) -> float:
+        if self.preview:
+            return min(self.config.fps, 10)
+        return min(self.config.fps, VIDEO_FPS) if self.recordings else self.monitor_fps
+
+    def recording_size(self) -> tuple[int, int]:
+        width = min(self.config.width, VIDEO_MAX_WIDTH)
+        return width, max(1, round(self.config.height * width / self.config.width))
+
+    def add_recording(self, delta: int):
+        with self.condition:
+            self.recordings = max(0, self.recordings + delta)
+
+    def latest_frame(self):
+        with self.condition:
+            return None if self.stopped.is_set() else self.raw_frame
 
     def _capture(self):
         try:
@@ -179,8 +199,7 @@ class VideoStream:
                                 self.sequence += 1
                                 self.condition.notify_all()
                     self.ready.set()
-                    rate = min(self.config.fps, 10) if self.preview else self.monitor_fps
-                    if self.stopped.wait(1 / rate):
+                    if self.stopped.wait(1 / self._rate()):
                         break
                     frame = camera.capture_frame()
         except Exception as exc:

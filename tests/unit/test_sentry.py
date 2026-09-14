@@ -10,6 +10,8 @@ import pytest
 from sentry_node.config import Settings
 from sentry_node.core.errors import HardwareError
 from sentry_node.sentry.config import (
+    AudioAction,
+    PhotoAction,
     Rule,
     SentryConfig,
     SSHAction,
@@ -17,6 +19,8 @@ from sentry_node.sentry.config import (
     TelegramAction,
     TelegramConfig,
     TTSAction,
+    TuneAction,
+    VideoAction,
 )
 from sentry_node.sentry.engine import Job, RuleState, Sentry
 from sentry_node.vision.detection import Detection
@@ -32,7 +36,12 @@ def sentry(tmp_path):
         "error": None,
         "detection": {"enabled": True, "error": None},
     }
-    engine = Sentry(Settings(sentry_state_file=tmp_path / "sentry.json"), video, threading.Lock())
+    settings = Settings(
+        sentry_state_file=tmp_path / "sentry.json",
+        captures_directory=tmp_path / "captures",
+        sounds_directory=tmp_path / "sounds",
+    )
+    engine = Sentry(settings, video, threading.Lock())
     try:
         yield engine
     finally:
@@ -407,3 +416,265 @@ def test_telegram_child_is_reaped_on_disarm_or_absolute_timeout(sentry, cancel):
 def test_invalid_telegram_message(text):
     with pytest.raises(ValueError):
         TelegramAction(text=text)
+
+
+def test_rule_accepts_one_of_every_action_and_bounds_video_duration():
+    actions = [PhotoAction(), VideoAction(duration_seconds=30), TTSAction(text="Hi")]
+    assert Rule(name="all", object="person", actions=actions).actions[1].duration_seconds == 30
+    for seconds in (0, 61):
+        with pytest.raises(ValueError):
+            VideoAction(duration_seconds=seconds)
+    assert PhotoAction().count == 1
+    for invalid in (
+        {"count": 0},
+        {"count": 21},
+        {"interval_seconds": 0.4},
+        {"interval_seconds": 61},
+    ):
+        with pytest.raises(ValueError):
+            PhotoAction(**invalid)
+    with pytest.raises(ValueError, match="one action of each type"):
+        Rule(name="twice", object="person", actions=[PhotoAction(), PhotoAction()])
+
+
+def test_test_mode_logs_photo_and_video_without_touching_the_camera(sentry):
+    sentry.config.test_mode = True
+    sentry.config.rules[0].actions = [
+        PhotoAction(count=3, interval_seconds=1.5),
+        VideoAction(duration_seconds=5),
+        AudioAction(duration_seconds=4),
+    ]
+    direct_arm(sentry)
+    for timestamp in (100, 100.5, 101):
+        sample(sentry, timestamp)
+    assert [e["message"] for e in events(sentry, "would_run")] == [
+        "Audio: 4 s",
+        "Video: 5 s with sound",
+        "Photos: 3 every 1.5 s",
+    ]
+    sentry.video.latest_frame.assert_not_called()
+    sentry.video.add_recording.assert_not_called()
+
+
+def test_photo_is_saved_and_video_records_beside_the_announcement(sentry):
+    import numpy as np
+
+    sentry.config.test_mode = False
+    sentry.config.rules[0].actions = [
+        PhotoAction(),
+        VideoAction(duration_seconds=20),
+        TTSAction(text="Hello"),
+    ]
+    sentry.video.latest_frame.return_value = np.zeros((72, 128, 3), np.uint8)
+    sentry.video.recording_size.return_value = (1280, 720)
+    recording, spoken = threading.Event(), threading.Event()
+
+    def record(frames, seconds, rule, stop_event, size, microphone):
+        recording.set()
+        assert (seconds, rule, size) == (20, "Person at entrance", (1280, 720))
+        assert microphone == ["-f", "pulse", "-i", "default"]
+        stop_event.wait(5)  # Keeps recording until disarm, like a long video.
+        return "20260101-000000-000-person-at-entrance.mp4", None
+
+    with (
+        patch.object(sentry.captures, "record_video", side_effect=record),
+        patch.object(Sentry, "_microphone", return_value=["-f", "pulse", "-i", "default"]),
+        patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()),
+    ):
+        sentry.arm()
+        for _ in range(3):
+            sentry.observe([PERSON], time.monotonic())
+        # The announcement plays while the video is still recording.
+        assert recording.wait(2) and spoken.wait(2)
+        sentry.disarm()
+    assert not any(r.is_alive() for r in sentry.recorders)
+    finished = [e["message"] for e in events(sentry, "action_finished")]
+    assert any(m.startswith("Photo saved: ") for m in finished)
+    assert "Video saved: 20260101-000000-000-person-at-entrance.mp4" in finished
+    [photo] = sentry.captures.listing()["captures"]
+    assert photo["kind"] == "photo" and photo["rule"] == "person-at-entrance"
+    assert [c.args for c in sentry.video.add_recording.call_args_list] == [(1,), (-1,)]
+
+
+def test_photo_series_is_spaced_in_the_background_and_stops_on_disarm(sentry):
+    import numpy as np
+
+    sentry.config.test_mode = False
+    sentry.config.rules[0].actions = [
+        PhotoAction(count=3, interval_seconds=0.5),
+        TTSAction(text="Hello"),
+    ]
+    sentry.video.latest_frame.return_value = np.zeros((72, 128, 3), np.uint8)
+    spoken = threading.Event()
+    with patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()):
+        sentry.arm()
+        started = time.monotonic()
+        for _ in range(3):
+            sentry.observe([PERSON], time.monotonic())
+        assert spoken.wait(2)
+        deadline = time.monotonic() + 5
+        while len(sentry.captures.listing()["captures"]) < 3 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        elapsed = time.monotonic() - started
+        sentry.disarm()
+    assert len(sentry.captures.listing()["captures"]) == 3 and elapsed >= 1
+    assert len([e for e in events(sentry, "action_finished") if "Photo saved" in e["message"]]) == 3
+
+    sentry.config.rules[0].actions = [PhotoAction(count=5, interval_seconds=60)]
+    with patch("sentry_node.sentry.engine.speak"):
+        sentry.arm()
+        for _ in range(3):
+            sentry.observe([PERSON], time.monotonic())
+        deadline = time.monotonic() + 2
+        while len(sentry.captures.listing()["captures"]) < 4 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        sentry.disarm()
+    assert len(sentry.captures.listing()["captures"]) == 4
+    assert any("stopped after 1" in e["message"] for e in events(sentry, "cancelled"))
+
+
+def test_tune_action_validates_logs_in_test_mode_and_plays_on_the_speaker(sentry, tmp_path):
+    with pytest.raises(ValueError, match="supported tune"):
+        TuneAction(tune="not-a-tune")
+    with pytest.raises(ValueError):
+        TuneAction(repeat=6)
+    sentry.config.test_mode = True
+    sentry.config.rules[0].actions = [TuneAction(tune="doorbell", repeat=2)]
+    direct_arm(sentry)
+    for timestamp in [100, 100.5, 101]:
+        sample(sentry, timestamp)
+    assert [e["message"] for e in events(sentry, "would_run")] == ["Tune: Doorbell x2"]
+    sentry.disarm()
+
+    sentry.config.test_mode = False
+    played = threading.Event()
+    lengths = []
+
+    def play(self, path, *, timeout, stop_event):
+        lengths.append(path.stat().st_size)
+        assert sentry.audio_lock.locked() and timeout > 10
+        played.set()
+
+    with patch("sentry_node.hardware.speaker.Speaker.play_file", play):
+        sentry.arm()
+        sentry.jobs.put(Job("tune", TuneAction(tune="chime"), time.monotonic()))
+        assert played.wait(2)
+        deadline = time.monotonic() + 2
+        while not events(sentry, "action_finished") and time.monotonic() < deadline:
+            time.sleep(0.01)
+        sentry.disarm()
+    assert lengths[0] > 44 and not sentry.audio_lock.locked()
+    assert events(sentry, "action_started")[0]["message"] == "Playing tune: Chime"
+
+
+def test_every_tune_renders_and_the_editor_offers_each_one(tmp_path):
+    import re
+    import wave
+    from importlib.resources import files
+
+    from sentry_node.audio.tunes import TUNES, generate_tune, tune_seconds
+
+    for name in TUNES:
+        path = tmp_path / f"{name}.wav"
+        seconds = generate_tune(path, name, repeat=2, volume=100)
+        assert abs(seconds - tune_seconds(name, 2)) < 0.01
+        with wave.open(str(path)) as stream:
+            assert stream.getnframes() > 0
+    page = files("sentry_node").joinpath("sentry.html").read_text()
+    offered = re.search(r'<select id="rule-tune">(.*?)</select>', page).group(1)
+    assert re.findall(r'value="([a-z]+)"', offered) == list(TUNES)
+
+
+def test_sound_action_needs_its_file_and_plays_it_under_the_audio_lock(sentry):
+    from sentry_node.sentry.config import SoundAction
+
+    missing = SoundAction(sound="door-bell-0123abcd")
+    sentry.config.rules[0].actions = [missing]
+    with pytest.raises(ValueError, match="audio file that was deleted"):
+        sentry.arm()
+    path = sentry.settings.sounds_directory / "door-bell-0123abcd.wav"
+    path.parent.mkdir(parents=True)
+    from sentry_node.audio.tunes import generate_tune
+
+    generate_tune(path, "chime")
+    sentry.config.test_mode = True
+    direct_arm(sentry)
+    for timestamp in [100, 100.5, 101]:
+        sample(sentry, timestamp)
+    assert [e["message"] for e in events(sentry, "would_run")] == ["Audio file: door-bell-0123abcd"]
+    sentry.disarm()
+
+    sentry.config.test_mode = False
+    calls = []
+
+    def play(settings, sound, *, repeat, volume, stop_event):
+        calls.append((sound, repeat, volume, sentry.audio_lock.locked()))
+
+    with patch.object(sentry.sounds, "play", side_effect=play):
+        sentry.arm()
+        sentry.jobs.put(Job("r", SoundAction(sound=missing.sound, repeat=3), time.monotonic()))
+        deadline = time.monotonic() + 2
+        while not events(sentry, "action_finished") and time.monotonic() < deadline:
+            time.sleep(0.01)
+        sentry.disarm()
+    assert calls == [("door-bell-0123abcd", 3, 80, True)]
+
+
+def test_audio_action_records_from_the_microphone_in_the_background(sentry):
+    sentry.config.test_mode = False
+    sentry.config.rules[0].actions = [AudioAction(duration_seconds=6), TTSAction(text="Hello")]
+    started, spoken = threading.Event(), threading.Event()
+
+    def record(microphone, seconds, rule, stop_event):
+        started.set()
+        assert (microphone, seconds, rule) == (
+            ["-f", "pulse", "-i", "mic"],
+            6,
+            "Person at entrance",
+        )
+        stop_event.wait(5)  # Keeps recording until disarm, like a long message.
+        return "20260101-000000-000-person-at-entrance.m4a"
+
+    with (
+        patch.object(sentry.captures, "record_audio", side_effect=record),
+        patch.object(Sentry, "_microphone", return_value=["-f", "pulse", "-i", "mic"]),
+        patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()),
+    ):
+        sentry.arm()
+        for _ in range(3):
+            sentry.observe([PERSON], time.monotonic())
+        assert started.wait(2) and spoken.wait(2)
+        sentry.disarm()
+    assert not any(r.is_alive() for r in sentry.recorders)
+    finished = [e["message"] for e in events(sentry, "action_finished")]
+    assert "Audio saved: 20260101-000000-000-person-at-entrance.m4a" in finished
+    sentry.video.add_recording.assert_not_called()
+
+
+def test_a_silent_video_is_kept_when_the_microphone_is_missing(sentry):
+    import numpy as np
+
+    sentry.config.test_mode = False
+    sentry.config.rules[0].actions = [VideoAction(duration_seconds=1, audio=True)]
+    sentry.video.latest_frame.return_value = np.zeros((72, 128, 3), np.uint8)
+    sentry.video.recording_size.return_value = (128, 72)
+    saved = threading.Event()
+
+    def record(frames, seconds, rule, stop_event, size, microphone):
+        assert microphone is None
+        saved.set()
+        return "20260101-000000-000-person-at-entrance.mp4", None
+
+    with (
+        patch.object(sentry.captures, "record_video", side_effect=record),
+        patch.object(Sentry, "_microphone", side_effect=HardwareError("microphone is disabled")),
+    ):
+        sentry.arm()
+        for _ in range(3):
+            sentry.observe([PERSON], time.monotonic())
+        assert saved.wait(2)
+        sentry.disarm()
+    finished = [e["message"] for e in events(sentry, "action_finished")]
+    assert finished[0] == (
+        "Video saved: 20260101-000000-000-person-at-entrance.mp4 (no sound: microphone is disabled)"
+    )

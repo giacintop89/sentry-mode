@@ -1,4 +1,5 @@
 import json
+import subprocess
 import threading
 from dataclasses import asdict
 from http.server import ThreadingHTTPServer
@@ -12,6 +13,7 @@ from sentry_node.audio.effects import VoiceEffects
 from sentry_node.config import Settings
 from sentry_node.core.errors import HardwareError
 from sentry_node.core.models import AudioDevice, HardwareStatus
+from sentry_node.hardware.microphone import Microphone
 from sentry_node.web import NodeControls, make_handler, serve
 
 
@@ -21,6 +23,8 @@ def web(tmp_path):
         Settings(
             sentry_state_file=tmp_path / "sentry.json",
             soundboard_file=tmp_path / "soundboard.json",
+            captures_directory=tmp_path / "captures",
+            sounds_directory=tmp_path / "sounds",
         )
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(controls))
@@ -504,3 +508,188 @@ def test_soundboard_limit_and_unreadable_file(tmp_path):
     broken.write_text("{not json")
     listing = Soundboard(broken).listing()
     assert listing["messages"] == [] and "could not be loaded" in listing["error"]
+
+
+def test_captures_are_listed_served_in_ranges_and_deleted(web, tmp_path):
+    _, base = web
+    folder = tmp_path / "captures"
+    folder.mkdir()
+    video = folder / "20260914-101500-250-front-door.mp4"
+    video.write_bytes(bytes(range(100)))
+    (folder / "20260914-101400-000-front-door.jpg").write_bytes(b"jpeg")
+    (folder / "notes.txt").write_text("ignored")
+    listing = request(base, "/api/captures")[1]["captures"]
+    assert [(c["kind"], c["rule"]) for c in listing] == [
+        ("video", "front-door"),
+        ("photo", "front-door"),
+    ]
+    status, data, headers = request(base, "/captures/" + video.name)
+    assert status == 200 and data == bytes(range(100)) and headers["Accept-Ranges"] == "bytes"
+    assert headers["Content-Type"] == "video/mp4"
+    status, data, headers = request(
+        base, "/captures/" + video.name, headers={"Range": "bytes=10-19"}
+    )
+    assert status == 206 and data == bytes(range(10, 20))
+    assert headers["Content-Range"] == "bytes 10-19/100"
+    status, data, _ = request(base, "/captures/" + video.name, headers={"Range": "bytes=-5"})
+    assert status == 206 and data == bytes(range(95, 100))
+    assert request(base, "/captures/" + video.name, headers={"Range": "bytes=200-"})[0] == 416
+    for name in ("notes.txt", "..%2Fsentry.json", "../sentry.json"):
+        assert request(base, "/captures/" + name)[0] == 404
+    assert request(base, "/api/captures/delete", "POST", body={"name": "../sentry.json"})[0] == 404
+    remaining = request(base, "/api/captures/delete", "POST", body={"name": video.name})[1]
+    assert [c["kind"] for c in remaining["captures"]] == ["photo"] and not video.exists()
+    page = request(base, "/sentry")[1]
+    assert (
+        page.index(b'id="use-photo"')
+        < page.index(b'id="use-audio"')
+        < page.index(b'id="use-video"')
+        < page.index(b'id="use-tts"')
+    )
+    assert b'id="rule-video-audio" type="checkbox" checked' in page
+
+
+def upload(base, data, name="Door Bell.wav", content_type="application/octet-stream"):
+    req = Request(
+        base + "/api/sounds/upload",
+        method="POST",
+        data=data,
+        headers={
+            "X-Sentry-Node-Control": "1",
+            "Content-Type": content_type,
+            "X-Sound-Name": name,
+        },
+    )
+    try:
+        response = urlopen(req, timeout=30)
+    except HTTPError as exc:
+        response = exc
+    with response:
+        return response.status, json.loads(response.read())
+
+
+def test_audio_files_upload_convert_play_and_stay_while_rules_use_them(web, tmp_path):
+    import shutil
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg is required to convert audio files")
+    from sentry_node.audio.tunes import generate_tune
+
+    controls, base = web
+    assert b'id="use-sound"' in request(base, "/sentry")[1]
+    assert request(base, "/api/sounds")[1]["sounds"] == []
+    source = tmp_path / "chime.wav"
+    generate_tune(source, "chime")
+    assert upload(base, source.read_bytes(), content_type="text/plain")[0] == 415
+    assert upload(base, b"not audio at all")[0] == 400
+    status, saved = upload(base, source.read_bytes(), name="Door%20Bell.wav")
+    assert status == 200 and saved["saved"].startswith("door-bell-")
+    assert [(s["id"], s["name"]) for s in saved["sounds"]] == [(saved["saved"], "door bell")]
+    assert abs(saved["sounds"][0]["seconds"] - 1.15) < 0.1
+    sound = saved["saved"]
+
+    with patch("sentry_node.audio.sounds.Speaker") as speaker:
+        result = request(base, "/api/sounds/play", "POST", body={"id": sound})[1]
+    assert result["seconds"] > 1.1 and speaker.return_value.play_file.call_count == 1
+    assert request(base, "/api/sounds/play", "POST", body={"id": "../../etc-00000000"})[0] == 404
+
+    data = request(base, "/api/sentry/config")[1]
+    data["config"]["rules"][0]["actions"] = [{"type": "sound", "sound": sound, "repeat": 2}]
+    payload = {"config": data["config"], "revision": data["revision"]}
+    assert request(base, "/api/sentry/config", "POST", body=payload)[0] == 200
+    status, refused, _ = request(base, "/api/sounds/delete", "POST", body={"id": sound})
+    assert status == 409 and "Person at entrance" in refused["error"]
+    controls.sentry.config.rules[0].actions = [{"type": "tts", "text": "hi"}]
+    assert request(base, "/api/sounds/delete", "POST", body={"id": sound})[1]["sounds"] == []
+
+
+def test_tune_test_button_plays_the_editor_settings_and_shares_the_speaker(web):
+    controls, base = web
+    played = []
+
+    def play(self, path, *, timeout, stop_event):
+        played.append((path.stat().st_size, timeout))
+        assert controls.audio_lock.locked()
+
+    with patch("sentry_node.hardware.speaker.Speaker.play_file", play):
+        status, data, _ = request(
+            base, "/api/tunes/play", "POST", body={"tune": "doorbell", "repeat": 2, "volume": 40}
+        )
+        assert status == 200 and data["message"] == "Played Doorbell on the node speaker."
+        assert len(played) == 1 and played[0][0] > 44 and not controls.audio_lock.locked()
+        for body in ({"tune": "nope"}, {"tune": "chime", "repeat": 9}, {"tune": "chime", "x": 1}):
+            assert request(base, "/api/tunes/play", "POST", body=body)[0] == 400
+        with controls.audio_lock:
+            assert request(base, "/api/tunes/play", "POST", body={"tune": "chime"})[0] == 409
+    assert len(played) == 1
+    assert b'id="test-tune"' in request(base, "/sentry")[1]
+
+
+def post_message(base, data, content_type="application/octet-stream"):
+    req = Request(
+        base + "/api/captures/message",
+        method="POST",
+        headers={"X-Sentry-Node-Control": "1", "Content-Type": content_type},
+        data=data,
+    )
+    try:
+        response = urlopen(req, timeout=30)
+    except HTTPError as exc:
+        response = exc
+    with response:
+        return response.status, json.loads(response.read())
+
+
+def test_recorded_messages_are_converted_and_kept_with_the_captures(web):
+    _, base = web
+    silence = subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+         "-t", "1", "-c:a", "libopus", "-f", "webm", "-"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    status, data = post_message(base, silence)
+    assert status == 200 and data["name"].endswith("-phone-message.m4a")
+    listing = request(base, "/api/captures")[1]["captures"]
+    assert [(c["kind"], c["rule"]) for c in listing] == [("audio", "phone-message")]
+    assert request(base, "/captures/" + data["name"])[2]["Content-Type"] == "audio/mp4"
+    assert post_message(base, b"not audio")[0] == 400
+    assert post_message(base, silence, "application/json")[0] == 415
+    page = request(base, "/")[1]
+    assert b'id="record-message"' in page and b'id="record-video"' in page
+
+
+def test_the_video_view_records_to_the_captures_tab(web):
+    controls, base = web
+    assert request(base, "/api/video/status")[1]["recording"] == {
+        "active": False,
+        "started": None,
+        "max_seconds": 60,
+        "result": None,
+    }
+    # Recording follows the live preview, so it needs video running first.
+    assert request(base, "/api/video/record/start", "POST")[0] == 409
+    saved = threading.Event()
+
+    def record(frames, seconds, rule, stop_event, size, microphone):
+        assert (seconds, rule) == (60, "manual recording")
+        stop_event.wait(5)
+        saved.set()
+        return "20260914-101500-250-manual-recording.mp4", None
+
+    with (
+        patch.object(controls.video, "status", return_value={"running": True}),
+        patch.object(controls.video, "recording_size", return_value=(1280, 720)),
+        patch.object(controls.video, "add_recording") as add_recording,
+        patch.object(controls.sentry.captures, "record_video", side_effect=record),
+        patch.object(Microphone, "ffmpeg_input", return_value=["-f", "pulse", "-i", "default"]),
+    ):
+        state = request(base, "/api/video/record/start", "POST")[1]
+        assert state["recording"]["active"] and state["recording"]["started"]
+        assert request(base, "/api/video/record/start", "POST")[0] == 409
+        state = request(base, "/api/video/record/stop", "POST")[1]
+    assert saved.is_set() and not state["recording"]["active"]
+    assert state["recording"]["result"] == {
+        "message": "Saved · 20260914-101500-250-manual-recording.mp4",
+        "error": False,
+    }
+    assert [c.args for c in add_recording.call_args_list] == [(1,), (-1,)]

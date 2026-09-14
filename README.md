@@ -134,6 +134,13 @@ video and disarming Sentry first. Captures reuse the active camera's latest fram
 JPEGs are encoded only with viewers (plus one initial frame); hidden preview produces none.
 Speaker actions use a separate lock and remain available while video is live.
 
+**Record video** beside Stop video saves what the live preview is showing to the Sentry
+**Captures** tab: an H.264 MP4 with node-microphone sound, up to 60 seconds. Press it again
+(or stop video) to finish early and keep the recording; if the microphone is unavailable the
+video is still saved without sound. POST `/api/video/record/start` and
+`/api/video/record/stop` do the same, and `/api/video/status` reports the recording under
+`recording`.
+
 **Object detection** beside the video controls toggles labeled boxes and confidence scores
 for 80 common COCO categories. It starts off by default and can be changed during playback.
 All viewers share the toggle. Install the lightweight, checksum-pinned model once with:
@@ -161,12 +168,33 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
 1. Edit/save a rule: object category, confidence, count, confirmation count, cooldown, and
    optional rectangular region. Region coordinates are percentages of the image; an object's
    bounding-box center must be inside it.
-2. Select an announcement, a saved SSH command, and/or a Telegram message. Announcements support language, speed,
-   Demon/Chipmunk/custom pitch, and volume. Each rule supports one action of each type.
+2. Select a photo, an audio recording, a video, an announcement, a saved SSH command, and/or a
+   Telegram message.
+   Announcements support language, speed, Demon/Chipmunk/custom pitch, and volume. Each rule
+   supports one action of each type.
 3. To rehearse first, check **Test mode**, save settings and start Sentry. Confirm `triggered` and `would_run` events in the event log.
 4. Disarm, uncheck **Test mode**, save settings, and start again to execute actions.
 5. Pause live video on the Video view to save work while monitoring continues. Disarm Sentry to stop rules;
    the camera is released when neither Sentry nor preview needs it.
+
+**Take a picture** saves the newest camera frame as a JPEG. Set **Number of pictures** (1–20)
+and **Time between pictures** (0.5–60 seconds) to take a series: the first is taken at once
+and the rest follow in the background. **Record audio** saves the chosen length (1–60
+seconds) of node-microphone sound as an AAC `.m4a` file. **Record a video** saves an H.264
+MP4 of the chosen duration (1–60 seconds) at up to 1280 pixels wide and 10 frames/second;
+while it records, the camera temporarily switches to that size and rate. **Record sound with
+the video** (on by default) muxes microphone audio into the MP4; when the microphone is
+unavailable the video is still saved, silent, and the event log says why. Photo, audio and
+video run before the other actions, and audio and video record in the background, so an
+announcement starts without waiting for them. Disarming stops a recording early and keeps
+what was captured.
+Encoding needs `ffmpeg` with libx264 (installed by the Pi bootstrap helper). Files are saved
+in `.local/captures/` (override with `captures_directory` or
+`SENTRY_NODE_CAPTURES_DIRECTORY`); only the newest 200 are kept. The **Captures** tab lists
+them to view, play, or delete; GET `/api/captures` lists them, `/captures/<name>` serves one
+(with byte ranges for phone video players), and POST `/api/captures/delete` with
+`{"name": ...}` removes one. Test mode logs photos, audio and video as `would_run` without
+capturing anything.
 
 Sentry remains active when the browser closes. With preview hidden, it requests camera
 capture at up to 640 pixels wide and the selected detection rate (0.5–5 updates/second),
@@ -291,6 +319,11 @@ until you turn it off or leave the page. Each press is limited to 60 seconds. To
 leaving the page, and connection loss stop transmission. The speaker is shared with speech
 and hardware audio tests; concurrent actions report busy. Video can run during transmission.
 
+**Record message** under Hold to talk records from the same phone microphone and saves the
+message to the Sentry **Captures** tab instead of playing it, up to 120 seconds. It uploads
+the browser's recording (WebM, Ogg or MP4) to POST `/api/captures/message` as
+`application/octet-stream`, which converts it to an AAC `.m4a` file of at most 5 MB.
+
 Phone browsers require a trusted HTTPS connection for microphone access; a LAN HTTP address
 cannot request it. The app can serve HTTP on 8083 and HTTPS on 8443 with shared controls:
 
@@ -330,8 +363,8 @@ or bind to 127.0.0.1. Devices and configuration use GET `/api/camera/list`, `/ap
 and `/api/config`; hardware actions use POST `/api/camera/test`, `/api/camera/capture`,
 `/api/audio/test-input`, `/api/audio/test-output`, and `/api/config/validate`. Runtime uses
 GET `/api/runtime` and POST `/api/runtime/start` or `/api/runtime/stop`. Video uses POST
-`/api/video/start`, POST `/api/video/stop`, GET `/api/video/status`, and GET `/api/video` for
-MJPEG. Speech uses POST `/api/speech` with a JSON body containing `text`, optional `voice`, and
+`/api/video/start`, POST `/api/video/stop`, POST `/api/video/record/start`, POST
+`/api/video/record/stop`, GET `/api/video/status`, and GET `/api/video` for MJPEG. Speech uses POST `/api/speech` with a JSON body containing `text`, optional `voice`, and
 optional `rate`. POST actions require `X-Sentry-Node-Control: 1`; speech also requires
 `Content-Type: application/json`.
 Phone audio uses POST `/api/talk/start`, `/api/talk/chunk`, `/api/talk/stop`, and

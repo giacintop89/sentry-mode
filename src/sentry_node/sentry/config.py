@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from sentry_node.audio.effects import VoiceEffects
+from sentry_node.audio.tunes import TUNES
 from sentry_node.vision.labels import CLASSES
 
 
@@ -34,6 +35,44 @@ class TTSAction(Model):
         if not value.strip():
             raise ValueError("Speech text cannot be blank.")
         return value
+
+
+class TuneAction(Model):
+    type: Literal["tune"] = "tune"
+    tune: str = "chime"
+    repeat: int = Field(default=1, ge=1, le=5)
+    volume: int = Field(default=60, ge=0, le=100)
+
+    @field_validator("tune")
+    @classmethod
+    def known_tune(cls, value):
+        if value not in TUNES:
+            raise ValueError("Select a supported tune.")
+        return value
+
+
+class SoundAction(Model):
+    type: Literal["sound"] = "sound"
+    sound: str = Field(pattern=r"^[a-z0-9-]{1,40}-[0-9a-f]{8}$")
+    repeat: int = Field(default=1, ge=1, le=5)
+    volume: int = Field(default=80, ge=0, le=100)
+
+
+class PhotoAction(Model):
+    type: Literal["photo"] = "photo"
+    count: int = Field(default=1, ge=1, le=20)
+    interval_seconds: float = Field(default=2, ge=0.5, le=60)
+
+
+class VideoAction(Model):
+    type: Literal["video"] = "video"
+    duration_seconds: int = Field(default=10, ge=1, le=60)
+    audio: StrictBool = True
+
+
+class AudioAction(Model):
+    type: Literal["audio"] = "audio"
+    duration_seconds: int = Field(default=10, ge=1, le=60)
 
 
 class SSHAction(Model):
@@ -101,13 +140,26 @@ class Rule(Model):
     cooldown_seconds: float = Field(default=60, ge=0, le=3600)
     region: tuple[float, float, float, float] | None = None
     actions: list[
-        Annotated[TTSAction | SSHAction | TelegramAction, Field(discriminator="type")]
-    ] = Field(min_length=1, max_length=3)
+        Annotated[
+            PhotoAction
+            | AudioAction
+            | VideoAction
+            | TTSAction
+            | TuneAction
+            | SoundAction
+            | SSHAction
+            | TelegramAction,
+            Field(discriminator="type"),
+        ]
+    ] = Field(min_length=1, max_length=8)
 
     @model_validator(mode="after")
     def distinct_actions(self):
         if len({action.type for action in self.actions}) != len(self.actions):
-            raise ValueError("A rule supports one action of each type: TTS, SSH, and Telegram.")
+            raise ValueError(
+                "A rule supports one action of each type: "
+                "photo, audio recording, video, TTS, tune, audio file, SSH, and Telegram."
+            )
         return self
 
     @field_validator("object")

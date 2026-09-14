@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import signal
 import ssl
 import tempfile
@@ -12,24 +13,27 @@ from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
 from sentry_node.app import run
 from sentry_node.audio.effects import VoiceEffects
 from sentry_node.audio.soundboard import Soundboard, SoundboardMessage
+from sentry_node.audio.sounds import MAX_UPLOAD_BYTES
 from sentry_node.audio.speech import available_voices, speak
 from sentry_node.audio.talk import MAX_CHUNK, TalkStream
+from sentry_node.audio.tunes import TUNES, play_tune
 from sentry_node.config import Settings
 from sentry_node.core.errors import HardwareError
 from sentry_node.hardware.camera import Camera, list_cameras
 from sentry_node.hardware.microphone import Microphone
 from sentry_node.hardware.speaker import Speaker
 from sentry_node.hardware.status import inspect_hardware, network_available
-from sentry_node.sentry.config import SentryConfig
+from sentry_node.sentry.config import SentryConfig, TuneAction
 from sentry_node.sentry.engine import Sentry
 from sentry_node.vision.capture import capture_image
+from sentry_node.vision.recording import MAX_MESSAGE_BYTES, MEDIA_TYPES
 from sentry_node.vision.stream import VideoStream
 
 logger = logging.getLogger(__name__)
@@ -42,6 +46,19 @@ class SpeechRequest(SoundboardMessage):
 class SoundboardReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[0-9a-f]{16}$")
+
+
+class CaptureReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(max_length=80)
+
+
+class SoundReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(max_length=64)
+
+
+MANUAL_VIDEO_SECONDS = 60
 
 
 class DetectionRequest(BaseModel):
@@ -76,6 +93,9 @@ class NodeControls:
         self.runtime_error: str | None = None
         self.cached_status: dict | None = None
         self.checked = 0.0
+        self.recording_lock = threading.Lock()
+        self.recording: dict | None = None
+        self.recording_result: dict | None = None
 
     def runtime_status(self) -> dict:
         return {
@@ -126,8 +146,12 @@ class NodeControls:
             return available_voices(self.config)
         if path == "/api/soundboard":
             return self.soundboard.listing()
+        if path == "/api/sounds":
+            return self.sentry.sounds.listing()
+        if path == "/api/captures":
+            return self.sentry.captures.listing()
         if path == "/api/video/status":
-            return self.video.status()
+            return self.video_status()
         if path == "/api/camera/list":
             return {"devices": list_cameras(), "configured": self.config.camera.device}
         if path == "/api/audio/list":
@@ -177,6 +201,74 @@ class NodeControls:
         finally:
             self.audio_lock.release()
 
+    def save_message(self, data: bytes) -> dict:
+        name = self.sentry.captures.save_message(data)
+        return {"message": "Message saved to Captures.", "name": name}
+
+    def video_status(self) -> dict:
+        recording = self.recording
+        active = recording is not None and recording["thread"].is_alive()
+        return {
+            **self.video.status(),
+            "recording": {
+                "active": active,
+                "started": recording["started"] if active else None,
+                "max_seconds": MANUAL_VIDEO_SECONDS,
+                "result": self.recording_result,
+            },
+        }
+
+    def start_video_recording(self) -> dict:
+        with self.recording_lock:
+            if self.recording is not None and self.recording["thread"].is_alive():
+                raise BlockingIOError("A video is already recording.")
+            if not self.video.status()["running"]:
+                raise BlockingIOError("Start video before recording.")
+            stop = threading.Event()
+            try:
+                microphone, sound_error = Microphone(self.config.microphone).ffmpeg_input(), None
+            except HardwareError as exc:
+                microphone, sound_error = None, str(exc)
+            self.video.add_recording(1)
+
+            def record():
+                try:
+                    name, audio_error = self.sentry.captures.record_video(
+                        self.video.latest_frame,
+                        MANUAL_VIDEO_SECONDS,
+                        "manual recording",
+                        stop,
+                        size=self.video.recording_size(),
+                        microphone=microphone,
+                    )
+                    missing = sound_error or audio_error
+                    self.recording_result = {
+                        "message": "Saved · "
+                        + name
+                        + (f" · no sound: {missing}" if missing else ""),
+                        "error": False,
+                    }
+                except Exception as exc:
+                    self.recording_result = {
+                        "message": f"Video recording failed: {exc}",
+                        "error": True,
+                    }
+                finally:
+                    self.video.add_recording(-1)
+
+            self.recording_result = None
+            thread = threading.Thread(target=record, name="sentry-node-manual-video")
+            self.recording = {"thread": thread, "stop": stop, "started": time.time()}
+            thread.start()
+            return self.video_status()
+
+    def stop_video_recording(self) -> dict:
+        with self.recording_lock:
+            if self.recording is not None:
+                self.recording["stop"].set()
+                self.recording["thread"].join(timeout=30)
+            return self.video_status()
+
     def post(self, path: str, body: dict | None = None) -> dict | bytes:
         if self.shutdown_requested.is_set():
             raise HardwareError("Server is shutting down.")
@@ -193,18 +285,66 @@ class NodeControls:
             return self.talk.start(VoiceEffects.model_validate(body if body is not None else {}))
         if path == "/api/video/start":
             self.cached_status = None
-            return self.video.start()
+            self.video.start()
+            return self.video_status()
         if path == "/api/video/detection":
-            return self.video.set_detection(DetectionRequest.model_validate(body).enabled)
+            self.video.set_detection(DetectionRequest.model_validate(body).enabled)
+            return self.video_status()
         if path == "/api/video/stop":
             self.cached_status = None
-            return self.video.stop()
+            self.stop_video_recording()
+            self.video.stop()
+            return self.video_status()
+        if path == "/api/video/record/start":
+            return self.start_video_recording()
+        if path == "/api/video/record/stop":
+            return self.stop_video_recording()
         if path == "/api/speech":
             return self.speak(SpeechRequest.model_validate(body))
         if path == "/api/soundboard":
             return self.soundboard.save(SoundboardMessage.model_validate(body))
         if path == "/api/soundboard/delete":
             return self.soundboard.delete(SoundboardReference.model_validate(body).id)
+        if path == "/api/sounds/delete":
+            sound = SoundReference.model_validate(body).id
+            used = [
+                rule.name
+                for rule in self.sentry.config.rules
+                if any(getattr(action, "sound", None) == sound for action in rule.actions)
+            ]
+            if used:
+                raise BlockingIOError(
+                    "This audio file is used by " + ", ".join(used) + "; change those rules first."
+                )
+            return self.sentry.sounds.delete(sound)
+        if path == "/api/sounds/play":
+            sound = SoundReference.model_validate(body).id
+            self.sentry.sounds.path(sound)
+            if not self.audio_lock.acquire(blocking=False):
+                raise BlockingIOError("Speaker is busy; wait for the current audio operation.")
+            try:
+                return self.sentry.sounds.play(
+                    self.config, sound, stop_event=self.shutdown_requested
+                )
+            finally:
+                self.audio_lock.release()
+        if path == "/api/tunes/play":
+            tune = TuneAction.model_validate({**(body or {}), "type": "tune"})
+            if not self.audio_lock.acquire(blocking=False):
+                raise BlockingIOError("Speaker is busy; wait for the current audio operation.")
+            try:
+                play_tune(
+                    self.config.speaker,
+                    tune.tune,
+                    tune.repeat,
+                    tune.volume,
+                    self.shutdown_requested,
+                )
+            finally:
+                self.audio_lock.release()
+            return {"message": f"Played {TUNES[tune.tune][0]} on the node speaker."}
+        if path == "/api/captures/delete":
+            return self.sentry.captures.delete(CaptureReference.model_validate(body).name)
         if path == "/api/soundboard/play":
             return self.speak(self.soundboard.get(SoundboardReference.model_validate(body).id))
         if path == "/api/camera/capture" and self.video.status()["capture_running"]:
@@ -256,6 +396,10 @@ JSON_POSTS = {
     "/api/soundboard",
     "/api/soundboard/delete",
     "/api/soundboard/play",
+    "/api/captures/delete",
+    "/api/sounds/delete",
+    "/api/sounds/play",
+    "/api/tunes/play",
 }
 
 
@@ -321,8 +465,56 @@ def make_handler(controls: NodeControls):
                 )
             elif self.path == "/api/video":
                 self.stream_video()
+            elif self.path.startswith("/captures/"):
+                self.send_capture(self.path.removeprefix("/captures/"))
             else:
                 self.execute(lambda: controls.get(self.path))
+
+        def send_capture(self, name: str):
+            try:
+                path = controls.sentry.captures.path(name)
+                size = path.stat().st_size
+            except (LookupError, OSError):
+                self.respond({"error": "Capture not found."}, 404)
+                return
+            # Phone browsers fetch video in byte ranges and will not play it otherwise.
+            start, end, status = 0, size - 1, 200
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
+            if match and size and (match[1] or match[2]):
+                if match[1]:
+                    start = int(match[1])
+                    end = min(int(match[2]), size - 1) if match[2] else size - 1
+                else:
+                    start = max(0, size - int(match[2]))
+                if start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                status = 206
+            self.send_response(status)
+            self.send_header("Content-Type", MEDIA_TYPES[path.suffix[1:]])
+            self.send_header("Content-Length", str(end - start + 1))
+            self.send_header("Accept-Ranges", "bytes")
+            if status == 206:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Disposition", f'inline; filename="{name}"')
+            self.end_headers()
+            try:
+                with path.open("rb") as source:
+                    source.seek(start)
+                    remaining = end - start + 1
+                    while remaining > 0:
+                        chunk = source.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+            except (OSError, TimeoutError):
+                pass  # Viewer closed the player or seeked elsewhere.
 
         def stream_video(self):
             controls.video.add_viewer(1)
@@ -380,6 +572,10 @@ def make_handler(controls: NodeControls):
                 limit = MAX_CHUNK if self.path == "/api/talk/chunk" else 8192
                 if self.path == "/api/sentry/config":
                     limit = 262144
+                if self.path == "/api/sounds/upload":
+                    limit = MAX_UPLOAD_BYTES
+                if self.path == "/api/captures/message":
+                    limit = MAX_MESSAGE_BYTES
                 if length < 0 or length > limit:
                     self.close_connection = True
                     self.respond({"error": f"Request body exceeds the {limit}-byte limit."}, 413)
@@ -397,6 +593,31 @@ def make_handler(controls: NodeControls):
                     token = self.headers.get("X-Sentry-Node-Talk", "")
                     sequence = int(self.headers.get("X-Audio-Sequence", "-1"))
                     self.execute(lambda: controls.talk.chunk(token, sequence, body_bytes))
+                elif self.path == "/api/sounds/upload":
+                    if self.headers.get("Content-Type") != "application/octet-stream":
+                        self.close_connection = True
+                        self.respond(
+                            {"error": "Audio uploads require application/octet-stream."}, 415
+                        )
+                        return
+                    self.connection.settimeout(60)
+                    body_bytes = self.rfile.read(length)
+                    if len(body_bytes) != length:
+                        raise ValueError("Incomplete audio upload")
+                    name = unquote(self.headers.get("X-Sound-Name", ""))[:200]
+                    self.execute(lambda: controls.sentry.sounds.add(name, body_bytes))
+                elif self.path == "/api/captures/message":
+                    if self.headers.get("Content-Type") != "application/octet-stream":
+                        self.close_connection = True
+                        self.respond(
+                            {"error": "Recorded messages require application/octet-stream."}, 415
+                        )
+                        return
+                    self.connection.settimeout(60)
+                    body_bytes = self.rfile.read(length)
+                    if len(body_bytes) != length:
+                        raise ValueError("Incomplete recorded message")
+                    self.execute(lambda: controls.save_message(body_bytes))
                 elif self.path in {"/api/talk/stop", "/api/talk/cancel"} and not length:
                     token = self.headers.get("X-Sentry-Node-Talk", "")
                     self.execute(
@@ -516,6 +737,7 @@ def serve(
                     assert secure_thread is not None
                     secure_thread.join()
                 controls.talk.close()
+                controls.stop_video_recording()
                 controls.sentry.disarm()
                 controls.video.close()
                 controls.stop_runtime()

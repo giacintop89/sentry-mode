@@ -14,19 +14,28 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sentry_node.audio.sounds import SoundLibrary
 from sentry_node.audio.speech import speak
+from sentry_node.audio.tunes import TUNES, play_tune
 from sentry_node.config import Settings
 from sentry_node.core.errors import HardwareError
+from sentry_node.hardware.microphone import Microphone
 from sentry_node.sentry.config import (
+    AudioAction,
+    PhotoAction,
     Rule,
     SentryConfig,
+    SoundAction,
     SSHAction,
     SSHCommand,
     TelegramAction,
     TTSAction,
+    TuneAction,
+    VideoAction,
 )
 from sentry_node.vision.detection import Detection
 from sentry_node.vision.labels import CLASSES
+from sentry_node.vision.recording import Captures
 from sentry_node.vision.stream import VideoStream
 
 logger = logging.getLogger(__name__)
@@ -43,7 +52,16 @@ class RuleState:
 @dataclass
 class Job:
     rule: str
-    action: TTSAction | SSHAction | TelegramAction
+    action: (
+        PhotoAction
+        | AudioAction
+        | VideoAction
+        | TTSAction
+        | TuneAction
+        | SoundAction
+        | SSHAction
+        | TelegramAction
+    )
     created: float
 
 
@@ -67,6 +85,9 @@ class Sentry:
         self.states: dict[str, RuleState] = {}
         self.last_sample = 0.0
         self.active_action: str | None = None
+        self.captures = Captures(settings.captures_directory)
+        self.sounds = SoundLibrary(settings.sounds_directory)
+        self.recorders: list[threading.Thread] = []
         self._load()
         self.video.detection.on_result = self.observe
         self.video.detection.on_error = self.fault
@@ -187,6 +208,13 @@ class Sentry:
                 rules = [r for r in self.config.rules if r.enabled]
                 if not rules:
                     raise ValueError("Enable at least one rule before starting Sentry.")
+                for rule in rules:
+                    for action in rule.actions:
+                        if isinstance(action, SoundAction) and not self.sounds.exists(action.sound):
+                            raise ValueError(
+                                f"Rule {rule.name} plays an audio file that was deleted; "
+                                "choose another file."
+                            )
                 if not self.config.test_mode and any(
                     isinstance(action, TelegramAction) for rule in rules for action in rule.actions
                 ):
@@ -233,6 +261,13 @@ class Sentry:
                 self.thread.join(timeout=6)
                 if self.thread.is_alive():
                     raise HardwareError("Sentry actions are still stopping.")
+            for recorder in self.recorders:
+                recorder.join(timeout=15)
+            self.recorders = [r for r in self.recorders if r.is_alive()]
+            if self.recorders:
+                raise HardwareError(
+                    "A Sentry photo, video or audio recording is still being saved."
+                )
             self.video.set_sentry(False)
             if was_armed:
                 self._event("disarmed", "Sentry stopped; pending actions discarded.")
@@ -291,8 +326,32 @@ class Sentry:
                 self._event("triggered", f"Confirmed {rule.object} appearance.", rule.name)
                 for action in rule.actions:
                     if self.config.test_mode:
-                        if isinstance(action, TTSAction):
+                        if isinstance(action, PhotoAction):
+                            detail = (
+                                f"Photos: {action.count} every {action.interval_seconds:g} s"
+                                if action.count > 1
+                                else "Photo"
+                            )
+                        elif isinstance(action, VideoAction):
+                            detail = f"Video: {action.duration_seconds} s" + (
+                                " with sound" if action.audio else ""
+                            )
+                        elif isinstance(action, AudioAction):
+                            detail = f"Audio: {action.duration_seconds} s"
+                        elif isinstance(action, TTSAction):
                             detail = "TTS: " + action.text
+                        elif isinstance(action, TuneAction):
+                            detail = (
+                                "Tune: "
+                                + TUNES[action.tune][0]
+                                + (f" x{action.repeat}" if action.repeat > 1 else "")
+                            )
+                        elif isinstance(action, SoundAction):
+                            detail = (
+                                "Audio file: "
+                                + action.sound
+                                + (f" x{action.repeat}" if action.repeat > 1 else "")
+                            )
                         elif isinstance(action, SSHAction):
                             detail = "SSH: " + action.command_id
                         else:
@@ -343,14 +402,28 @@ class Sentry:
                 if time.monotonic() > deadline:
                     self._event("expired", "Action became stale before it could start.", job.rule)
                     continue
-                if isinstance(job.action, TTSAction):
+                finished = "Action completed."
+                if isinstance(job.action, PhotoAction) and job.action.count > 1:
+                    self._start_photo_series(job.rule, job.action)
+                    continue
+                if isinstance(job.action, PhotoAction):
+                    self.active_action = "Photo: " + job.rule
+                    finished = "Photo saved: " + self._save_photo(job.rule)
+                elif isinstance(job.action, VideoAction):
+                    self._start_recording(job.rule, job.action)
+                    continue
+                elif isinstance(job.action, AudioAction):
+                    self._start_audio(job.rule, job.action.duration_seconds)
+                    continue
+                elif isinstance(job.action, (TTSAction, TuneAction, SoundAction)):
+                    kind = {TTSAction: "announcement", TuneAction: "tune"}.get(
+                        type(job.action), "audio file"
+                    )
                     while not self.cancelled.is_set() and time.monotonic() < deadline:
                         if self.audio_lock.acquire(timeout=0.1):
                             break
                     else:
-                        self._event(
-                            "expired", "Speaker stayed busy; announcement skipped.", job.rule
-                        )
+                        self._event("expired", f"Speaker stayed busy; {kind} skipped.", job.rule)
                         continue
                     try:
                         if self.cancelled.is_set():
@@ -358,20 +431,43 @@ class Sentry:
                         if time.monotonic() > deadline:
                             self._event(
                                 "expired",
-                                "Announcement became stale while waiting for the speaker.",
+                                f"{kind.capitalize()} became stale while waiting for the speaker.",
                                 job.rule,
                             )
                             continue
-                        self.active_action = "TTS: " + job.rule
-                        self._event("action_started", "Playing announcement.", job.rule)
-                        speak(
-                            self.settings,
-                            job.action.text,
-                            job.action.voice,
-                            job.action.rate,
-                            effects=job.action.effects,
-                            stop_event=self.cancelled,
-                        )
+                        if isinstance(job.action, TTSAction):
+                            self.active_action = "TTS: " + job.rule
+                            self._event("action_started", "Playing announcement.", job.rule)
+                            speak(
+                                self.settings,
+                                job.action.text,
+                                job.action.voice,
+                                job.action.rate,
+                                effects=job.action.effects,
+                                stop_event=self.cancelled,
+                            )
+                        elif isinstance(job.action, SoundAction):
+                            self.active_action = "Audio file: " + job.rule
+                            self._event(
+                                "action_started",
+                                "Playing audio file: " + job.action.sound,
+                                job.rule,
+                            )
+                            self.sounds.play(
+                                self.settings,
+                                job.action.sound,
+                                repeat=job.action.repeat,
+                                volume=job.action.volume,
+                                stop_event=self.cancelled,
+                            )
+                        else:
+                            self.active_action = "Tune: " + job.rule
+                            self._event(
+                                "action_started",
+                                "Playing tune: " + TUNES[job.action.tune][0],
+                                job.rule,
+                            )
+                            self._play_tune(job.action)
                     finally:
                         self.audio_lock.release()
                 elif isinstance(job.action, SSHAction):
@@ -386,7 +482,7 @@ class Sentry:
                     self.active_action = "Telegram: " + job.rule
                     self._event("action_started", "Sending Telegram message.", job.rule)
                     self._telegram(job.action)
-                self._event("action_finished", "Action completed.", job.rule)
+                self._event("action_finished", finished, job.rule)
             except Exception as exc:
                 self._event(
                     "cancelled" if self.cancelled.is_set() else "action_failed", str(exc), job.rule
@@ -395,6 +491,92 @@ class Sentry:
                 self.active_action = None
         if self.error:
             self.video.set_sentry(False)
+
+    def _play_tune(self, action: TuneAction):
+        play_tune(self.settings.speaker, action.tune, action.repeat, action.volume, self.cancelled)
+
+    def _save_photo(self, rule: str) -> str:
+        frame = self.video.latest_frame()
+        if frame is None:
+            raise HardwareError("No camera frame is available for a photo.")
+        return self.captures.save_photo(frame, rule)
+
+    def _in_background(self, rule: str, started: str, work):
+        # Videos and photo series run beside the queue, so an announcement is not held back.
+        self.recorders = [r for r in self.recorders if r.is_alive()]
+        recorder = threading.Thread(target=work, name="sentry-node-recording")
+        self.recorders.append(recorder)
+        self._event("action_started", started, rule)
+        recorder.start()
+
+    def _start_photo_series(self, rule: str, action: PhotoAction):
+        cancelled = self.cancelled
+
+        def take():
+            start = time.monotonic()
+            for index in range(action.count):
+                if index and cancelled.wait(
+                    max(0, start + index * action.interval_seconds - time.monotonic())
+                ):
+                    self._event("cancelled", f"Photo series stopped after {index}.", rule)
+                    return
+                try:
+                    self._event("action_finished", "Photo saved: " + self._save_photo(rule), rule)
+                except Exception as exc:
+                    self._event("action_failed", f"Photo {index + 1} failed: {exc}", rule)
+
+        self._in_background(
+            rule, f"Taking {action.count} photos every {action.interval_seconds:g} s.", take
+        )
+
+    def _microphone(self) -> list[str]:
+        return Microphone(self.settings.microphone).ffmpeg_input()
+
+    def _start_recording(self, rule: str, action: VideoAction):
+        cancelled, seconds = self.cancelled, action.duration_seconds
+        self.video.add_recording(1)
+
+        def record():
+            try:
+                microphone = sound_error = None
+                if action.audio:
+                    try:
+                        microphone = self._microphone()
+                    except HardwareError as exc:
+                        sound_error = str(exc)
+                name, audio_error = self.captures.record_video(
+                    self.video.latest_frame,
+                    seconds,
+                    rule,
+                    cancelled,
+                    size=self.video.recording_size(),
+                    microphone=microphone,
+                )
+                sound_error = sound_error or audio_error
+                self._event(
+                    "action_finished",
+                    "Video saved: " + name + (f" (no sound: {sound_error})" if sound_error else ""),
+                    rule,
+                )
+            except Exception as exc:
+                self._event("action_failed", f"Video recording failed: {exc}", rule)
+            finally:
+                self.video.add_recording(-1)
+
+        sound = " with sound" if action.audio else ""
+        self._in_background(rule, f"Recording a {seconds}-second video{sound}.", record)
+
+    def _start_audio(self, rule: str, seconds: int):
+        cancelled = self.cancelled
+
+        def record():
+            try:
+                name = self.captures.record_audio(self._microphone(), seconds, rule, cancelled)
+                self._event("action_finished", "Audio saved: " + name, rule)
+            except Exception as exc:
+                self._event("action_failed", f"Audio recording failed: {exc}", rule)
+
+        self._in_background(rule, f"Recording {seconds} seconds of audio.", record)
 
     def _telegram(self, action: TelegramAction):
         # Isolate DNS/network I/O so disarm and the absolute timeout can reap it promptly.

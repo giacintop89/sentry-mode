@@ -30,6 +30,8 @@ detection:
   confidence: 0.45
   max_fps: 2
 sentry_state_file: .local/sentry.json
+# Sentry photos and videos; only the newest 200 files are kept.
+captures_directory: .local/captures
 # Exact dashboard origins allowed to embed this app; empty blocks embedding.
 web_frame_origins: []
 sentry:

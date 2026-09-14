@@ -101,6 +101,14 @@ class Microphone:
         except HardwareError:
             return False
 
+    def ffmpeg_input(self) -> list[str]:
+        """ffmpeg input options for the configured microphone, for recordings of any length."""
+        device = self.device()
+        if device.backend == "alsa":
+            return ["-f", "alsa", "-i", device.name]
+        # PipeWire sessions also serve the Pulse protocol that ffmpeg reads.
+        return ["-f", "pulse", "-i", "default" if device.name == "auto" else device.name]
+
     def test_input(self) -> dict[str, float]:
         device = self.device()
         with tempfile.TemporaryDirectory(prefix="sentry-node-input-") as directory:

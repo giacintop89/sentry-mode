@@ -2,7 +2,11 @@
   const enable = document.getElementById('enable-mic'), hold = document.getElementById('hold-talk');
   const result = document.getElementById('talk-result'), setup = document.getElementById('phone-setup');
   const speakButton = document.getElementById('speak');
+  const recordButton = document.getElementById('record-message');
+  const recordResult = document.getElementById('message-result');
   let stream, context, source, processor, muted, current, pressed = false, enabling = false;
+  let recorder, recordTimer, recordStarted;
+  const MAX_MESSAGE_SECONDS = 120;
   function status(message, kind = '') { result.textContent = message; result.className = 'result ' + kind; }
   async function api(path, session, data, sequence) {
     const headers = {'X-Sentry-Node-Control':'1'};
@@ -21,7 +25,60 @@
     source = processor = muted = undefined;
     context?.close().catch(() => {}); context = undefined;
     hold.disabled = true; enable.disabled = false; enable.textContent = 'Enable phone microphone';
+    recordButton.disabled = true;
   }
+  function messageStatus(message, kind = '') {
+    recordResult.textContent = message; recordResult.className = 'result ' + kind;
+  }
+  function messageFormat() {
+    // Browsers differ: Chrome and Firefox record WebM, Safari MP4. ffmpeg reads both.
+    return ['audio/webm', 'audio/mp4', 'audio/ogg'].find(type =>
+      window.MediaRecorder?.isTypeSupported(type)) || '';
+  }
+  function showRecording() {
+    const seconds = Math.round((Date.now() - recordStarted) / 1000);
+    messageStatus('Recording · ' + seconds + ' s of ' + MAX_MESSAGE_SECONDS + ' s');
+  }
+  function startMessage() {
+    const type = messageFormat();
+    if (!stream || !type) { messageStatus('This browser cannot record messages.', 'error'); return; }
+    const chunks = [];
+    recorder = new MediaRecorder(stream, {mimeType: type});
+    recorder.addEventListener('dataavailable', event => { if (event.data.size) chunks.push(event.data); });
+    recorder.addEventListener('stop', async () => {
+      clearInterval(recordTimer); recorder = undefined;
+      recordButton.textContent = 'Record message'; recordButton.classList.remove('recording');
+      hold.disabled = !stream; enable.disabled = false;
+      try {
+        const blob = new Blob(chunks, {type});
+        if (!blob.size) throw Error('The recording is empty.');
+        const response = await fetch('/api/captures/message', {method:'POST',
+          headers:{'X-Sentry-Node-Control':'1', 'Content-Type':'application/octet-stream'},
+          body: blob, signal: AbortSignal.timeout(60000)});
+        const info = await response.json();
+        if (!response.ok) throw Error(info.error || 'The message could not be saved.');
+        messageStatus(info.message + ' Open the Sentry Captures tab to play it.', 'success');
+      } catch (error) { messageStatus(error.message, 'error'); }
+      finally { recordButton.disabled = !stream; }
+    });
+    recorder.start();
+    recordStarted = Date.now();
+    recordButton.textContent = 'Stop recording'; recordButton.classList.add('recording');
+    hold.disabled = true; enable.disabled = true;
+    showRecording();
+    recordTimer = setInterval(() => {
+      showRecording();
+      if (Date.now() - recordStarted >= MAX_MESSAGE_SECONDS * 1000) stopMessage();
+    }, 1000);
+  }
+  function stopMessage() {
+    if (!recorder || recorder.state === 'inactive') return;
+    recordButton.disabled = true; messageStatus('Saving the message…');
+    recorder.stop();
+  }
+  recordButton.addEventListener('click', () => {
+    if (recorder) stopMessage(); else startMessage();
+  });
   async function cancel(session, message) {
     if (session.failed) return;
     document.getElementById('ptt-effects').disabled=false;
@@ -30,7 +87,7 @@
     if (session.token) api('cancel', session).catch(() => {});
     if (current === session) current = undefined;
     hold.textContent = 'Hold to talk'; hold.classList.remove('transmitting');
-    speakButton.disabled = false; status(message, 'error');
+    speakButton.disabled = false; recordButton.disabled = true; status(message, 'error');
   }
   async function enableMicrophone() {
     if (enabling || current) return;
@@ -48,7 +105,10 @@
         if (current) cancel(current, 'Phone microphone disconnected.'); else releaseMicrophone();
       });
       hold.disabled = false; enable.disabled = false; enable.textContent = 'Turn microphone off';
+      recordButton.disabled = !messageFormat();
       status('Microphone ready. Hold to transmit; release to stop.');
+      messageStatus(messageFormat() ? 'Ready to record a message to Captures.'
+        : 'This browser cannot record messages.', messageFormat() ? '' : 'error');
     } catch (error) {
       releaseMicrophone();
       status(error.name === 'NotAllowedError' ? 'Microphone permission denied. Allow it in your browser’s site settings.' : error.message, 'error');
@@ -70,7 +130,7 @@
     pressed = true;
     const session = {chain:Promise.resolve(), pending:0, sequence:0, failed:false}; current = session;
     document.getElementById('ptt-effects').disabled=true;
-    enable.disabled = true; speakButton.disabled = true;
+    enable.disabled = true; speakButton.disabled = true; recordButton.disabled = true;
     hold.textContent = 'Connecting…'; status('Opening the speaker. Keep holding…');
     try {
       await context.resume();
@@ -101,6 +161,7 @@
     source = processor = muted = undefined;
     hold.textContent = 'Hold to talk'; hold.classList.remove('transmitting');
     hold.disabled = !stream; enable.disabled = false; speakButton.disabled = false;
+    recordButton.disabled = !stream || !messageFormat();
   }
   async function finish() {
     pressed = false;
@@ -131,6 +192,7 @@
   hold.addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); finish(); } });
   function leave() {
     pressed = false;
+    if (recorder) { stopMessage(); return; }
     if (current) cancel(current, 'Transmission stopped because the page lost focus.');
     else releaseMicrophone();
   }

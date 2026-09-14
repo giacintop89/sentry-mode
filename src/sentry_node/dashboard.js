@@ -21,7 +21,8 @@
       document.body.dataset.view = voice ? 'voice' : 'video';
       document.querySelector('.comms-column').hidden = !voice;
       document.querySelector('.visual-column').hidden = voice;
-      document.querySelector('.telemetry-grid').hidden = voice;
+      const telemetry = document.querySelector('.telemetry-grid');
+      if (telemetry) telemetry.hidden = voice;
       for (const link of document.querySelectorAll('.app-views a')) {
         const active = voice ? link.hasAttribute('data-voice-link') : link.getAttribute('href') === '/';
         if (active) link.setAttribute('aria-current', 'page');
