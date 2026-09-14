@@ -123,8 +123,10 @@ Video and Voice are separate views, and Sentry separates Rules, Integrations, an
 The rule editor has Conditions and Actions tabs with persistent save controls. **Test rule**,
 beside Delete rule, runs the actions in the editor once on the node without saving the rule or
 waiting for a detection; it is refused while armed, reports what ran in the event log, and only
-logs the actions when test mode is on. At desktop widths, long editors scroll inside the
-available frame height; phones use a stacked layout.
+logs the actions when test mode is on. On a wide screen with the height for it, long editors
+scroll inside the available frame height; narrower or shorter screens — phones and tablets in
+either orientation — scroll the page instead, stack the rule library above the editor, and give
+the camera the page's width.
 Drafts survive switching tabs. Direct links include `/#speech`, `/#push-to-talk`,
 `/sentry#integrations`, and `/sentry#events`. Assets require no external CDN.
 

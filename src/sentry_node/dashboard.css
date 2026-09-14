@@ -15,7 +15,7 @@ button.recording,button.danger.recording{border-color:var(--red);color:#1a0705;b
 .hardware-status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:20px}.hardware-status .card{padding:20px;border:1px solid var(--line);background:var(--panel);font:14.667px var(--mono);text-transform:uppercase;color:var(--muted)}.hardware-status .card strong{display:block;margin-top:12px;color:var(--amber);font-size:22.667px}.hardware-status .card.ok strong{color:var(--green)}#updated{font:13.667px var(--mono);color:var(--muted);display:inline-block;margin-left:12px}.panels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;margin-top:22px}.panels section>p{font-size:15.667px}.panels section>.result{font-size:14.667px}.panels #preview{display:block;width:100%;margin-top:18px}#runtime-state{color:var(--green);font-family:var(--mono)}
 @media(min-width:1500px){.monitor-layout{grid-template-columns:minmax(0,2fr) minmax(360px,1fr)}.view{aspect-ratio:16/9}}
 @media(max-width:1100px){main{padding:22px}.monitor-layout{grid-template-columns:minmax(0,1.4fr) minmax(310px,1fr);gap:16px}.camera-panel,.comms-panel{padding:18px}.telemetry-card{padding:15px}.telemetry-card strong{font-size:23.667px}.telemetry-label{font-size:12.667px}.rule-workbench .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.rules-layout{grid-template-columns:250px minmax(0,1fr);gap:16px}.sentry-control{padding:20px;gap:20px}.app-views .view-description{display:none}}
-@media(max-width:820px){.monitor-layout{grid-template-columns:1fr}.telemetry-grid{gap:10px}.telemetry-card small{font-size:12.667px}.comms-panel .fields{grid-template-columns:1fr 1fr}.integration-layout{grid-template-columns:1fr}.sentry-control{grid-template-columns:1fr}.sentry-control-main{padding:0 0 16px;border-right:0;border-bottom:1px solid var(--line)}.sentry-control-settings .fields{grid-template-columns:1fr 1fr}.rules-layout{grid-template-columns:1fr}.rule-library{position:static}.rule-library #rules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.rule{margin:0}.rule-library #new-rule{width:auto}.event{grid-template-columns:1fr;gap:5px}.panels{gap:16px}.panels .actions{flex-direction:column;align-items:stretch}}
+@media(max-width:900px){.monitor-layout{grid-template-columns:1fr}.telemetry-grid{gap:10px}.telemetry-card small{font-size:12.667px}.comms-panel .fields{grid-template-columns:1fr 1fr}.integration-layout{grid-template-columns:1fr}.sentry-control{grid-template-columns:1fr}.sentry-control-main{padding:0 0 16px;border-right:0;border-bottom:1px solid var(--line)}.sentry-control-settings .fields{grid-template-columns:1fr 1fr}.rules-layout{grid-template-columns:1fr}.rule-library{position:static}.rule-library #rules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.rule{margin:0}.rule-library #new-rule{width:auto}.event{grid-template-columns:1fr;gap:5px}.panels{gap:16px}.panels .actions{flex-direction:column;align-items:stretch}}
 @media(max-width:540px){main{padding:20px 14px}.app-views{margin-bottom:20px}.app-views a{flex:1;justify-content:center;padding:12px 5px;font-size:14.667px;gap:6px}.app-views svg{width:15px;height:15px}.telemetry-grid{grid-template-columns:1fr 1fr;margin-bottom:16px}.telemetry-card{padding:14px}.telemetry-card strong{font-size:23.667px;margin-top:10px}.telemetry-label{font-size:12.667px;letter-spacing:.5px}.telemetry-card small{font-size:12.667px}.visual-column{gap:16px}.view{aspect-ratio:4/3}.camera-panel,.comms-panel,.readout-panel{padding:17px}.camera-panel .heading{gap:6px}.badge{font-size:11.667px;padding:4px 6px}.panel-title,.panel-heading>div{gap:7px}.panel-heading h2{font-size:18.667px}.camera-panel>.actions button{flex:1}.camera-panel>.actions{gap:8px}.placeholder strong{font-size:13.667px}.placeholder small{font-size:13.667px}.workspace-tabs button{padding:12px;font-size:15.667px;flex:1}.workspace-tabs button span{display:none}.sentry-control{padding:18px}.sentry-control-settings .fields{grid-template-columns:1fr;gap:14px}.sentry-control .actions button{flex:1;white-space:nowrap}.sentry-control h2{font-size:22.667px}.sentry-control .badge{font-size:12.667px}.rule-workbench{padding:18px}.rule-workbench .fields{gap:0 12px}.rule-workbench .region{grid-template-columns:repeat(2,minmax(0,1fr))}.rule-library #rules{grid-template-columns:1fr}.rule-workbench .actions button{flex:1}.rule-workbench #tts-options{padding:2px 12px 14px}.rule-workbench #tts-options .fields{grid-template-columns:1fr}.integration-layout section{padding:18px}.integration-layout .actions button{flex:1}.integration-layout section>p{min-height:0}.hardware-status{grid-template-columns:1fr 1fr;gap:10px}.hardware-status .card{padding:16px}.panels{grid-template-columns:1fr}.panels section{padding:18px}#updated{display:block;margin:12px 0 0}.event-panel{padding:18px}.event{padding:14px 10px;font-size:14.667px}.event small{font-size:12.667px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{transition:none!important;animation:none!important}}
 
@@ -53,7 +53,7 @@ label{font-size:16.667px}input:not([type=range]):not([type=checkbox]),select,tex
 .sentry-control{clip-path:none;border:1px solid #2c6544;background:#06110b}.sentry-control:before{display:none}.sentry-control h2{margin-top:0}.sentry-control-settings .check{font-size:16.667px}
 .rule-workbench h3:first-child{font-size:22.667px;color:#a8ff85}.rule strong{font-size:17.667px}.rule small{font-size:15.667px}.rule-library>p{font-size:15.667px}.rule-workbench label.check[for^=use-]:not([for=use-region]){color:#baffc8;background:#14291c;border-color:#2c6544}.rule-workbench #photo-options,.rule-workbench #audio-options,.rule-workbench #video-options,.rule-workbench #tts-options,.rule-workbench #tune-options,.rule-workbench #sound-options,.rule-workbench #telegram-options,.rule-workbench #ssh-options{background:#06110b;border-color:#2c6544}
 .hardware-status .card{background:#08190f;border-color:#21492f;font-size:16.667px}.hardware-status .card strong{color:#ffa65b}.hardware-status .card.ok strong{color:#8dffa5}.event{font-size:16.667px}.event small{font-size:15.667px}
-@media(max-width:820px){main{padding:16px}.connection-status{font-size:14.667px}.app-views a{font-size:15.667px;padding:10px 12px}.telemetry-label{font-size:14.667px}.telemetry-card strong{font-size:22.667px}.telemetry-card small{font-size:13.667px}}
+@media(max-width:900px){main{padding:16px}.connection-status{font-size:14.667px}.app-views a{font-size:15.667px;padding:10px 12px}.telemetry-label{font-size:14.667px}.telemetry-card strong{font-size:22.667px}.telemetry-card small{font-size:13.667px}}
 @media(max-width:540px){main{padding:12px}.app-views{gap:6px;margin-bottom:14px}.app-views a{padding:9px 5px;font-size:13.667px;gap:4px;flex:1;white-space:nowrap}.app-views svg{display:none}.connection-status{width:100%;justify-content:flex-end;font-size:13.667px;margin-top:4px}.telemetry-card{padding:12px}.telemetry-label{font-size:13.667px}.telemetry-card strong{font-size:21.667px}.telemetry-card small{font-size:13.667px}.panel-heading h2,.heading h2{font-size:17.667px}.placeholder strong{font-size:17.667px}.view{aspect-ratio:4/3}.workspace-tabs button{font-size:15.667px}.panel-footnote{font-size:14.667px}.event{font-size:15.667px}.event small{font-size:13.667px}}
 
 /* Fit the app within the 10-inch dashboard's browser slot. */
@@ -71,27 +71,15 @@ body[data-view=voice] .comms-column{display:grid;grid-template-columns:repeat(2,
 .comms-panel{padding:18px}.comms-panel .panel-heading{margin-bottom:12px}.comms-panel>p{margin-bottom:10px}.comms-panel textarea{min-height:85px}.comms-panel label{margin-top:12px}.comms-panel .effect-fields{margin-top:14px;padding-top:8px}.comms-panel .actions{margin:12px 0}.comms-panel .result{margin-top:8px}.hold{min-height:85px}
 label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}input:not([type=range]):not([type=checkbox]),select,textarea{font-size:19.667px;min-height:44px}
 .sentry-control{padding:16px 20px;gap:18px}.sentry-control .actions{margin:12px 0}.sentry-control h2{font-size:21.667px}.sentry-control .result{margin-bottom:0}.workspace-tabs{margin:14px 0}.rules-layout{grid-template-columns:240px minmax(0,1fr);gap:16px}.rule-workbench{padding:18px 22px}.rule-workbench h3:first-child{margin:0;padding-bottom:10px}.rule-workbench .fields{grid-template-columns:repeat(3,minmax(0,1fr));gap:0 16px}.rule-workbench .editor-tabs{margin:12px 0}.editor-tabs button{flex:1;min-height:44px}.rule-save{padding-top:12px;border-top:1px solid #2c6544;margin:14px 0 0}.rule-workbench #tts-options .fields{grid-template-columns:repeat(3,minmax(0,1fr))}.rule-workbench .region{grid-template-columns:repeat(4,minmax(0,1fr))}
-@media(max-width:1000px){.app-views a{font-size:16.667px;padding:10px 12px}.connection-status{font-size:13.667px}.rules-layout{grid-template-columns:210px minmax(0,1fr)}.rule-workbench .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.rule-workbench #tts-options .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.sentry-control{grid-template-columns:1fr 1fr}.sentry-control-main{padding:0 16px 0 0;border-bottom:0;border-right:1px solid #2c6544}.sentry-control-settings .fields{grid-template-columns:1fr;gap:10px}.sentry-control-settings .check{font-size:15.667px}.sentry-control .actions button{font-size:15.667px}}
+@media(max-width:1000px){.app-views a{font-size:16.667px;padding:10px 12px}.connection-status{font-size:13.667px}.rule-workbench .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.rule-workbench #tts-options .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.sentry-control{grid-template-columns:1fr 1fr}.sentry-control-main{padding:0 16px 0 0;border-bottom:0;border-right:1px solid #2c6544}.sentry-control-settings .fields{grid-template-columns:1fr;gap:10px}.sentry-control-settings .check{font-size:15.667px}.sentry-control .actions button{font-size:15.667px}}
 @media(max-width:700px){main{padding:12px}.app-views{gap:5px}.app-views a{font-size:14.667px;padding:9px 6px;flex:1;white-space:nowrap}.app-views svg{display:none}.connection-status{width:100%;justify-content:flex-end}.telemetry-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.telemetry-label{font-size:13.667px}.telemetry-card strong{font-size:21.667px}body[data-view=video] .visual-column,body[data-view=voice] .comms-column{grid-template-columns:1fr}body[data-view=video] .view{height:auto;aspect-ratio:16/9}body[data-view=video] .camera-panel{display:block}body[data-view=video] .camera-panel>.actions{margin-top:12px}.rules-layout{grid-template-columns:1fr}.rule-library{position:static}.rule-library #rules{grid-template-columns:1fr}.sentry-control{grid-template-columns:1fr}.sentry-control-main{border-right:0;border-bottom:1px solid #2c6544;padding:0 0 14px}.rule-workbench .fields,.rule-workbench #tts-options .fields,.rule-workbench .region{grid-template-columns:repeat(2,minmax(0,1fr))}.integration-layout{grid-template-columns:1fr}.workspace-tabs button{font-size:15.667px}.panel-heading h2,.heading h2{font-size:17.667px}}
 
-@media(min-width:701px){
+@media(min-width:1001px){
   .telemetry-card small{display:none}.telemetry-card{padding:9px 14px}.telemetry-card strong{margin:5px 0 0}
   body[data-view=video] .view{height:clamp(180px,calc(100dvh - 380px),520px)}
   body[data-view=voice] .comms-panel{max-height:calc(100dvh - 88px);overflow-y:auto;clip-path:none;border:1px solid #21492f;background:#08190f}
   body[data-view=voice] .comms-panel:before{display:none}
-  body[data-page=sentry] main{height:100dvh;display:flex;flex-direction:column;min-height:550px}
-  body[data-page=sentry] .app-views,body[data-page=sentry] .sentry-control,body[data-page=sentry] main>.workspace-tabs{flex-shrink:0}
   .sentry-control{padding:12px 16px}.sentry-control h2{margin-bottom:7px}.sentry-control p{margin:5px 0}.sentry-control .actions{margin:9px 0}.sentry-control-settings .fields{grid-template-columns:1fr 1fr;gap:14px}.sentry-control-settings>small{font-size:13.667px}.sentry-control-settings .actions{margin:9px 0}.sentry-control-main{padding-right:18px}
-  body[data-page=sentry] main>.workspace-tabs{margin:10px 0}
-  body[data-page=sentry] main>[role=tabpanel]{min-height:0;flex:1}
-  .rules-layout{align-items:stretch}.rule-library{position:static;overflow-y:auto;clip-path:none;border:1px solid #21492f;background:#08190f}.rule-library:before{display:none}
-  .rule-workbench{min-height:0;padding:14px 18px;clip-path:none;border:1px solid #21492f;background:#08190f}.rule-workbench:before{display:none}
-  #rule-form,#rule-editor{height:100%;min-height:0}#rule-editor{display:flex;flex-direction:column}
-  #rule-heading,.editor-tabs,.rule-save{flex-shrink:0}.rule-workbench h3:first-child{font-size:19.667px;padding:0;border:0}.rule-workbench .editor-tabs{margin:9px 0}
-  #panel-conditions,#panel-actions{min-height:0;overflow-y:auto;flex:1;padding:0 8px 8px 0;scrollbar-color:#357a50 #06110b}
-  #panel-conditions>label:first-child{margin-top:0}.rule-save{margin-top:8px;padding-top:8px}
-  .integration-layout{align-items:stretch}.integration-layout>section{overflow-y:auto;min-height:0;clip-path:none;border:1px solid #21492f;background:#08190f}.integration-layout>section:before{display:none}
-  .integration-layout section>p{min-height:0}.event-panel{display:flex;flex-direction:column}.event-panel .events{min-height:0;max-height:none;overflow-y:auto}
 }
 .result:empty,#save-help:empty{display:none}
 .app-views #save-help{flex:1 1 0;align-self:center;min-width:280px;max-width:max-content;margin-left:8px;padding:6px 10px;border:1px solid var(--red);color:var(--red);font:14.667px/1.4 var(--mono)}
@@ -100,8 +88,9 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 @media(min-width:1001px){.sentry-control #settings{display:flex;gap:12px;align-items:flex-end}.sentry-control #settings>.fields{flex:1;grid-template-columns:1.1fr 1fr;gap:12px}.sentry-control #settings>.actions{margin:0}.sentry-control #settings>.actions button{font-size:15.667px;padding:10px}.sentry-control-settings{display:flex;justify-content:center;flex-direction:column}.sentry-control #settings label{font-size:15.667px}}
 @media(max-width:700px){.rule-identity{display:block}}
 
-/* Allocate the host frame's remaining height to the active workspace. */
-@media(min-width:701px){
+/* Allocate the host frame's remaining height to the active workspace. Only where
+   there is room for it: a tablet is too short, and scrolls the page instead. */
+@media(min-width:1101px) and (min-height:700px){
   body[data-page=monitor] main{height:100dvh;min-height:550px;display:flex;flex-direction:column}
   .app-views{flex-shrink:0;margin-bottom:12px}
   .telemetry-grid{flex-shrink:0;margin-bottom:12px}
@@ -152,13 +141,22 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
   .integration-layout{gap:12px}.integration-layout>section{padding:14px;scrollbar-gutter:stable}
   .integration-layout .panel-heading{margin-bottom:12px}
 }
-@media(min-width:701px) and (max-width:1000px){
-  .telemetry-card{display:block}.telemetry-card strong{margin-top:4px}
-  body[data-view=video] .visual-column{grid-template-columns:minmax(0,1fr) 230px}
-  body[data-view=video] .camera-panel{grid-template-columns:1fr;grid-template-rows:auto minmax(120px,1fr) auto auto auto auto}
-  .sentry-control-settings .fields{grid-template-columns:1fr;gap:6px}
-  #rule-editor{grid-template-columns:minmax(0,1fr) minmax(180px,55%)}
-  .rule-workbench h3:first-child{font-size:17.667px}
+
+/* The sentry workspace as a fixed frame: only a screen with the room for it,
+   so a landscape tablet scrolls the page instead of squeezing every panel. */
+@media(min-width:1101px) and (min-height:700px){
+  body[data-page=sentry] main{height:100dvh;display:flex;flex-direction:column;min-height:550px}
+  body[data-page=sentry] .app-views,body[data-page=sentry] .sentry-control,body[data-page=sentry] main>.workspace-tabs{flex-shrink:0}
+  body[data-page=sentry] main>.workspace-tabs{margin:10px 0}
+  body[data-page=sentry] main>[role=tabpanel]{min-height:0;flex:1}
+  .rules-layout{align-items:stretch}.rule-library{position:static;overflow-y:auto;clip-path:none;border:1px solid #21492f;background:#08190f}.rule-library:before{display:none}
+  .rule-workbench{min-height:0;padding:14px 18px;clip-path:none;border:1px solid #21492f;background:#08190f}.rule-workbench:before{display:none}
+  #rule-form,#rule-editor{height:100%;min-height:0}#rule-editor{display:flex;flex-direction:column}
+  #rule-heading,.editor-tabs,.rule-save{flex-shrink:0}.rule-workbench h3:first-child{font-size:19.667px;padding:0;border:0}.rule-workbench .editor-tabs{margin:9px 0}
+  #panel-conditions,#panel-actions{min-height:0;overflow-y:auto;flex:1;padding:0 8px 8px 0;scrollbar-color:#357a50 #06110b}
+  #panel-conditions>label:first-child{margin-top:0}.rule-save{margin-top:8px;padding-top:8px}
+  .integration-layout{align-items:stretch}.integration-layout>section{overflow-y:auto;min-height:0;clip-path:none;border:1px solid #21492f;background:#08190f}.integration-layout>section:before{display:none}
+  .integration-layout section>p{min-height:0}.event-panel{display:flex;flex-direction:column}.event-panel .events{min-height:0;max-height:none;overflow-y:auto}
 }
 
 
@@ -169,7 +167,7 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .video-sidebar .telemetry-card strong{font-size:21.667px;margin:0}
 .video-sidebar .telemetry-card small{display:none}
 .video-sidebar .telemetry-label{font-size:14.667px}
-@media(min-width:701px){
+@media(min-width:1101px) and (min-height:700px){
   .video-sidebar .readout-panel{flex:1}
 }
 
@@ -217,12 +215,12 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .sound-card .sound-delete{position:absolute;top:18px;right:14px;width:36px;min-height:36px;height:36px;padding:0;border:1px solid #2f6a73;border-radius:0;background:#091910;color:var(--card-accent);font-size:20.667px;line-height:1}
 .sound-card .sound-delete:hover:not(:disabled){background:#153a40;border-color:var(--card-accent);color:#c9f6fb}
 .soundboard-panel .result{margin-top:12px}
-@media(min-width:1001px){
+@media(min-width:1101px){
   body[data-view=voice] .comms-column{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) minmax(0,1fr)}
 }
 /* Between phone and desktop three panels do not fit one screen: the voice
    view grows past it and scrolls as a page, so no panel hides its controls. */
-@media(min-width:701px) and (max-width:1000px){
+@media(min-width:701px) and (max-width:1100px){
   body[data-page=monitor][data-view=voice] main{height:auto}
   body[data-view=voice] .comms-column{height:auto;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);grid-template-rows:auto auto}
   body[data-view=voice] .comms-panel{height:auto;overflow:visible}
@@ -247,7 +245,7 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .sentry-control .sentry-messages .result{margin:4px 0 0}
 .sentry-control .sentry-messages small{display:block;font-size:14.667px}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-@media(max-width:1000px){.sentry-control{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"status arm" "settings settings" "messages messages"}
+@media(max-width:1100px){.sentry-control{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"status arm" "settings settings" "messages messages"}
  .sentry-control #settings.sentry-settings{padding:10px 0 0;border-inline:0;border-top:1px solid var(--line)}
  .sentry-control .sentry-settings button{margin-left:auto}}
 @media(max-width:600px){.sentry-control{grid-template-columns:minmax(0,1fr);grid-template-areas:"status" "arm" "settings" "messages";padding:12px 14px;gap:10px}
@@ -276,3 +274,32 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
 .camera-panel .listen-check{margin:0 0 0 auto;font-size:15.667px;color:var(--muted);min-height:0;white-space:nowrap}
 .camera-panel .listen-check input{margin:0 0 0 8px}
+
+/* Phone and tablet corrections. These sit last because several wide-screen rules
+   above are written without an upper bound and would otherwise reach small screens. */
+@media(max-width:1100px){
+  .rules-layout{grid-template-columns:1fr;gap:16px}
+  .rule-library{position:static}
+  .rule-library #rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+  .rule-library .rule{margin:0}
+  .rule-library #new-rule{width:auto}
+  /* Off the desktop frame the camera has the page's width, not its leftover height. */
+  body[data-view=video] .view{height:auto;aspect-ratio:16/9}
+}
+@media(min-width:901px) and (max-width:1100px){
+  body[data-view=video] .visual-column{grid-template-columns:minmax(0,1fr) clamp(260px,30%,330px)}
+}
+@media(max-width:900px){
+  body[data-view=video] .visual-column{grid-template-columns:1fr}
+}
+@media(max-width:700px){
+  .rule-workbench .fields,.rule-workbench #tts-options .fields,.rule-workbench .region{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .camera-panel>.actions #detection-toggle{flex-basis:100%}
+}
+@media(max-width:540px){
+  .workspace-tabs{flex-wrap:wrap}
+  .workspace-tabs button{flex:1 1 40%}
+  /* Side by side the longer labels wrap to four lines and the rows stop lining up. */
+  .rule-workbench .fields,.rule-workbench #tts-options .fields{grid-template-columns:1fr}
+  .rule-save button{flex:1 1 calc(50% - 8px);white-space:nowrap}
+}
