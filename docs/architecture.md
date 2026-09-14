@@ -80,7 +80,8 @@ Sentry evaluates completed inference results through a short callback, not by po
 overlay boxes. Rule state contains consecutive hits, a presence latch, observed-absence time,
 and last-trigger time. Confirmed appearances enqueue bounded action jobs, or log intended
 actions in test mode. A separate worker executes speech under the shared audio lock or a
-saved SSH command with a timeout. Stale jobs expire; disarm/fault signals cancel work and
+saved SSH command with a timeout. Testing a rule from the editor feeds the same executor with the
+draft's actions while disarmed, after the same checks arming makes. Stale jobs expire; disarm/fault signals cancel work and
 discard the queue. Commands are fixed configuration strings, never assembled from image data.
 
 Telegram messages use the same action queue and appearance rules, with shared bot/chat

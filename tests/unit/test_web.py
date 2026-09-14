@@ -656,6 +656,25 @@ def test_tune_test_button_plays_the_editor_settings_and_shares_the_speaker(web):
     assert b'id="test-tune"' in request(base, "/sentry")[1]
 
 
+def test_rule_test_button_runs_the_editor_draft_without_saving_it(web):
+    controls, base = web
+    spoken = threading.Event()
+    draft = {
+        "name": "Draft",
+        "object": "person",
+        "actions": [{"type": "tts", "text": "Testing this rule"}],
+    }
+    with patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()):
+        status, data, _ = request(base, "/api/sentry/rules/test", "POST", body=draft)
+        assert status == 200 and "Draft" in data["message"]
+        assert spoken.wait(5)
+        controls.sentry.thread.join(5)
+    assert [rule.name for rule in controls.sentry.config.rules] == ["Person at entrance"]
+    assert not controls.sentry.armed
+    assert request(base, "/api/sentry/rules/test", "POST", body={"name": "Draft"})[0] == 400
+    assert b'id="test-rule"' in request(base, "/sentry")[1]
+
+
 def post_message(base, data, content_type="application/octet-stream"):
     req = Request(
         base + "/api/captures/message",

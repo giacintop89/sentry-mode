@@ -201,8 +201,19 @@
   });
   $('rule-form').addEventListener('submit',async event=>{event.preventDefault();const next=structuredClone(config);const rule=collectRule();if(editing<0)next.rules.push(rule);else next.rules[editing]=rule;if(await save(next,'rule'))loadRule(editing<0?config.rules.length-1:editing);});
   $('new-rule').addEventListener('click',()=>{if(dirty.has('rule'))return ruleMessage('Save the current rule or reset the editor first.','error');loadRule(-1);});
-  const reset=document.createElement('button');reset.type='button';reset.className='secondary';reset.textContent='Reset editor';reset.addEventListener('click',()=>loadRule(editing));$('delete-rule').after(reset);
+  const reset=document.createElement('button');reset.type='button';reset.className='secondary';reset.textContent='Reset editor';reset.addEventListener('click',()=>loadRule(editing));$('test-rule').after(reset);
   const ruleResult=document.createElement('p');ruleResult.id='rule-result';ruleResult.className='result';ruleResult.setAttribute('role','status');reset.after(ruleResult);
+  // Testing runs the editor's actions once, without saving or waiting for a detection.
+  $('test-rule').addEventListener('click',async()=>{
+    if(!$('rule-form').reportValidity())return;
+    const rule=collectRule();
+    if(!$('test-mode').checked&&rule.actions.some(a=>a.type==='ssh'||a.type==='telegram')
+      &&!confirm('A test runs the actions for real, including SSH commands and Telegram messages. Continue?'))return;
+    $('test-rule').disabled=true;ruleMessage('Testing this rule on the node…');
+    try{ruleMessage((await api('sentry/rules/test',rule,true)).message,'success');}
+    catch(error){ruleMessage(error.message,'error');}
+    finally{$('test-rule').disabled=false;}
+  });
   $('delete-rule').addEventListener('click',async()=>{if(editing<0)return;const next=structuredClone(config);next.rules.splice(editing,1);if(await save(next,'rule'))loadRule(config.rules.length?0:-1);});
   function loadCommand(id) {
     const c=config.ssh_commands[id]||{host:'',user:'',port:22,timeout_seconds:5,identity_file:'',command:''};

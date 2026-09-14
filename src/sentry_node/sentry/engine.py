@@ -164,6 +164,56 @@ class Sentry:
             self._event("configured", "Rules and actions saved.")
             return self.configuration()
 
+    def _check(self, rules: list[Rule]):
+        """Refuse actions whose file, saved command or credentials are missing."""
+        for rule in rules:
+            for action in rule.actions:
+                if isinstance(action, SoundAction) and not self.sounds.exists(action.sound):
+                    raise ValueError(
+                        f"Rule {rule.name} plays an audio file that was deleted; "
+                        "choose another file."
+                    )
+                if (
+                    isinstance(action, SSHAction)
+                    and action.command_id not in self.config.ssh_commands
+                ):
+                    raise ValueError(f"Unknown SSH command: {action.command_id}")
+        if self.config.test_mode or not any(
+            isinstance(action, TelegramAction) for rule in rules for action in rule.actions
+        ):
+            return
+        if not (self.config.telegram.bot_token.get_secret_value() and self.config.telegram.chat_id):
+            raise ValueError("Configure a Telegram bot token and chat ID first.")
+
+    @staticmethod
+    def _describe(action) -> str:
+        """What test mode logs instead of running an action."""
+        if isinstance(action, PhotoAction):
+            return (
+                f"Photos: {action.count} every {action.interval_seconds:g} s"
+                if action.count > 1
+                else "Photo"
+            )
+        if isinstance(action, VideoAction):
+            return f"Video: {action.duration_seconds} s" + (" with sound" if action.audio else "")
+        if isinstance(action, AudioAction):
+            return f"Audio: {action.duration_seconds} s"
+        if isinstance(action, TTSAction):
+            return "TTS: " + action.text
+        if isinstance(action, TuneAction):
+            return (
+                "Tune: "
+                + TUNES[action.tune][0]
+                + (f" x{action.repeat}" if action.repeat > 1 else "")
+            )
+        if isinstance(action, SoundAction):
+            return (
+                "Audio file: " + action.sound + (f" x{action.repeat}" if action.repeat > 1 else "")
+            )
+        if isinstance(action, SSHAction):
+            return "SSH: " + action.command_id
+        return "Telegram: " + action.text
+
     def _event(self, kind: str, message: str, rule: str | None = None):
         with self.guard:
             self.event_id += 1
@@ -208,23 +258,7 @@ class Sentry:
                 rules = [r for r in self.config.rules if r.enabled]
                 if not rules:
                     raise ValueError("Enable at least one rule before starting Sentry.")
-                for rule in rules:
-                    for action in rule.actions:
-                        if isinstance(action, SoundAction) and not self.sounds.exists(action.sound):
-                            raise ValueError(
-                                f"Rule {rule.name} plays an audio file that was deleted; "
-                                "choose another file."
-                            )
-                if not self.config.test_mode and any(
-                    isinstance(action, TelegramAction) for rule in rules for action in rule.actions
-                ):
-                    if not (
-                        self.config.telegram.bot_token.get_secret_value()
-                        and self.config.telegram.chat_id
-                    ):
-                        raise ValueError(
-                            "Configure a Telegram bot token and chat ID before arming."
-                        )
+                self._check(rules)
             if self.thread is not None:
                 self.thread.join(timeout=3)
                 if self.thread.is_alive():
@@ -249,6 +283,42 @@ class Sentry:
                     else "Sentry started with actions enabled.",
                 )
                 return self.status()
+
+    def test(self, rule: Rule) -> dict:
+        """Run one rule's actions now, so the editor can check what a trigger would do."""
+        with self.lifecycle:
+            with self.guard:
+                if self.armed:
+                    raise BlockingIOError("Disarm Sentry before testing a rule.")
+                self._check([rule])
+                if self.config.test_mode:
+                    self._event(
+                        "tested", f"Test run of {rule.name}; test mode logs only.", rule.name
+                    )
+                    for action in rule.actions:
+                        self._event("would_run", self._describe(action), rule.name)
+                    return {"message": "Test mode is on, so the actions were logged, not run."}
+            if self.thread is not None:
+                self.thread.join(timeout=3)
+                if self.thread.is_alive():
+                    raise BlockingIOError("A rule test is still running; try again shortly.")
+            with self.guard:
+                self.cancelled = threading.Event()
+                created = time.monotonic()
+                jobs = [Job(rule.name, action, created) for action in rule.actions]
+                self._event("tested", f"Test run of {rule.name}; running its actions.", rule.name)
+                self.thread = threading.Thread(
+                    target=self._test, args=(jobs,), name="sentry-node-test"
+                )
+                self.thread.start()
+            return {"message": f"Running the actions of {rule.name} on the node."}
+
+    def _test(self, jobs: list[Job]):
+        for job in jobs:
+            if self.cancelled.is_set():
+                break
+            self._run(job)
+        self._event("tested", "Test run finished.", jobs[0].rule)
 
     def disarm(self) -> dict:
         with self.lifecycle:
@@ -326,37 +396,7 @@ class Sentry:
                 self._event("triggered", f"Confirmed {rule.object} appearance.", rule.name)
                 for action in rule.actions:
                     if self.config.test_mode:
-                        if isinstance(action, PhotoAction):
-                            detail = (
-                                f"Photos: {action.count} every {action.interval_seconds:g} s"
-                                if action.count > 1
-                                else "Photo"
-                            )
-                        elif isinstance(action, VideoAction):
-                            detail = f"Video: {action.duration_seconds} s" + (
-                                " with sound" if action.audio else ""
-                            )
-                        elif isinstance(action, AudioAction):
-                            detail = f"Audio: {action.duration_seconds} s"
-                        elif isinstance(action, TTSAction):
-                            detail = "TTS: " + action.text
-                        elif isinstance(action, TuneAction):
-                            detail = (
-                                "Tune: "
-                                + TUNES[action.tune][0]
-                                + (f" x{action.repeat}" if action.repeat > 1 else "")
-                            )
-                        elif isinstance(action, SoundAction):
-                            detail = (
-                                "Audio file: "
-                                + action.sound
-                                + (f" x{action.repeat}" if action.repeat > 1 else "")
-                            )
-                        elif isinstance(action, SSHAction):
-                            detail = "SSH: " + action.command_id
-                        else:
-                            detail = "Telegram: " + action.text
-                        self._event("would_run", detail, rule.name)
+                        self._event("would_run", self._describe(action), rule.name)
                         continue
                     try:
                         self.jobs.put_nowait(Job(rule.name, action, captured))
@@ -395,102 +435,106 @@ class Sentry:
                 job = self.jobs.get(timeout=0.1)
             except queue.Empty:
                 continue
-            deadline = job.created + self.config.action_ttl_seconds
-            try:
-                if self.cancelled.is_set():
-                    break
-                if time.monotonic() > deadline:
-                    self._event("expired", "Action became stale before it could start.", job.rule)
-                    continue
-                finished = "Action completed."
-                if isinstance(job.action, PhotoAction) and job.action.count > 1:
-                    self._start_photo_series(job.rule, job.action)
-                    continue
-                if isinstance(job.action, PhotoAction):
-                    self.active_action = "Photo: " + job.rule
-                    finished = "Photo saved: " + self._save_photo(job.rule)
-                elif isinstance(job.action, VideoAction):
-                    self._start_recording(job.rule, job.action)
-                    continue
-                elif isinstance(job.action, AudioAction):
-                    self._start_audio(job.rule, job.action.duration_seconds)
-                    continue
-                elif isinstance(job.action, (TTSAction, TuneAction, SoundAction)):
-                    kind = {TTSAction: "announcement", TuneAction: "tune"}.get(
-                        type(job.action), "audio file"
-                    )
-                    while not self.cancelled.is_set() and time.monotonic() < deadline:
-                        if self.audio_lock.acquire(timeout=0.1):
-                            break
-                    else:
-                        self._event("expired", f"Speaker stayed busy; {kind} skipped.", job.rule)
-                        continue
-                    try:
-                        if self.cancelled.is_set():
-                            continue
-                        if time.monotonic() > deadline:
-                            self._event(
-                                "expired",
-                                f"{kind.capitalize()} became stale while waiting for the speaker.",
-                                job.rule,
-                            )
-                            continue
-                        if isinstance(job.action, TTSAction):
-                            self.active_action = "TTS: " + job.rule
-                            self._event("action_started", "Playing announcement.", job.rule)
-                            speak(
-                                self.settings,
-                                job.action.text,
-                                job.action.voice,
-                                job.action.rate,
-                                effects=job.action.effects,
-                                stop_event=self.cancelled,
-                            )
-                        elif isinstance(job.action, SoundAction):
-                            self.active_action = "Audio file: " + job.rule
-                            self._event(
-                                "action_started",
-                                "Playing audio file: " + job.action.sound,
-                                job.rule,
-                            )
-                            self.sounds.play(
-                                self.settings,
-                                job.action.sound,
-                                repeat=job.action.repeat,
-                                volume=job.action.volume,
-                                stop_event=self.cancelled,
-                            )
-                        else:
-                            self.active_action = "Tune: " + job.rule
-                            self._event(
-                                "action_started",
-                                "Playing tune: " + TUNES[job.action.tune][0],
-                                job.rule,
-                            )
-                            self._play_tune(job.action)
-                    finally:
-                        self.audio_lock.release()
-                elif isinstance(job.action, SSHAction):
-                    self.active_action = "SSH: " + job.action.command_id
-                    self._event(
-                        "action_started",
-                        "Running saved SSH command: " + job.action.command_id,
-                        job.rule,
-                    )
-                    self._ssh(self.config.ssh_commands[job.action.command_id])
-                else:
-                    self.active_action = "Telegram: " + job.rule
-                    self._event("action_started", "Sending Telegram message.", job.rule)
-                    self._telegram(job.action)
-                self._event("action_finished", finished, job.rule)
-            except Exception as exc:
-                self._event(
-                    "cancelled" if self.cancelled.is_set() else "action_failed", str(exc), job.rule
-                )
-            finally:
-                self.active_action = None
+            self._run(job)
         if self.error:
             self.video.set_sentry(False)
+
+    def _run(self, job: Job):
+        """Execute one action, the same way whether an appearance or a test queued it."""
+        deadline = job.created + self.config.action_ttl_seconds
+        try:
+            if self.cancelled.is_set():
+                return
+            if time.monotonic() > deadline:
+                self._event("expired", "Action became stale before it could start.", job.rule)
+                return
+            finished = "Action completed."
+            if isinstance(job.action, PhotoAction) and job.action.count > 1:
+                self._start_photo_series(job.rule, job.action)
+                return
+            if isinstance(job.action, PhotoAction):
+                self.active_action = "Photo: " + job.rule
+                finished = "Photo saved: " + self._save_photo(job.rule)
+            elif isinstance(job.action, VideoAction):
+                self._start_recording(job.rule, job.action)
+                return
+            elif isinstance(job.action, AudioAction):
+                self._start_audio(job.rule, job.action.duration_seconds)
+                return
+            elif isinstance(job.action, (TTSAction, TuneAction, SoundAction)):
+                kind = {TTSAction: "announcement", TuneAction: "tune"}.get(
+                    type(job.action), "audio file"
+                )
+                while not self.cancelled.is_set() and time.monotonic() < deadline:
+                    if self.audio_lock.acquire(timeout=0.1):
+                        break
+                else:
+                    self._event("expired", f"Speaker stayed busy; {kind} skipped.", job.rule)
+                    return
+                try:
+                    if self.cancelled.is_set():
+                        return
+                    if time.monotonic() > deadline:
+                        self._event(
+                            "expired",
+                            f"{kind.capitalize()} became stale while waiting for the speaker.",
+                            job.rule,
+                        )
+                        return
+                    if isinstance(job.action, TTSAction):
+                        self.active_action = "TTS: " + job.rule
+                        self._event("action_started", "Playing announcement.", job.rule)
+                        speak(
+                            self.settings,
+                            job.action.text,
+                            job.action.voice,
+                            job.action.rate,
+                            effects=job.action.effects,
+                            stop_event=self.cancelled,
+                        )
+                    elif isinstance(job.action, SoundAction):
+                        self.active_action = "Audio file: " + job.rule
+                        self._event(
+                            "action_started",
+                            "Playing audio file: " + job.action.sound,
+                            job.rule,
+                        )
+                        self.sounds.play(
+                            self.settings,
+                            job.action.sound,
+                            repeat=job.action.repeat,
+                            volume=job.action.volume,
+                            stop_event=self.cancelled,
+                        )
+                    else:
+                        self.active_action = "Tune: " + job.rule
+                        self._event(
+                            "action_started",
+                            "Playing tune: " + TUNES[job.action.tune][0],
+                            job.rule,
+                        )
+                        self._play_tune(job.action)
+                finally:
+                    self.audio_lock.release()
+            elif isinstance(job.action, SSHAction):
+                self.active_action = "SSH: " + job.action.command_id
+                self._event(
+                    "action_started",
+                    "Running saved SSH command: " + job.action.command_id,
+                    job.rule,
+                )
+                self._ssh(self.config.ssh_commands[job.action.command_id])
+            else:
+                self.active_action = "Telegram: " + job.rule
+                self._event("action_started", "Sending Telegram message.", job.rule)
+                self._telegram(job.action)
+            self._event("action_finished", finished, job.rule)
+        except Exception as exc:
+            self._event(
+                "cancelled" if self.cancelled.is_set() else "action_failed", str(exc), job.rule
+            )
+        finally:
+            self.active_action = None
 
     def _play_tune(self, action: TuneAction):
         play_tune(self.settings.speaker, action.tune, action.repeat, action.volume, self.cancelled)

@@ -295,6 +295,54 @@ def test_confirmed_appearance_executes_one_announcement_with_effects(sentry):
     assert not sentry.audio_lock.locked()
 
 
+def test_rule_test_runs_the_editor_draft_once_without_arming_or_saving(sentry):
+    sentry.config.test_mode = False
+    draft = Rule(name="Draft", object="person", actions=[TTSAction(text="Testing one two")])
+    spoken = threading.Event()
+    with patch(
+        "sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()
+    ) as speech:
+        assert "Draft" in sentry.test(draft)["message"]
+        assert spoken.wait(2)
+        sentry.thread.join(2)
+    speech.assert_called_once()
+    assert not sentry.armed and not sentry.audio_lock.locked()
+    assert [rule.name for rule in sentry.config.rules] == ["Person at entrance"]
+    assert [e["message"] for e in events(sentry, "tested")] == [
+        "Test run finished.",
+        "Test run of Draft; running its actions.",
+    ]
+    sentry.video.set_sentry.assert_not_called()
+
+
+def test_rule_test_honours_test_mode_and_refuses_unrunnable_actions(sentry):
+    from sentry_node.sentry.config import SoundAction
+
+    sentry.config.test_mode = True
+    draft = Rule(
+        name="Draft",
+        object="person",
+        actions=[TTSAction(text="Hello"), TuneAction(tune="doorbell")],
+    )
+    with patch("sentry_node.sentry.engine.speak") as speech:
+        assert "logged" in sentry.test(draft)["message"]
+    speech.assert_not_called()
+    assert sentry.thread is None
+    assert [e["message"] for e in events(sentry, "would_run")] == ["Tune: Doorbell", "TTS: Hello"]
+
+    sentry.config.test_mode = False
+    for actions, complaint in [
+        ([TelegramAction(text="hi")], "bot token and chat ID"),
+        ([SoundAction(sound="door-bell-0123abcd")], "audio file that was deleted"),
+        ([SSHAction(command_id="missing")], "Unknown SSH command"),
+    ]:
+        with pytest.raises(ValueError, match=complaint):
+            sentry.test(Rule(name="Draft", object="person", actions=actions))
+    sentry.arm()
+    with pytest.raises(BlockingIOError, match="Disarm"):
+        sentry.test(draft)
+
+
 def test_duplicate_action_type_cannot_be_silently_lost_by_editor():
     with pytest.raises(ValueError, match="one action of each type"):
         Rule(name="test", object="person", actions=[TTSAction(text="one"), TTSAction(text="two")])

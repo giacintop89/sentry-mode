@@ -39,7 +39,7 @@ from sentry_node.hardware.camera import Camera, list_cameras
 from sentry_node.hardware.microphone import Microphone
 from sentry_node.hardware.speaker import Speaker
 from sentry_node.hardware.status import inspect_hardware, network_available
-from sentry_node.sentry.config import SentryConfig, TuneAction
+from sentry_node.sentry.config import Rule, SentryConfig, TuneAction
 from sentry_node.sentry.engine import Sentry
 from sentry_node.vision.capture import capture_image
 from sentry_node.vision.recording import MAX_MESSAGE_BYTES, MEDIA_TYPES
@@ -344,6 +344,8 @@ class NodeControls:
         if path == "/api/sentry/config":
             update = SentryUpdate.model_validate(body)
             return self.sentry.update(update.config, update.revision, update.clear_telegram_token)
+        if path == "/api/sentry/rules/test":
+            return self.sentry.test(Rule.model_validate(body))
         if path == "/api/sentry/start":
             if self.runtime_status()["running"]:
                 raise BlockingIOError("Stop the idle runtime before starting Sentry.")
@@ -464,6 +466,7 @@ JSON_POSTS = {
     "/api/speech",
     "/api/video/detection",
     "/api/sentry/config",
+    "/api/sentry/rules/test",
     "/api/soundboard",
     "/api/soundboard/delete",
     "/api/soundboard/play",

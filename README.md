@@ -116,8 +116,11 @@ disarming Sentry first.
 The UI matches Cyber Dashboard's DejaVu Sans Mono typography, green palette, angled banners,
 and dark green modules. It supplies app navigation only; the dashboard owns the outer frame.
 Video and Voice are separate views, and Sentry separates Rules, Integrations, and Event log.
-The rule editor has Conditions and Actions tabs with persistent save controls. At desktop
-widths, long editors scroll inside the available frame height; phones use a stacked layout.
+The rule editor has Conditions and Actions tabs with persistent save controls. **Test rule**,
+beside Delete rule, runs the actions in the editor once on the node without saving the rule or
+waiting for a detection; it is refused while armed, reports what ran in the event log, and only
+logs the actions when test mode is on. At desktop widths, long editors scroll inside the
+available frame height; phones use a stacked layout.
 Drafts survive switching tabs. Direct links include `/#speech`, `/#push-to-talk`,
 `/sentry#integrations`, and `/sentry#events`. Assets require no external CDN.
 
