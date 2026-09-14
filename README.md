@@ -155,7 +155,8 @@ video is still saved without sound. POST `/api/video/record/start` and
 `recording`.
 
 **Enable audio**, on the right of the video controls, listens to the node microphone in your
-browser while the preview runs; it is on by default and stops with the video or a hidden tab.
+browser while the preview runs; it starts off by default and stops with the video or a hidden
+tab.
 GET `/api/audio/monitor` streams raw 16-bit mono PCM at 16 kHz from `pw-record`, which the
 page schedules through the Web Audio API with about a fifth of a second of delay. A media
 element buffers on its own schedule and drifts; scheduling each block keeps the sound close
