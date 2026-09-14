@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     sentry: SentryConfig = Field(default_factory=SentryConfig)
     sentry_state_file: Path = Path(".local/sentry.json")
+    soundboard_file: Path = Path(".local/soundboard.json")
     web_frame_origins: list[str] = Field(default_factory=list, max_length=16)
 
     @field_validator("web_frame_origins")

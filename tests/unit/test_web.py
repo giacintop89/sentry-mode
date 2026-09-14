@@ -17,7 +17,12 @@ from sentry_node.web import NodeControls, make_handler, serve
 
 @pytest.fixture
 def web(tmp_path):
-    controls = NodeControls(Settings(sentry_state_file=tmp_path / "sentry.json"))
+    controls = NodeControls(
+        Settings(
+            sentry_state_file=tmp_path / "sentry.json",
+            soundboard_file=tmp_path / "soundboard.json",
+        )
+    )
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(controls))
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
@@ -412,3 +417,87 @@ def test_https_bind_address_requires_an_https_port(tmp_path):
     config = Settings(sentry_state_file=tmp_path / "sentry.json")
     with pytest.raises(ValueError, match="require --https-port"):
         serve(config, "127.0.0.1", 0, https_host="0.0.0.0")
+
+
+def test_soundboard_saves_lists_and_deletes_messages(web, tmp_path):
+    controls, base = web
+    page = request(base, "/")[1]
+    assert b'id="save-message"' in page and b'id="panel-soundboard"' in page
+    assert b"soundboard-cards" in request(base, "/soundboard.js")[1]
+    assert request(base, "/api/soundboard")[1]["messages"] == []
+    body = {
+        "text": "Intruder alert",
+        "voice": "it",
+        "rate": 160,
+        "effects": {"preset": "demon", "pitch": -7, "volume": 80},
+    }
+    assert request(base, "/api/soundboard", "POST", {}, body)[0] == 403
+    status, saved, _ = request(base, "/api/soundboard", "POST", body=body)
+    assert status == 200 and saved["created"]
+    # Saving the same message twice keeps one card.
+    again = request(base, "/api/soundboard", "POST", body=body)[1]
+    assert again == {"saved": saved["saved"], "created": False}
+    listing = request(base, "/api/soundboard")[1]["messages"]
+    assert listing == [{"id": saved["saved"], **body}]
+    # It survives a restart of the dashboard.
+    assert NodeControls(controls.config).soundboard.listing()["messages"] == listing
+    assert json.loads((tmp_path / "soundboard.json").read_text())["messages"] == listing
+    status, result, _ = request(base, "/api/soundboard/delete", "POST", body={"id": saved["saved"]})
+    assert status == 200 and result == {"deleted": saved["saved"]}
+    assert request(base, "/api/soundboard")[1]["messages"] == []
+    assert request(base, "/api/soundboard/delete", "POST", body={"id": saved["saved"]})[0] == 404
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/api/soundboard", {"text": ""}),
+        ("/api/soundboard", {"text": "hi", "voice": "../../file"}),
+        ("/api/soundboard", {"text": "hi", "command": "ls"}),
+        ("/api/soundboard/play", {"id": "../soundboard"}),
+        ("/api/soundboard/delete", {"id": "0123456789abcdef", "extra": 1}),
+    ],
+)
+def test_invalid_soundboard_requests_are_rejected(web, path, body):
+    controls, base = web
+    with patch("sentry_node.web.speak") as speech:
+        assert request(base, path, "POST", body=body)[0] == 400
+        speech.assert_not_called()
+    assert not controls.config.soundboard_file.exists()
+
+
+def test_soundboard_plays_saved_settings_and_shares_the_speaker(web):
+    controls, base = web
+    body = {"text": "Hello", "voice": "en", "rate": 200, "effects": {"preset": "chipmunk"}}
+    message = request(base, "/api/soundboard", "POST", body=body)[1]["saved"]
+    with patch("sentry_node.web.speak", return_value={"message": "played"}) as speech:
+        status, result, _ = request(base, "/api/soundboard/play", "POST", body={"id": message})
+        assert status == 200 and result["message"] == "played"
+        speech.assert_called_once_with(
+            controls.config,
+            "Hello",
+            "en",
+            200,
+            stop_event=controls.shutdown_requested,
+            effects=VoiceEffects(preset="chipmunk"),
+        )
+        with controls.audio_lock:
+            assert request(base, "/api/soundboard/play", "POST", body={"id": message})[0] == 409
+        missing = request(base, "/api/soundboard/play", "POST", body={"id": "0" * 16})
+        assert missing[0] == 404 and "no longer" in missing[1]["error"]
+    assert not controls.audio_lock.locked()
+
+
+def test_soundboard_limit_and_unreadable_file(tmp_path):
+    from sentry_node.audio.soundboard import MAX_MESSAGES, Soundboard, SoundboardMessage
+
+    board = Soundboard(tmp_path / "board.json")
+    for index in range(MAX_MESSAGES):
+        board.save(SoundboardMessage(text=f"message {index}"))
+    with pytest.raises(BlockingIOError):
+        board.save(SoundboardMessage(text="one too many"))
+    assert len(Soundboard(tmp_path / "board.json").listing()["messages"]) == MAX_MESSAGES
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json")
+    listing = Soundboard(broken).listing()
+    assert listing["messages"] == [] and "could not be loaded" in listing["error"]

@@ -252,6 +252,13 @@ synthesis, or `auto` (default) to choose installed Piper models per language. Ma
 languages through `speech.models` and set `speech.model_directory` as needed. No cloud
 service is used.
 
+**Save message** keeps the text with its language, rate and voice modification on the
+**Soundboard**, where each saved message is a card: press it to speak it on the node again,
+or × to delete it. Up to 48 messages are saved atomically to `.local/soundboard.json`
+(private file permissions; override with `soundboard_file` or
+`SENTRY_NODE_SOUNDBOARD_FILE`). Saving the same message twice keeps one card, and a card
+cannot play while other audio is using the speaker.
+
 Speech WAVs are checked for complete sample data, converted before playback to 48 kHz stereo,
 and padded with 1000 ms of leading silence and 750 ms of trailing silence to protect speech
 when a Bluetooth sink starts/stops. Adjust `speech.lead_in_ms`, `speech.tail_ms`, and

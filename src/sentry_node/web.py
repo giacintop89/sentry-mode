@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
 from sentry_node.app import run
 from sentry_node.audio.effects import VoiceEffects
+from sentry_node.audio.soundboard import Soundboard, SoundboardMessage
 from sentry_node.audio.speech import available_voices, speak
 from sentry_node.audio.talk import MAX_CHUNK, TalkStream
 from sentry_node.config import Settings
@@ -34,14 +35,13 @@ from sentry_node.vision.stream import VideoStream
 logger = logging.getLogger(__name__)
 
 
-class SpeechRequest(BaseModel):
+class SpeechRequest(SoundboardMessage):
+    """A message spoken now; the soundboard saves exactly the same fields."""
+
+
+class SoundboardReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    text: str = Field(min_length=1, max_length=1000)
-    voice: str | None = Field(
-        default=None, min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_+\-]*$"
-    )
-    rate: int | None = Field(default=None, ge=80, le=450)
-    effects: VoiceEffects = Field(default_factory=VoiceEffects)
+    id: str = Field(pattern=r"^[0-9a-f]{16}$")
 
 
 class DetectionRequest(BaseModel):
@@ -68,6 +68,7 @@ class NodeControls:
         self.tls_ca: Path | None = None
         self.video = VideoStream(config.camera, self.hardware_lock, config.detection)
         self.sentry = Sentry(config, self.video, self.audio_lock)
+        self.soundboard = Soundboard(config.soundboard_file)
         self.runtime_lock = threading.Lock()
         self.stopped = threading.Event()
         self.shutdown_requested = threading.Event()
@@ -123,6 +124,8 @@ class NodeControls:
             return self.runtime_status()
         if path == "/api/speech/voices":
             return available_voices(self.config)
+        if path == "/api/soundboard":
+            return self.soundboard.listing()
         if path == "/api/video/status":
             return self.video.status()
         if path == "/api/camera/list":
@@ -159,6 +162,21 @@ class NodeControls:
                 self.hardware_lock.release()
         raise KeyError(path)
 
+    def speak(self, payload: SoundboardMessage) -> dict:
+        if not self.audio_lock.acquire(blocking=False):
+            raise BlockingIOError("Speaker is busy; wait for the current audio operation.")
+        try:
+            return speak(
+                self.config,
+                payload.text,
+                payload.voice,
+                payload.rate,
+                stop_event=self.shutdown_requested,
+                effects=payload.effects,
+            )
+        finally:
+            self.audio_lock.release()
+
     def post(self, path: str, body: dict | None = None) -> dict | bytes:
         if self.shutdown_requested.is_set():
             raise HardwareError("Server is shutting down.")
@@ -182,20 +200,13 @@ class NodeControls:
             self.cached_status = None
             return self.video.stop()
         if path == "/api/speech":
-            payload = SpeechRequest.model_validate(body)
-            if not self.audio_lock.acquire(blocking=False):
-                raise BlockingIOError("Speaker is busy; wait for the current audio operation.")
-            try:
-                return speak(
-                    self.config,
-                    payload.text,
-                    payload.voice,
-                    payload.rate,
-                    stop_event=self.shutdown_requested,
-                    effects=payload.effects,
-                )
-            finally:
-                self.audio_lock.release()
+            return self.speak(SpeechRequest.model_validate(body))
+        if path == "/api/soundboard":
+            return self.soundboard.save(SoundboardMessage.model_validate(body))
+        if path == "/api/soundboard/delete":
+            return self.soundboard.delete(SoundboardReference.model_validate(body).id)
+        if path == "/api/soundboard/play":
+            return self.speak(self.soundboard.get(SoundboardReference.model_validate(body).id))
         if path == "/api/camera/capture" and self.video.status()["capture_running"]:
             return self.video.snapshot()
         if path == "/api/config/validate":
@@ -238,6 +249,16 @@ class NodeControls:
             lock.release()
 
 
+JSON_POSTS = {
+    "/api/speech",
+    "/api/video/detection",
+    "/api/sentry/config",
+    "/api/soundboard",
+    "/api/soundboard/delete",
+    "/api/soundboard/play",
+}
+
+
 def make_handler(controls: NodeControls):
     page = files("sentry_node").joinpath("web.html").read_bytes()
     tests_page = files("sentry_node").joinpath("tests.html").read_bytes()
@@ -249,6 +270,7 @@ def make_handler(controls: NodeControls):
         "/pcm-worklet.js": files("sentry_node").joinpath("pcm-worklet.js").read_bytes(),
         "/voice-effects.js": files("sentry_node").joinpath("voice-effects.js").read_bytes(),
         "/sentry.js": files("sentry_node").joinpath("sentry.js").read_bytes(),
+        "/soundboard.js": files("sentry_node").joinpath("soundboard.js").read_bytes(),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -380,9 +402,7 @@ def make_handler(controls: NodeControls):
                     self.execute(
                         lambda: controls.talk.finish(token, cancel=self.path == "/api/talk/cancel")
                     )
-                elif self.path in {"/api/speech", "/api/video/detection", "/api/sentry/config"} or (
-                    self.path == "/api/talk/start" and length
-                ):
+                elif self.path in JSON_POSTS or (self.path == "/api/talk/start" and length):
                     if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                         self.respond({"error": "This action requires a JSON request."}, 415)
                         self.close_connection = True
@@ -407,6 +427,8 @@ def make_handler(controls: NodeControls):
                 )
             except KeyError:
                 self.respond({"error": "Unknown command"}, 404)
+            except LookupError as exc:
+                self.respond({"error": str(exc)}, 404)
             except BlockingIOError as exc:
                 self.respond({"error": str(exc)}, 409)
             except (ValueError, ValidationError) as exc:
@@ -480,9 +502,7 @@ def serve(
                     target=secure.serve_forever, name="sentry-node-https"
                 )
                 secure_thread.start()
-                logger.info(
-                    "Serving phone controls over HTTPS on %s:%s", secure_host, https_port
-                )
+                logger.info("Serving phone controls over HTTPS on %s:%s", secure_host, https_port)
             server.daemon_threads = False
             server.timeout = 0.5
             logger.info("Serving Sentry Node on %s:%s", host, port)

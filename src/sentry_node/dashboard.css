@@ -21,7 +21,7 @@ body{font-family:"DejaVu Sans Mono",monospace;font-size:18.667px;color:#8dffa5;b
 main{max-width:none;padding:18px 22px 24px}
 .app-views{gap:10px;border:0;margin-bottom:20px;flex-wrap:wrap}
 .app-views a{border:1px solid #2c6544;border-radius:0;background:#14291c;color:#a8ff85;font-size:17.667px;font-weight:bold;padding:10px 16px;margin:0;min-height:44px}
-.app-views a[aria-current=page]{background:#a8ff85;color:#07110a;border-color:#a8ff85;clip-path:polygon(0 0,100% 0,calc(100% - 12px) 100%,0 100%)}
+.app-views a[aria-current=page]{background:#a8ff85;color:#07110a;border-color:#a8ff85}
 .app-views a:hover{border-color:#a8ff85;color:#baffc8}.app-views a[aria-current=page]:hover{color:#07110a}
 .connection-status{display:flex;align-items:center;gap:9px;margin-left:auto;font-size:15.667px;color:#86b493}
 section{background:#21492f;border:0;clip-path:polygon(0 0,calc(100% - 17px) 0,100% 17px,100% 100%,17px 100%,0 calc(100% - 17px));isolation:isolate;padding:22px}
@@ -49,7 +49,7 @@ label{font-size:16.667px}input:not([type=range]):not([type=checkbox]),select,tex
 .rule-workbench h3:first-child{font-size:22.667px;color:#a8ff85}.rule strong{font-size:17.667px}.rule small{font-size:15.667px}.rule-library>p{font-size:15.667px}.rule-workbench label.check[for^=use-]:not([for=use-region]){color:#baffc8;background:#14291c;border-color:#2c6544}.rule-workbench #tts-options,.rule-workbench #telegram-options,.rule-workbench #ssh-options{background:#06110b;border-color:#2c6544}
 .hardware-status .card{background:#08190f;border-color:#21492f;font-size:16.667px}.hardware-status .card strong{color:#ffa65b}.hardware-status .card.ok strong{color:#8dffa5}.event{font-size:16.667px}.event small{font-size:15.667px}
 @media(max-width:820px){main{padding:16px}.connection-status{font-size:14.667px}.app-views a{font-size:15.667px;padding:10px 12px}.telemetry-label{font-size:14.667px}.telemetry-card strong{font-size:22.667px}.telemetry-card small{font-size:13.667px}}
-@media(max-width:540px){main{padding:12px}.app-views{gap:6px;margin-bottom:14px}.app-views a{padding:9px 5px;font-size:13.667px;gap:4px;flex:1;white-space:nowrap}.app-views a[aria-current=page]{clip-path:none}.app-views svg{display:none}.connection-status{width:100%;justify-content:flex-end;font-size:13.667px;margin-top:4px}.telemetry-card{padding:12px}.telemetry-label{font-size:13.667px}.telemetry-card strong{font-size:21.667px}.telemetry-card small{font-size:13.667px}.panel-heading h2,.heading h2{font-size:17.667px}.placeholder strong{font-size:17.667px}.view{aspect-ratio:4/3}.workspace-tabs button{font-size:15.667px}.panel-footnote{font-size:14.667px}.event{font-size:15.667px}.event small{font-size:13.667px}}
+@media(max-width:540px){main{padding:12px}.app-views{gap:6px;margin-bottom:14px}.app-views a{padding:9px 5px;font-size:13.667px;gap:4px;flex:1;white-space:nowrap}.app-views svg{display:none}.connection-status{width:100%;justify-content:flex-end;font-size:13.667px;margin-top:4px}.telemetry-card{padding:12px}.telemetry-label{font-size:13.667px}.telemetry-card strong{font-size:21.667px}.telemetry-card small{font-size:13.667px}.panel-heading h2,.heading h2{font-size:17.667px}.placeholder strong{font-size:17.667px}.view{aspect-ratio:4/3}.workspace-tabs button{font-size:15.667px}.panel-footnote{font-size:14.667px}.event{font-size:15.667px}.event small{font-size:13.667px}}
 
 /* Fit the app within the 10-inch dashboard's browser slot. */
 body{font-size:19.667px}main{padding:14px 18px}.app-views{margin-bottom:14px}.app-views a{font-size:18.667px;min-height:46px;padding:10px 16px}
@@ -69,7 +69,7 @@ body[data-view=voice] .comms-column{display:grid;grid-template-columns:repeat(2,
 label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}input:not([type=range]):not([type=checkbox]),select,textarea{font-size:19.667px;min-height:44px}
 .sentry-control{padding:16px 20px;gap:18px}.sentry-control .actions{margin:12px 0}.sentry-control h2{font-size:21.667px}.sentry-control .result{margin-bottom:0}.workspace-tabs{margin:14px 0}.rules-layout{grid-template-columns:240px minmax(0,1fr);gap:16px}.rule-workbench{padding:18px 22px}.rule-workbench h3:first-child{margin:0;padding-bottom:10px}.rule-workbench .fields{grid-template-columns:repeat(3,minmax(0,1fr));gap:0 16px}.rule-workbench .editor-tabs{margin:12px 0}.editor-tabs button{flex:1;min-height:44px}.rule-save{padding-top:12px;border-top:1px solid #2c6544;margin:14px 0 0}.rule-workbench #tts-options .fields{grid-template-columns:repeat(3,minmax(0,1fr))}.rule-workbench .region{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media(max-width:1000px){.app-views a{font-size:16.667px;padding:10px 12px}.connection-status{font-size:13.667px}.rules-layout{grid-template-columns:210px minmax(0,1fr)}.rule-workbench .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.rule-workbench #tts-options .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.sentry-control{grid-template-columns:1fr 1fr}.sentry-control-main{padding:0 16px 0 0;border-bottom:0;border-right:1px solid #2c6544}.sentry-control-settings .fields{grid-template-columns:1fr;gap:10px}.sentry-control-settings .check{font-size:15.667px}.sentry-control .actions button{font-size:15.667px}}
-@media(max-width:700px){main{padding:12px}.app-views{gap:5px}.app-views a{font-size:14.667px;padding:9px 6px;flex:1;white-space:nowrap}.app-views a[aria-current=page]{clip-path:none}.app-views svg{display:none}.connection-status{width:100%;justify-content:flex-end}.telemetry-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.telemetry-label{font-size:13.667px}.telemetry-card strong{font-size:21.667px}body[data-view=video] .visual-column,body[data-view=voice] .comms-column{grid-template-columns:1fr}body[data-view=video] .view{height:auto;aspect-ratio:16/9}body[data-view=video] .camera-panel{display:block}body[data-view=video] .detection-control{margin-top:12px}body[data-view=video] .camera-panel>.actions{margin-top:12px}.rules-layout{grid-template-columns:1fr}.rule-library{position:static}.rule-library #rules{grid-template-columns:1fr}.sentry-control{grid-template-columns:1fr}.sentry-control-main{border-right:0;border-bottom:1px solid #2c6544;padding:0 0 14px}.rule-workbench .fields,.rule-workbench #tts-options .fields,.rule-workbench .region{grid-template-columns:repeat(2,minmax(0,1fr))}.integration-layout{grid-template-columns:1fr}.workspace-tabs button{font-size:15.667px}.panel-heading h2,.heading h2{font-size:17.667px}}
+@media(max-width:700px){main{padding:12px}.app-views{gap:5px}.app-views a{font-size:14.667px;padding:9px 6px;flex:1;white-space:nowrap}.app-views svg{display:none}.connection-status{width:100%;justify-content:flex-end}.telemetry-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.telemetry-label{font-size:13.667px}.telemetry-card strong{font-size:21.667px}body[data-view=video] .visual-column,body[data-view=voice] .comms-column{grid-template-columns:1fr}body[data-view=video] .view{height:auto;aspect-ratio:16/9}body[data-view=video] .camera-panel{display:block}body[data-view=video] .detection-control{margin-top:12px}body[data-view=video] .camera-panel>.actions{margin-top:12px}.rules-layout{grid-template-columns:1fr}.rule-library{position:static}.rule-library #rules{grid-template-columns:1fr}.sentry-control{grid-template-columns:1fr}.sentry-control-main{border-right:0;border-bottom:1px solid #2c6544;padding:0 0 14px}.rule-workbench .fields,.rule-workbench #tts-options .fields,.rule-workbench .region{grid-template-columns:repeat(2,minmax(0,1fr))}.integration-layout{grid-template-columns:1fr}.workspace-tabs button{font-size:15.667px}.panel-heading h2,.heading h2{font-size:17.667px}}
 
 @media(min-width:701px){
   .telemetry-card small{display:none}.telemetry-card{padding:9px 14px}.telemetry-card strong{margin:5px 0 0}
@@ -187,3 +187,41 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 }
 
 .view #video-result{position:absolute;bottom:0;left:0;right:0;margin:0;padding:10px 12px;background:var(--bg);z-index:1}
+
+/* Soundboard. Saved messages are cards cut like the Cyber Dashboard's app
+   cards -- chamfered corners, the notch at the top right, the accent rules
+   inside the rim and the slanted action chip -- in cyan and without the pack
+   mark. The whole card plays; delete is its own button beside it, never
+   nested in it, and holds the top row the way the mark does on an app card. */
+.speech-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.comms-panel .speech-actions #save-message{white-space:nowrap}
+.comms-panel .speech-actions button{width:100%}
+.soundboard-empty{font-size:15.667px}
+.soundboard-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.sound-card{--card-accent:#79e5f2;--card-fill:#091910;position:relative;isolation:isolate;min-width:0;min-height:128px;background:var(--card-accent);clip-path:polygon(26px 0,calc(100% - 72px) 0,calc(100% - 60px) 12px,100% 12px,100% calc(100% - 26px),calc(100% - 26px) 100%,0 100%,0 26px)}
+.sound-card::before{content:'';position:absolute;z-index:-1;inset:2px;background:linear-gradient(var(--card-accent),var(--card-accent)) 12px 42px/2px 32% no-repeat,linear-gradient(var(--card-accent),var(--card-accent)) right 12px bottom 38px/2px 22% no-repeat,linear-gradient(var(--card-accent),var(--card-accent)) right 32px bottom 12px/54px 2px no-repeat,var(--card-fill);clip-path:polygon(25px 0,calc(100% - 71px) 0,calc(100% - 59px) 12px,100% 12px,100% calc(100% - 25px),calc(100% - 25px) 100%,0 100%,0 25px)}
+.sound-card:has(.sound-play:hover:not(:disabled)),.sound-card:has(.sound-play:focus-visible){--card-fill:#0f2a2e}
+.sound-card:has(.sound-play:active:not(:disabled)),.sound-card.playing{--card-fill:#153a40}
+.sound-card .sound-play{display:grid;grid-template-columns:minmax(0,max-content);justify-content:start;align-content:start;justify-items:start;gap:8px;width:100%;height:100%;min-height:128px;margin:0;padding:52px 30px 26px 22px;border:0;border-radius:0;background:transparent;color:#baffc8;font-weight:normal;text-align:left;cursor:pointer}
+.sound-card .sound-play:hover,.sound-card .sound-play:disabled{background:transparent;color:#baffc8}
+.sound-card .sound-play:disabled{opacity:1;cursor:progress}
+.sound-card .sound-play:focus-visible{outline:none;--card-accent:#c9f6fb}
+.sound-card:has(.sound-play:focus-visible){--card-accent:#c9f6fb}
+.sound-title{font-size:16.667px;font-weight:700;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.sound-meta{font-size:13.667px;color:var(--card-accent);overflow-wrap:anywhere;line-height:1.4}
+.sound-action{padding:3px 18px 3px 8px;background:var(--card-accent);color:#06110b;font-weight:bold;font-size:13.667px;letter-spacing:.5px;clip-path:polygon(0 0,100% 0,calc(100% - 12px) 100%,0 100%)}
+.sound-card .sound-delete{position:absolute;top:16px;right:12px;width:30px;min-height:30px;height:30px;padding:0;border:1px solid #2f6a73;border-radius:0;background:#091910;color:var(--card-accent);font-size:17.667px;line-height:1}
+.sound-card .sound-delete:hover:not(:disabled){background:#153a40;border-color:var(--card-accent);color:#c9f6fb}
+.soundboard-panel .result{margin-top:12px}
+@media(min-width:1001px){
+  body[data-view=voice] .comms-column{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr)}
+}
+/* Between phone and desktop three panels do not fit one screen: the voice
+   view grows past it and scrolls as a page, so no panel hides its controls. */
+@media(min-width:701px) and (max-width:1000px){
+  body[data-page=monitor][data-view=voice] main{height:auto}
+  body[data-view=voice] .comms-column{height:auto;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);grid-template-rows:auto auto}
+  body[data-view=voice] .comms-panel{height:auto;overflow:visible}
+  #panel-speech{grid-column:1;grid-row:1}#panel-push-to-talk{grid-column:2;grid-row:1}#panel-soundboard{grid-column:1/-1;grid-row:2}
+}
+@media(max-width:540px){.soundboard-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}.sound-card .sound-play{padding:50px 20px 26px 22px}.comms-panel .speech-actions button{padding-inline:8px;white-space:nowrap}}
