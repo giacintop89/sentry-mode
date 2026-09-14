@@ -320,7 +320,8 @@ leaving the page, and connection loss stop transmission. The speaker is shared w
 and hardware audio tests; concurrent actions report busy. Video can run during transmission.
 
 **Record message** under Hold to talk records from the same phone microphone and saves the
-message to the Sentry **Captures** tab instead of playing it, up to 120 seconds. It uploads
+message to the Sentry **Captures** tab instead of playing it, up to 120 seconds. Like Record
+on the Video view it lights up red while recording; press it again to stop and save. It uploads
 the browser's recording (WebM, Ogg or MP4) to POST `/api/captures/message` as
 `application/octet-stream`, which converts it to an AAC `.m4a` file of at most 5 MB.
 

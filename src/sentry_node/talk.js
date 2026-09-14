@@ -47,7 +47,7 @@
     recorder.addEventListener('dataavailable', event => { if (event.data.size) chunks.push(event.data); });
     recorder.addEventListener('stop', async () => {
       clearInterval(recordTimer); recorder = undefined;
-      recordButton.textContent = 'Record message'; recordButton.classList.remove('recording');
+      recordButton.classList.remove('recording');
       hold.disabled = !stream; enable.disabled = false;
       try {
         const blob = new Blob(chunks, {type});
@@ -63,7 +63,7 @@
     });
     recorder.start();
     recordStarted = Date.now();
-    recordButton.textContent = 'Stop recording'; recordButton.classList.add('recording');
+    recordButton.classList.add('recording');
     hold.disabled = true; enable.disabled = true;
     showRecording();
     recordTimer = setInterval(() => {
