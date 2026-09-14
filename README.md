@@ -128,15 +128,15 @@ by this dashboard, not another CLI process or the systemd service; stopping it l
 web UI available. The dashboard's runtime stops when the web server shuts down.
 
 Live video uses one camera worker shared by connected viewers, capped at 10 FPS and 960 pixels
-wide. Start/stop it on the main page; video remains active until stopped or the server shuts
-down. Stop video hides preview; Sentry can retain the camera. Camera tests require stopping
+wide. **Start** and **Stop** it on the main page; video remains active until stopped or the
+server shuts down. Stopping video hides preview; Sentry can retain the camera. Camera tests require stopping
 video and disarming Sentry first. Captures reuse the active camera's latest frame. Preview
 JPEGs are encoded only with viewers (plus one initial frame); hidden preview produces none.
 Speaker actions use a separate lock and remain available while video is live.
 
-**Record video** beside Stop video saves what the live preview is showing to the Sentry
-**Captures** tab: an H.264 MP4 with node-microphone sound, up to 60 seconds. Press it again
-(or stop video) to finish early and keep the recording; if the microphone is unavailable the
+**Record** beside Stop saves what the live preview is showing to the Sentry **Captures**
+tab: an H.264 MP4 with node-microphone sound, up to 60 seconds. The button stays lit red
+while recording; press it again (or stop video) to finish early and keep the recording; if the microphone is unavailable the
 video is still saved without sound. POST `/api/video/record/start` and
 `/api/video/record/stop` do the same, and `/api/video/status` reports the recording under
 `recording`.

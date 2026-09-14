@@ -67,7 +67,7 @@ def request(base, path, method="GET", headers=None, body=None):
 
 def test_page_and_config_controls(web):
     controls, base = web
-    assert b"Start video" in request(base, "/")[1]
+    assert b'<button id="start-video">Start</button>' in request(base, "/")[1]
     assert b"Capture frame" in request(base, "/tests")[1]
     assert b"Start runtime" in request(base, "/tests/")[1]
     assert request(base, "/api/config")[1] == controls.config.model_dump(mode="json")

@@ -4,8 +4,7 @@
 <div class="view"><img id="video" alt="Live camera video" hidden><div id="placeholder" class="placeholder">
 
 <strong>Preview hidden</strong><small>Start video to view the camera.</small></div><p id="video-result" class="result error" role="alert"></p></div>
-<div class="actions"><button id="start-video">Start video</button><button id="stop-video" class="secondary" disabled>Stop video</button><button id="record-video" class="secondary" disabled aria-describedby="record-result">Record video</button><button id="detection-toggle" type="button" role="switch" aria-checked="false" class="secondary" disabled aria-describedby="detection-result">Object detection: off</button><p id="record-result" class="result" role="status"></p></div>
-<div class="detection-control"><small id="detection-result" role="status"></small></div>
+<div class="actions"><button id="start-video">Start</button><button id="stop-video" class="secondary" disabled>Stop</button><button id="record-video" class="danger" disabled aria-describedby="record-result">Record</button><button id="detection-toggle" type="button" role="switch" aria-checked="false" class="secondary" disabled>Object detection: off</button><p id="record-result" class="result" role="status"></p></div>
 </section><aside class="video-sidebar" aria-label="Detected objects"><section class="readout-panel"><div class="panel-heading"><div><h2>Detected objects</h2></div></div><div id="detection-readout" class="detection-readout"><p>Enable object detection to inspect the scene.</p></div><div class="panel-footnote"><span>Inference time</span><span data-stat="inference">—</span></div></section></aside></div><div class="comms-column"><section id="panel-speech" aria-label="Text to speech" class="comms-panel"><div class="panel-heading"><div><h2>Text to speech</h2></div></div><p>Type a message to play through the configured node speaker.</p>
 <form id="speech-form"><label for="speech-text">Message</label><textarea id="speech-text" maxlength="1000" required placeholder="Hello! Sentry Node is ready."></textarea>
 <small id="count" class="count">0 / 1000</small><div class="fields"><div><label for="language">Language</label>
@@ -41,14 +40,14 @@ const start=document.getElementById('start-video'),stop=document.getElementById(
 const videoResult=document.getElementById('video-result');let videoBusy=false,videoRunning=false;
 const record=document.getElementById('record-video'),recordResult=document.getElementById('record-result');
 let recordBusy=false,recording=false,recordTimer;
-const detectionToggle=document.getElementById('detection-toggle'),detectionResult=document.getElementById('detection-result');let detectionBusy=false,detectionEnabled=false;
+const detectionToggle=document.getElementById('detection-toggle');let detectionBusy=false,detectionEnabled=false;
 async function request(path,method='GET',body){const headers=method==='POST'?{'X-Sentry-Node-Control':'1'}:{};
  if(body!==undefined)headers['Content-Type']='application/json';const response=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
  const data=await response.json();if(!response.ok)throw Error(data.error||'Command failed');return data;}
-function showVideo(state){if(state.detection&&!detectionBusy){const d=state.detection;detectionEnabled=d.enabled;detectionToggle.disabled=state.monitoring;detectionToggle.setAttribute('aria-checked',String(d.enabled));detectionToggle.textContent='Object detection: '+(d.enabled?'on':'off');detectionResult.textContent=d.error||(!d.enabled?'':!state.capture_running&&!state.running?'Ready — start video.':d.inference_ms===null?'Looking for objects…':('Detecting · '+d.inference_ms+' ms'));if(state.monitoring)detectionResult.textContent+=' · Sentry active';}
+function showVideo(state){if(state.detection&&!detectionBusy){const d=state.detection;detectionEnabled=d.enabled;detectionToggle.disabled=state.monitoring;detectionToggle.setAttribute('aria-checked',String(d.enabled));detectionToggle.textContent='Object detection: '+(d.enabled?'on':'off');}
 videoRunning=state.running;start.disabled=videoBusy||state.running;stop.disabled=videoBusy||!state.running;
  if(state.recording){recording=state.recording.active;record.disabled=recordBusy||(!recording&&!state.running);
-  record.textContent=recording?'Stop recording':'Record video';record.classList.toggle('recording',recording);
+  record.classList.toggle('recording',recording);
   clearInterval(recordTimer);
   if(recording){const started=state.recording.started*1000,max=state.recording.max_seconds;
    const tick=()=>{const seconds=Math.min(max,Math.round((Date.now()-started)/1000));
@@ -68,7 +67,7 @@ async function videoAction(action){if(videoBusy)return;videoBusy=true;start.disa
  if(action==='stop'){videoRunning=false;image.removeAttribute('src');}
  try{const state=await request('/api/video/'+action,'POST');videoBusy=false;showVideo(state);}
  catch(error){videoResult.className='result error';videoResult.textContent=error.message;videoBusy=false;start.disabled=videoRunning;stop.disabled=!videoRunning;}}
-detectionToggle.addEventListener('click',async()=>{if(detectionBusy)return;detectionBusy=true;detectionToggle.disabled=true;detectionResult.textContent='Updating detection…';try{const state=await request('/api/video/detection','POST',{enabled:!detectionEnabled});detectionBusy=false;showVideo(state);}catch(error){detectionBusy=false;detectionToggle.disabled=false;detectionResult.textContent=error.message;}});
+detectionToggle.addEventListener('click',async()=>{if(detectionBusy)return;detectionBusy=true;detectionToggle.disabled=true;videoResult.textContent='';try{const state=await request('/api/video/detection','POST',{enabled:!detectionEnabled});detectionBusy=false;showVideo(state);}catch(error){detectionBusy=false;detectionToggle.disabled=false;videoResult.className='result error';videoResult.textContent=error.message;}});
 start.addEventListener('click',()=>videoAction('start'));stop.addEventListener('click',()=>videoAction('stop'));
 record.addEventListener('click',async()=>{if(recordBusy)return;recordBusy=true;record.disabled=true;
  const stopping=recording;recordResult.className='result';recordResult.textContent=stopping?'Saving the video…':'Starting the recording…';
