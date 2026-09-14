@@ -382,7 +382,7 @@ def test_sentry_page_config_persistence_and_post_protection(web):
     controls, base = web
     assert b"Sentry mode" in request(base, "/sentry")[1]
     data = request(base, "/api/sentry/config")[1]
-    assert data["config"]["test_mode"]
+    assert data["config"]["test_mode"] is False
     assert not request(base, "/api/sentry/status")[1]["armed"]
     data["config"]["detection_fps"] = 1
     payload = {"config": data["config"], "revision": data["revision"]}
@@ -424,6 +424,9 @@ def test_soundboard_saves_lists_and_deletes_messages(web, tmp_path):
     page = request(base, "/")[1]
     assert b'id="save-message"' in page and b'id="panel-soundboard"' in page
     assert b"soundboard-cards" in request(base, "/soundboard.js")[1]
+    # Sentry rules can pick a saved message for their speech action.
+    assert b'id="rule-soundboard"' in request(base, "/sentry")[1]
+    assert b"loadSoundboard" in request(base, "/sentry.js")[1]
     assert request(base, "/api/soundboard")[1]["messages"] == []
     body = {
         "text": "Intruder alert",

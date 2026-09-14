@@ -8,9 +8,9 @@
 <div class="detection-control"><button id="detection-toggle" type="button" role="switch" aria-checked="false" class="secondary" disabled>Object detection: off</button><small id="detection-result" role="status"></small></div>
 </section><aside class="video-sidebar" aria-label="Sentry status and detected objects"><div class="telemetry-grid"><div class="telemetry-card"><div class="telemetry-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></svg>Sentry</div><strong data-stat="sentry">—</strong><small data-stat="sentry-detail">Waiting for node</small></div><div class="telemetry-card"><div class="telemetry-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5zM8 7h8M8 12h8M8 17h5"/></svg>Pending actions</div><strong data-stat="queue">—</strong><small data-stat="queue-detail">Waiting for node</small></div></div><section class="readout-panel"><div class="panel-heading"><div><h2>Detected objects</h2></div></div><div id="detection-readout" class="detection-readout"><p>Enable object detection to inspect the scene.</p></div><div class="panel-footnote"><span>Inference time</span><span data-stat="inference">—</span></div></section></aside></div><div class="comms-column"><section id="panel-speech" aria-label="Text to speech" class="comms-panel"><div class="panel-heading"><div><h2>Text to speech</h2></div></div><p>Type a message to play through the configured node speaker.</p>
 <form id="speech-form"><label for="speech-text">Message</label><textarea id="speech-text" maxlength="1000" required placeholder="Hello! Sentry Node is ready."></textarea>
-<small id="count" class="count">0 / 1000</small><div class="fields"><div><label for="voice">Language</label>
-<select id="voice"><option value="en">English</option><option value="it">Italiano</option><option value="es">Español</option>
-<option value="fr">Français</option><option value="de">Deutsch</option><option value="pt">Português</option></select></div>
+<small id="count" class="count">0 / 1000</small><div class="fields"><div><label for="language">Language</label>
+<select id="language"><option value="en">English</option><option value="it">Italiano</option></select></div>
+<div><label for="voice">Voice</label><select id="voice"><option value="en">Default</option></select></div>
 <div><label for="rate">Speed · <output id="rate-value" for="rate">175</output> wpm</label>
 <input id="rate" type="range" min="80" max="450" step="5" value="175"></div></div>
 <fieldset id="tts-effects" class="effect-fields"><legend>Voice modification</legend>
@@ -68,9 +68,17 @@ document.getElementById('speech-form').addEventListener('submit',async event=>{e
  result.className='result success';result.textContent=data.message;}
  catch(error){result.className='result error';result.textContent=error.message;}
  finally{document.getElementById('tts-effects').disabled=false;button.disabled=false;button.textContent='Speak on node';}});
-async function defaults(){try{const [config,available]=await Promise.all([request('/api/config'),request('/api/speech/voices')]);voice.replaceChildren();
- for(const choice of available.voices){const option=document.createElement('option');option.value=choice.id;option.textContent=choice.label+' · '+choice.quality;voice.add(option);}
- setVoiceVolume('tts',config.speaker.volume);setVoiceVolume('ptt',config.speaker.volume);voice.value=config.speech.voice;rate.value=config.speech.rate;document.getElementById('rate-value').textContent=rate.value;
+const language=document.getElementById('language');
+// Every voice stays in the list so saved messages keep their names; the language only filters it.
+function showLanguage(code,selected){for(const option of voice.options){const other=option.dataset.language!==code;option.hidden=other;option.disabled=other;}
+ const match=[...voice.options].find(option=>option.value===selected&&!option.disabled)||[...voice.options].find(option=>!option.disabled);if(match)voice.value=match.value;}
+language.addEventListener('change',()=>showLanguage(language.value));
+async function defaults(){try{const [config,available]=await Promise.all([request('/api/config'),request('/api/speech/voices')]);voice.replaceChildren();language.replaceChildren();
+ for(const choice of available.voices){const option=document.createElement('option');option.value=choice.id;option.dataset.language=choice.language;option.dataset.label=choice.label;
+  option.textContent=choice.name+' · '+choice.quality;voice.add(option);
+  if(![...language.options].some(item=>item.value===choice.language))language.add(new Option(choice.language_label,choice.language));}
+ const initial=available.voices.find(choice=>choice.id===config.speech.voice)||available.voices[0];
+ setVoiceVolume('tts',config.speaker.volume);setVoiceVolume('ptt',config.speaker.volume);if(initial){language.value=initial.language;showLanguage(initial.language,initial.id);}rate.value=config.speech.rate;document.getElementById('rate-value').textContent=rate.value;
  }catch{}}
 refreshVideo();defaults();setInterval(refreshVideo,3000);
 </script><script src="/talk.js"></script><script src="/soundboard.js"></script></body></html>

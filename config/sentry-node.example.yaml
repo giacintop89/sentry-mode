@@ -33,7 +33,7 @@ sentry_state_file: .local/sentry.json
 # Exact dashboard origins allowed to embed this app; empty blocks embedding.
 web_frame_origins: []
 sentry:
-  test_mode: true
+  test_mode: false
   detection_fps: 2
   action_ttl_seconds: 15
   rules:

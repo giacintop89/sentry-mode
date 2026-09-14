@@ -138,7 +138,7 @@ class Rule(Model):
 
 class SentryConfig(Model):
     detection_fps: float = Field(default=2, ge=0.5, le=5)
-    test_mode: StrictBool = True
+    test_mode: StrictBool = False
     action_ttl_seconds: int = Field(default=15, ge=1, le=120)
     rules: list[Rule] = Field(
         default_factory=lambda: [

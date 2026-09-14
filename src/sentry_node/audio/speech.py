@@ -14,10 +14,50 @@ from sentry_node.config import Settings
 from sentry_node.core.errors import HardwareError
 from sentry_node.hardware.speaker import Speaker
 
+LANGUAGES = {"en": "English", "it": "Italiano"}
+# Piper voice files do not record the speaker's gender, so only these known female
+# speakers are offered; any other installed model is ignored.
+PIPER_SPEAKERS = {
+    "alba": "Alba",
+    "amy": "Amy",
+    "cori": "Cori",
+    "jenny_dioco": "Jenny",
+    "kristin": "Kristin",
+    "lessac": "Lessac",
+    "paola": "Paola",
+}
+# Female eSpeak variants give the basic engine a choice of voice in every language.
+ESPEAK_VARIANTS = {"f3": "Female 1", "f2": "Female 2", "f4": "Female 3"}
+ESPEAK_DEFAULT_VARIANT = "f3"
+PIPER_MODEL = re.compile(r"([a-z]{2,3})_[A-Z]{2}-([a-z0-9_]+)-(x_low|low|medium|high)")
+
+
+def piper_models(config: Settings) -> dict[str, Path]:
+    """Installed Piper voices by id: configured language defaults, then discovered speakers."""
+    directory = config.speech.model_directory
+    voices = {}
+    for language, name in config.speech.models.items():
+        match = PIPER_MODEL.fullmatch(name)
+        if language in LANGUAGES and match and match[2] in PIPER_SPEAKERS:
+            voices[language] = directory / f"{name}.onnx"
+    defaults = set(voices.values())
+    try:
+        found = sorted(directory.glob("*.onnx"))
+    except OSError:
+        found = []
+    for model in found:
+        match = PIPER_MODEL.fullmatch(model.stem)
+        if match and match[1] in LANGUAGES and match[2] in PIPER_SPEAKERS and model not in defaults:
+            voices.setdefault(f"{match[1]}-{match[2]}", model)
+    return voices
+
+
+def voice_language(voice: str) -> str:
+    return re.split(r"[-+]", voice, maxsplit=1)[0]
+
 
 def speech_engine(config: Settings, voice: str) -> tuple[str, Path | None]:
-    name = config.speech.models.get(voice)
-    model = config.speech.model_directory / f"{name}.onnx" if name else None
+    model = None if "+" in voice else piper_models(config).get(voice)
     available = (
         model is not None
         and model.is_file()
@@ -32,28 +72,48 @@ def speech_engine(config: Settings, voice: str) -> tuple[str, Path | None]:
 
 
 def available_voices(config: Settings) -> dict:
-    labels = {
-        "en": "English",
-        "it": "Italiano",
-        "es": "Español",
-        "fr": "Français",
-        "de": "Deutsch",
-        "pt": "Português",
-    }
+    """Voices grouped by language: natural Piper speakers, or eSpeak voice types."""
+    models = piper_models(config)
     voices = []
-    for voice in dict.fromkeys([config.speech.voice, *labels, *config.speech.models]):
-        try:
-            engine, _ = speech_engine(config, voice)
-        except HardwareError:
+    for language in LANGUAGES:
+        natural = []
+        for voice, model in models.items():
+            if voice_language(voice) != language:
+                continue
+            try:
+                engine, _ = speech_engine(config, voice)
+            except HardwareError:
+                continue
+            if engine == "piper":
+                match = PIPER_MODEL.fullmatch(model.stem)
+                natural.append((voice, PIPER_SPEAKERS[match[2]]))
+        if natural:
+            choices = [(*choice, "piper") for choice in natural]
+        elif config.speech.engine == "piper":
             continue
-        voices.append(
-            {
-                "id": voice,
-                "label": labels.get(voice, voice),
-                "engine": engine,
-                "quality": "Natural" if engine == "piper" else "Basic",
-            }
-        )
+        else:
+            # The plain language id already speaks with the default female variant.
+            choices = [
+                (
+                    language if variant == ESPEAK_DEFAULT_VARIANT else f"{language}+{variant}",
+                    name,
+                    "espeak",
+                )
+                for variant, name in ESPEAK_VARIANTS.items()
+            ]
+        for voice, name, engine in choices:
+            voices.append(
+                {
+                    "id": voice,
+                    "language": language,
+                    "language_label": LANGUAGES[language],
+                    "name": name,
+                    "gender": "female",
+                    "label": f"{LANGUAGES[language]} · {name}",
+                    "engine": engine,
+                    "quality": "Natural" if engine == "piper" else "Basic",
+                }
+            )
     return {"voices": voices, "default": config.speech.voice}
 
 
@@ -128,6 +188,9 @@ def speak(
     rate = rate if rate is not None else config.speech.rate
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_+\-]{0,63}", voice):
         raise ValueError("Invalid speech voice.")
+    language, _, variant = voice.partition("+")
+    if voice_language(language) not in LANGUAGES or (variant and variant not in ESPEAK_VARIANTS):
+        raise ValueError("Speech voice must be an English or Italian female voice.")
     if not 80 <= rate <= 450:
         raise ValueError("Speech rate must be between 80 and 450 words per minute.")
     engine, model = speech_engine(config, voice)
@@ -157,7 +220,7 @@ def speak(
                 "espeak-ng",
                 "--stdin",
                 "-v",
-                voice,
+                f"{voice_language(voice)}+{variant or ESPEAK_DEFAULT_VARIANT}",
                 "-s",
                 str(rate),
                 "-a",

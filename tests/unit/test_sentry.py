@@ -56,6 +56,7 @@ def events(engine, kind):
 
 
 def test_confirmation_test_mode_and_no_retrigger_while_present(sentry):
+    sentry.config.test_mode = True
     direct_arm(sentry)
     with patch("sentry_node.sentry.engine.speak") as speech, patch("subprocess.Popen") as ssh:
         sample(sentry, 100)
@@ -317,6 +318,7 @@ def test_telegram_token_private_persisted_preserved_replaced_and_removed(sentry)
 
 
 def test_telegram_dry_run_needs_no_credentials_and_never_sends(sentry):
+    sentry.config.test_mode = True
     sentry.config.rules[0].actions = [TelegramAction(text="Person at entrance")]
     direct_arm(sentry)
     with patch.object(sentry, "_telegram") as send:

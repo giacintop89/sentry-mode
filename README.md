@@ -156,16 +156,16 @@ rate. A missing model is reported when detection is enabled; runtime never downl
 Open **Sentry mode** from the main page or visit `/sentry`. A starter person rule is provided:
 70% confidence, three consecutive detections, ten seconds of observed absence before rearming,
 and a 60-second cooldown. It announces “Hello. Please wait here.” when actions are enabled.
-Sentry starts **disarmed**, with **test mode enabled**. To use it:
+Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it is armed. To use it:
 
 1. Edit/save a rule: object category, confidence, count, confirmation count, cooldown, and
    optional rectangular region. Region coordinates are percentages of the image; an object's
    bounding-box center must be inside it.
 2. Select an announcement, a saved SSH command, and/or a Telegram message. Announcements support language, speed,
    Demon/Chipmunk/custom pitch, and volume. Each rule supports one action of each type.
-3. Start Sentry in test mode. Confirm `triggered` and `would_run` events in the event log.
+3. To rehearse first, check **Test mode**, save settings and start Sentry. Confirm `triggered` and `would_run` events in the event log.
 4. Disarm, uncheck **Test mode**, save settings, and start again to execute actions.
-5. Hide live preview to save work while monitoring continues. Disarm Sentry to stop rules;
+5. Pause live video on the Video view to save work while monitoring continues. Disarm Sentry to stop rules;
    the camera is released when neither Sentry nor preview needs it.
 
 Sentry remains active when the browser closes. With preview hidden, it requests camera
@@ -234,25 +234,33 @@ GET `/api/sentry/status` returns armed/test state, action status, and recent eve
 `X-Sentry-Node-Control: 1` header; configuration saves also require JSON content type.
 `/api/video/status` distinguishes preview `running` from `capture_running` and `monitoring`.
 
-Text-to-speech uses local Piper neural voices when installed, with eSpeak NG as a basic
-fallback (`sudo apt-get install -y espeak-ng`, included by the Pi bootstrap helper). Install
-natural English and Italian voices with:
+Text-to-speech speaks English and Italian with female voices only. It uses local Piper neural
+voices when installed, with eSpeak NG as a basic fallback (`sudo apt-get install -y espeak-ng`,
+included by the Pi bootstrap helper). Install the natural female voices (Lessac, Amy and
+Kristin in US English; Alba, Cori and Jenny in British English; Paola in Italian, the only
+female Italian Piper voice) with:
 
 ```bash
 ./scripts/setup_speech.sh
 ```
 
 This installs the optional `speech` Python extra and downloads models into ignored
-`models/piper/`. Runtime synthesis stays offline. Restart the server and reload the page;
-language choices show **Natural** or **Basic** according to installed voices. Enter up to 1000 characters, choose a language and speech rate, and click
+`models/piper/`. Runtime synthesis stays offline. Restart the server and reload the page.
+Choose a **Language**, then a **Voice** for it: every Piper model in `models/piper/` named like
+`en_GB-alba-medium` whose speaker is a known female voice appears as a speaker of its
+language, marked **Natural**; other models are ignored. A language with no neural voice offers
+eSpeak NG's Female 1, 2 and 3 types, marked **Basic**. Voice ids are the language (`it`, its
+configured model), `<language>-<speaker>` (`en-alba`) or `<language>+<variant>` (`it+f2`),
+and any of them works as `speech.voice`. Other languages and male eSpeak variants are
+rejected. Enter up to 1000 characters, choose a voice and speech rate, and click
 **Speak on node**. Speech uses the same configured speaker/backend as the tone test. Temporary
 WAV files are deleted after playback. Default voice/rate are configured through YAML `speech`
 or `SENTRY_NODE_SPEECH__VOICE=it` / `SENTRY_NODE_SPEECH__RATE=175`. Set `speech.engine` to `piper` to require installed neural voices, `espeak` to force basic
-synthesis, or `auto` (default) to choose installed Piper models per language. Map additional
-languages through `speech.models` and set `speech.model_directory` as needed. No cloud
-service is used.
+synthesis, or `auto` (default) to choose installed Piper models per language. Choose each
+language's default model through `speech.models` and set `speech.model_directory` as needed.
+No cloud service is used.
 
-**Save message** keeps the text with its language, rate and voice modification on the
+**Save message** keeps the text with its voice, rate and voice modification on the
 **Soundboard**, where each saved message is a card: press it to speak it on the node again,
 or × to delete it. Up to 48 messages are saved atomically to `.local/soundboard.json`
 (private file permissions; override with `soundboard_file` or

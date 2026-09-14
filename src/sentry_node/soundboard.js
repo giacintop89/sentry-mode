@@ -17,7 +17,7 @@
   }
   function voiceLabel(id) {
     const option = [...voice.options].find(item => item.value === id);
-    return option ? option.textContent.split(' · ')[0] : (id || 'Default voice');
+    return option ? option.dataset.label || option.textContent.split(' · ')[0] : (id || 'Default voice');
   }
   function details(message) {
     const parts = [voiceLabel(message.voice), (message.rate ?? rate.defaultValue) + ' wpm'];
