@@ -39,6 +39,7 @@
       const response = await fetch('/api/audio/monitor', {signal: abort.signal});
       if (!response.ok) throw new Error('unavailable');
       hint('');
+      window.nodeRefresh?.();  // The node is now streaming audio; light the nav mark.
       const reader = response.body.getReader();
       // An odd byte count would split a sample, so carry the stray byte to the next block.
       let carry = new Uint8Array(0);
@@ -63,7 +64,7 @@
     if (wanted()) setTimeout(() => { if (wanted()) start(); }, 1000);
   }
   function stop() {
-    if (abort) { abort.abort(); abort = null; }
+    if (abort) { abort.abort(); abort = null; window.nodeRefresh?.(); }
     if (context) context.suspend();
     hint('');
   }

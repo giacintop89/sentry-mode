@@ -33,6 +33,11 @@ class TalkStream:
         self.sequence = 0
         self.accepting = False
 
+    @property
+    def active(self) -> bool:
+        """A push-to-talk session is still sending audio or playing what it sent."""
+        return self.accepting or (self.thread is not None and self.thread.is_alive())
+
     def start(self, effects: VoiceEffects | None = None) -> dict:
         effects = effects or VoiceEffects()
         volume = self.config.speaker.volume if effects.volume is None else effects.volume

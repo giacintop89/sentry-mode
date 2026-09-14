@@ -115,6 +115,10 @@ change lasts until the next restart. Changing the camera requires stopping video
 disarming Sentry first.
 The UI matches Cyber Dashboard's DejaVu Sans Mono typography, green palette, angled banners,
 and dark green modules. It supplies app navigation only; the dashboard owns the outer frame.
+The mark in the navigation corner is green when the node answers and red when it does not, and
+the whole mark fades slowly in and out while the node streams, meaning live preview is running
+or someone is listening to the microphone or holding push-to-talk (`GET /api/streams`).
+Reduced-motion settings keep it steady.
 Video and Voice are separate views, and Sentry separates Rules, Integrations, and Event log.
 The rule editor has Conditions and Actions tabs with persistent save controls. **Test rule**,
 beside Delete rule, runs the actions in the editor once on the node without saving the rule or

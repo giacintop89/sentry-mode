@@ -71,15 +71,17 @@
   const stat = (name, value) => {
     for (const node of document.querySelectorAll('[data-stat="' + name + '"]')) node.textContent = value;
   };
-  function connection(online) {
+  // The mark pulses while the node streams video or audio, so any page shows it at a glance.
+  function connection(online, streaming = false) {
     for (const node of document.querySelectorAll('.connection-status')) {
-      const label = online ? 'Node connected' : 'Node unreachable';
+      const label = online ? streaming ? 'Node connected · streaming' : 'Node connected' : 'Node unreachable';
       node.setAttribute('aria-label', label);
       node.title = label;
     }
     for (const node of document.querySelectorAll('[data-connection-dot]')) {
       node.classList.toggle('online', online);
       node.classList.toggle('offline', !online);
+      node.classList.toggle('streaming', online && streaming);
     }
   }
   async function get(path) {
@@ -92,8 +94,8 @@
     if (pending || document.hidden) return;
     pending = true;
     try {
-      const [video, sentry] = await Promise.all([get('/api/video/status'), get('/api/sentry/status')]);
-      connection(true);
+      const [video, sentry, streams] = await Promise.all([get('/api/video/status'), get('/api/sentry/status'), get('/api/streams')]);
+      connection(true, streams.video || streams.audio);
       const detection = video.detection;
       stat('camera', video.capture_running ? 'Capturing' : 'Idle');
       stat('camera-detail', video.running ? 'Live preview enabled' : video.monitoring ? 'Monitoring · preview hidden' : 'Preview is hidden');
@@ -131,6 +133,7 @@
     } finally { pending = false; }
   }
   refresh();
+  window.nodeRefresh = refresh;
   if (document.body.dataset.page !== 'hardware') {
     document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
     setInterval(refresh, 3000);

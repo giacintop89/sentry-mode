@@ -31,11 +31,15 @@ class AudioMonitor:
 
     def __init__(self):
         self.listeners = threading.Semaphore(MAX_LISTENERS)
+        self.guard = threading.Lock()
+        self.listening = 0
 
     @contextmanager
     def listen(self, settings: Settings) -> Iterator[Iterator[bytes]]:
         if not self.listeners.acquire(blocking=False):
             raise BlockingIOError(f"Only {MAX_LISTENERS} listeners can hear the node at once.")
+        with self.guard:
+            self.listening += 1
         capture = None
         try:
             device = Microphone(settings.microphone).device()
@@ -76,4 +80,6 @@ class AudioMonitor:
                         capture.kill()
                         capture.wait()
                 capture.stdout.close()
+            with self.guard:
+                self.listening -= 1
             self.listeners.release()

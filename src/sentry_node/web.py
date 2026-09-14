@@ -182,6 +182,12 @@ class NodeControls:
             return self.sentry.sounds.listing()
         if path == "/api/captures":
             return self.sentry.captures.listing()
+        if path == "/api/streams":
+            # What the node is sending or receiving live, for the nav mark on every page.
+            return {
+                "video": bool(self.video.status()["running"]),
+                "audio": self.monitor.listening > 0 or self.talk.active,
+            }
         if path == "/api/video/status":
             return self.video_status()
         if path == "/api/camera/list":

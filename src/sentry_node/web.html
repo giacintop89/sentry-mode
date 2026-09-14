@@ -63,7 +63,7 @@ async function refreshVideo(){if(videoBusy)return;try{showVideo(await request('/
 async function videoAction(action){if(videoBusy)return;videoBusy=true;start.disabled=true;stop.disabled=true;
  videoResult.textContent='';
  if(action==='stop'){videoRunning=false;image.removeAttribute('src');}
- try{const state=await request('/api/video/'+action,'POST');videoBusy=false;showVideo(state);}
+ try{const state=await request('/api/video/'+action,'POST');videoBusy=false;showVideo(state);window.nodeRefresh?.();}
  catch(error){videoResult.className='result error';videoResult.textContent=error.message;videoBusy=false;start.disabled=videoRunning;stop.disabled=!videoRunning;}}
 detectionToggle.addEventListener('click',async()=>{if(detectionBusy)return;detectionBusy=true;detectionToggle.disabled=true;videoResult.textContent='';try{const state=await request('/api/video/detection','POST',{enabled:!detectionEnabled});detectionBusy=false;showVideo(state);}catch(error){detectionBusy=false;detectionToggle.disabled=false;videoResult.className='result error';videoResult.textContent=error.message;}});
 start.addEventListener('click',()=>videoAction('start'));stop.addEventListener('click',()=>videoAction('stop'));

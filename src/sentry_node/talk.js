@@ -145,6 +145,7 @@
       };
       hold.textContent = 'Talking · release to stop'; hold.classList.add('transmitting');
       status('Transmitting to the node speaker…');
+      window.nodeRefresh?.();  // The node is now playing this stream; light the nav mark.
       session.timer = setTimeout(() => finish(), info.max_seconds * 1000);
     } catch (error) { cancel(session, error.message); }
   }
@@ -157,6 +158,7 @@
     hold.textContent = 'Hold to talk'; hold.classList.remove('transmitting');
     hold.disabled = !stream; enable.disabled = false; speakButton.disabled = false;
     recordButton.disabled = !stream || !messageFormat();
+    window.nodeRefresh?.();
   }
   async function finish() {
     pressed = false;

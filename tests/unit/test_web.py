@@ -335,6 +335,26 @@ def test_live_microphone_streams_to_the_browser(web):
     assert data["error"] == "no microphone"
 
 
+def test_streams_report_live_video_and_audio_for_the_nav_mark(web):
+    controls, base = web
+    assert request(base, "/api/streams")[1] == {"video": False, "audio": False}
+
+    controls.monitor.listening = 1
+    try:
+        assert request(base, "/api/streams")[1] == {"video": False, "audio": True}
+    finally:
+        controls.monitor.listening = 0
+    controls.talk.accepting = True
+    try:
+        assert request(base, "/api/streams")[1] == {"video": False, "audio": True}
+    finally:
+        controls.talk.accepting = False
+    with patch.object(controls.video, "status", return_value={"running": True}):
+        assert request(base, "/api/streams")[1] == {"video": True, "audio": False}
+    assert b"connection-pulse" in request(base, "/dashboard.css")[1]
+    assert b"/api/streams" in request(base, "/dashboard.js")[1]
+
+
 def test_phone_assets_and_setup(web, tmp_path):
     controls, base = web
     assert b"Hold to talk" in request(base, "/")[1]

@@ -178,6 +178,30 @@ def test_recording_early_failure_is_not_treated_as_signal_stop():
             record_for(["pw-record", "file.wav"], seconds=2)
 
 
+def test_live_listening_is_counted_while_a_listener_is_connected():
+    from sentry_node.audio.monitor import AudioMonitor
+    from sentry_node.config import Settings
+
+    monitor = AudioMonitor()
+    with (
+        patch("sentry_node.audio.monitor.shutil.which", return_value="/usr/bin/pw-record"),
+        patch(
+            "sentry_node.audio.monitor.Microphone.device",
+            return_value=AudioDevice("mic", "Microphone", "pipewire"),
+        ),
+        patch("sentry_node.audio.monitor.subprocess.Popen") as popen,
+    ):
+        popen.return_value.poll.return_value = 0
+        with monitor.listen(Settings()):
+            assert monitor.listening == 1
+        assert monitor.listening == 0
+        with patch("sentry_node.audio.monitor.shutil.which", return_value=None):
+            with pytest.raises(HardwareError):
+                with monitor.listen(Settings()):
+                    pass
+    assert monitor.listening == 0
+
+
 def test_shutdown_cancels_and_reaps_active_audio_process():
     import sys
     import threading
