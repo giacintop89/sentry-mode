@@ -12,13 +12,13 @@ No web server starts in `sentry-mode run`, which is the idle service runtime.
 
 ## Views
 
-Video and Voice are separate views of the main page; Sentry separates Rules, Integrations,
-Event log and Captures. The rule editor has Conditions and Actions tabs with save controls
+Video, Voice and Captures are views of their own in the navigation; Sentry separates Rules,
+Integrations and Event log. The rule editor has Conditions and Actions tabs with save controls
 that stay in view, and the Actions tab is the rule's ordered list of steps
 ([action sequencer](action-sequencer.md)).
 
 Drafts survive switching tabs. Direct links include `/#speech`, `/#push-to-talk`,
-`/sentry#integrations`, `/sentry#events` and `/sentry#actions`.
+`/sentry#integrations`, `/sentry#events`, `/sentry#captures` and `/sentry#actions`.
 
 The mark in the navigation corner is green when the node answers and red when it does not,
 and the whole mark fades slowly in and out while the node streams — live preview, someone

@@ -150,7 +150,7 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
   body[data-page=sentry] main{height:100dvh;display:flex;flex-direction:column;min-height:550px}
   body[data-page=sentry] .app-views,body[data-page=sentry] .sentry-control,body[data-page=sentry] main>.workspace-tabs{flex-shrink:0}
   body[data-page=sentry] main>.workspace-tabs{margin:10px 0}
-  body[data-page=sentry] main>[role=tabpanel]{min-height:0;flex:1}
+  body[data-page=sentry] main>[role=tabpanel],body[data-page=sentry] main>.captures-panel{min-height:0;flex:1}
   .rules-layout{align-items:stretch}.rule-library{position:static;overflow-y:auto;clip-path:none;border:1px solid #21492f;background:#08190f}.rule-library:before{display:none}
   .rule-workbench{min-height:0;padding:14px 18px;clip-path:none;border:1px solid #21492f;background:#08190f}.rule-workbench:before{display:none}
   #rule-form,#rule-editor{height:100%;min-height:0}#rule-editor{display:flex;flex-direction:column}
@@ -363,4 +363,14 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
   .app-views .connection-frame{order:-1;width:100%;margin:0 0 4px;justify-content:space-between}
   .app-views .connection-frame .connection-status{width:auto;margin-top:0}
   .app-views .connection-mirror{display:block}
+}
+
+/* The workspace tabs stay on one line: folded into a grid they read as two separate rows
+   of controls. Three short labels fit once they share the width evenly. */
+@media(max-width:540px){
+  .workspace-tabs{flex-wrap:nowrap;gap:6px}
+  .workspace-tabs button{flex:1 1 0;min-width:0;padding:11px 4px;font-size:14.667px}
+}
+@media(max-width:400px){
+  .workspace-tabs button{padding:11px 3px;font-size:13.667px}
 }

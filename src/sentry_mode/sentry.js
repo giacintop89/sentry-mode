@@ -474,7 +474,7 @@
     });
     $('captures').replaceChildren(...cards);$('captures-result').textContent='';
   }
-  $('tab-captures').addEventListener('click',loadCaptures);
+  document.querySelector('.app-views a[href="/sentry#captures"]').addEventListener('click',loadCaptures);
   async function init(){try{const data=await api('sentry/config');config=data.config;revision=data.revision;
     $('test-mode').checked=config.test_mode;$('detection-fps').value=config.detection_fps;
     loadTelegram(data.telegram_token_configured);

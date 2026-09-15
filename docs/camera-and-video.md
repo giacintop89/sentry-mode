@@ -27,8 +27,8 @@ stopping video, finishes early and keeps the recording. If the microphone is una
 video is still saved, silent. POST `/api/video/record/start` and `/api/video/record/stop` do
 the same, and GET `/api/video/status` reports it under `recording`.
 
-Encoding needs `ffmpeg` with libx264. Recordings land in the Sentry
-[Captures](captures.md) tab.
+Encoding needs `ffmpeg` with libx264. Recordings land in the
+[Captures](captures.md) view.
 
 ## Status
 

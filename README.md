@@ -189,7 +189,7 @@ rate. A missing model is reported when detection is enabled; runtime never downl
 
 ### Sentry rules
 
-Open **Sentry rules** from the main page or visit `/sentry`. A starter person rule is provided:
+Open **Sentry** from the navigation or visit `/sentry`. A starter person rule is provided:
 70% confidence, three consecutive detections, ten seconds of observed absence before rearming,
 and a 60-second cooldown. It announces “Hello. Please wait here.” when actions are enabled.
 Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it is armed. To use it:
@@ -247,7 +247,7 @@ a **Wait** after one to hold the sequence for as long as it records. Disarming s
 recording early and keeps what was captured.
 Encoding needs `ffmpeg` with libx264 (installed by the Pi bootstrap helper). Files are saved
 in `.local/captures/` (override with `captures_directory` or
-`SENTRY_MODE_CAPTURES_DIRECTORY`); only the newest 200 are kept. The **Captures** tab lists
+`SENTRY_MODE_CAPTURES_DIRECTORY`); only the newest 200 are kept. The **Captures** view lists
 them to view, play, or delete; GET `/api/captures` lists them, `/captures/<name>` serves one
 (with byte ranges for phone video players), and POST `/api/captures/delete` with
 `{"name": ...}` removes one. Test mode logs photos, audio and video as `would_run` without
@@ -390,7 +390,7 @@ leaving the page, and connection loss stop transmission. The speaker is shared w
 and hardware audio tests; concurrent actions report busy. Video can run during transmission.
 
 **Record**, beside Hold to talk, records from the same phone microphone and saves the
-message to the Sentry **Captures** tab instead of playing it, up to 120 seconds. Like Record
+message to the **Captures** view instead of playing it, up to 120 seconds. Like Record
 on the Video view it lights up red while recording; press it again to stop and save. It uploads
 the browser's recording (WebM, Ogg or MP4) to POST `/api/captures/message` as
 `application/octet-stream`, which converts it to an AAC `.m4a` file of at most 5 MB.

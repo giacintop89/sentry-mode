@@ -31,6 +31,17 @@
     }
     const selected = tabs.find(tab => tab.dataset.tab === key) || tabs[0];
     if (selected) selectTab(selected);
+    if (document.body.dataset.page === 'sentry') {
+      // Captures is a view of the navigation, not a tab of the workspace below it.
+      const captures = key === 'captures';
+      if (captures) for (const panel of document.querySelectorAll('main>[role=tabpanel]')) panel.hidden = true;
+      document.querySelector('main>.workspace-tabs').hidden = captures;
+      document.getElementById('panel-captures').hidden = !captures;
+      for (const link of document.querySelectorAll('.app-views a[href^="/sentry"]')) {
+        if (link.getAttribute('href').includes('#captures') === captures) link.setAttribute('aria-current', 'page');
+        else link.removeAttribute('aria-current');
+      }
+    }
   }
   for (const tab of tabs) {
     tab.addEventListener('click', () => {
@@ -51,15 +62,15 @@
     });
   }
   window.addEventListener('hashchange', fromHash);
-  if (document.body.dataset.page === 'monitor') {
-    for (const link of document.querySelectorAll('.app-views a')) {
-      if (!['/', '/#speech'].includes(link.getAttribute('href'))) continue;
-      link.addEventListener('click', event => {
-        event.preventDefault();
-        history.replaceState(null, '', link.getAttribute('href'));
-        fromHash();
-      });
-    }
+  // A view link that stays on this page switches the view in place instead of reloading.
+  for (const link of document.querySelectorAll('.app-views a')) {
+    const href = link.getAttribute('href');
+    if (new URL(href, location.href).pathname !== location.pathname) continue;
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      history.replaceState(null, '', href);
+      fromHash();
+    });
   }
   document.getElementById('rule-form')?.addEventListener('invalid', event => {
     const panel = event.target.closest('[role=tabpanel]');

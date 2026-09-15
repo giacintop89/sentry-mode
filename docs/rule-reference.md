@@ -90,7 +90,7 @@ Firing splits the steps into groups and queues them. The queue runs one group at
 takes the next only when every member of the current one has returned, so the order between
 groups is exact and concurrency inside a group is explicit. Photos, videos and audio
 recordings hand their work to background threads, so the sequence moves on while they
-finish; their files appear in the Captures tab.
+finish; their files appear in the Captures view.
 
 Each group carries an expiry of `action_ttl_seconds` (default 15) counted from the firing,
 shifted by the waits that precede it, so a step late in a long sequence is not discarded as

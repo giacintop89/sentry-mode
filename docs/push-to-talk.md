@@ -12,7 +12,7 @@ the hardware audio tests, so a concurrent action reports busy. Video can run dur
 transmission, and the **Voice modification** controls are locked while one is in progress.
 
 **Record**, beside Hold to talk, records the same phone microphone and saves the message to
-the Sentry [Captures](captures.md) tab instead of playing it, up to 120 seconds. It lights
+the [Captures](captures.md) view instead of playing it, up to 120 seconds. It lights
 red while recording; press it again to stop and save. The browser's recording (WebM, Ogg or
 MP4) is uploaded to POST `/api/captures/message` as `application/octet-stream` and converted
 to an AAC `.m4a` file of at most 5 MB.
