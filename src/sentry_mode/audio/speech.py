@@ -15,22 +15,9 @@ from sentry_mode.core.errors import HardwareError
 from sentry_mode.hardware.speaker import Speaker
 
 LANGUAGES = {"en": "English", "it": "Italiano"}
-# Piper voice files do not record the speaker's gender, so only these known female
-# speakers are offered; any other installed model is ignored.
-PIPER_SPEAKERS = {
-    "alba": "Alba",
-    "amy": "Amy",
-    "cori": "Cori",
-    "jenny_dioco": "Jenny",
-    "kristin": "Kristin",
-    "lessac": "Lessac",
-    "paola": "Paola",
-    "serena": "Serena",
-}
 # Female eSpeak variants give the basic engine a choice of voice in every language.
 ESPEAK_VARIANTS = {"f3": "Female 1", "f2": "Female 2", "f4": "Female 3"}
 ESPEAK_DEFAULT_VARIANT = "f3"
-PIPER_MODEL = re.compile(r"([a-z]{2,3})_[A-Z]{2}-([a-z0-9_]+)-(x_low|low|medium|high)")
 # One Kokoro model holds every speaker, so its voices are a list, not installed files.
 # A speaker's name carries language and gender: a American, b British, i Italian, f female.
 KOKORO_MODEL = "kokoro-v1.0.onnx"
@@ -48,7 +35,7 @@ KOKORO_SPEAKERS = {
     "bf_isabella": "Isabella",
     "if_sara": "Sara",
 }
-QUALITY = {"kokoro": "Studio", "piper": "Natural", "espeak": "Basic"}
+QUALITY = {"kokoro": "Studio", "espeak": "Basic"}
 
 
 def kokoro_files(config: Settings) -> tuple[Path, Path]:
@@ -64,34 +51,28 @@ def kokoro_installed(config: Settings) -> bool:
 
 
 def kokoro_voices(config: Settings) -> dict[str, tuple[str, str, str]]:
-    """Offered Kokoro voices by id: speaker name, Kokoro's own name, Kokoro's language."""
+    """Offered voices by id: speaker name, Kokoro's own name, Kokoro's language.
+
+    Each language's configured speaker answers to the plain language id, so `it` keeps
+    meaning "the Italian voice" for a saved rule while the others are named after it.
+    """
     if not kokoro_installed(config) or config.speech.engine == "espeak":
         return {}
     voices = {}
-    for speaker, name in KOKORO_SPEAKERS.items():
-        language, spoken = KOKORO_LANGUAGES[speaker[0]]
-        if language in LANGUAGES:
-            voices[f"{language}-{speaker}"] = (name, speaker, spoken)
-    return voices
-
-
-def piper_models(config: Settings) -> dict[str, Path]:
-    """Installed Piper voices by id: configured language defaults, then discovered speakers."""
-    directory = config.speech.model_directory
-    voices = {}
-    for language, name in config.speech.models.items():
-        match = PIPER_MODEL.fullmatch(name)
-        if language in LANGUAGES and match and match[2] in PIPER_SPEAKERS:
-            voices[language] = directory / f"{name}.onnx"
-    defaults = set(voices.values())
-    try:
-        found = sorted(directory.glob("*.onnx"))
-    except OSError:
-        found = []
-    for model in found:
-        match = PIPER_MODEL.fullmatch(model.stem)
-        if match and match[1] in LANGUAGES and match[2] in PIPER_SPEAKERS and model not in defaults:
-            voices.setdefault(f"{match[1]}-{match[2]}", model)
+    for language in LANGUAGES:
+        speakers = [s for s in KOKORO_SPEAKERS if KOKORO_LANGUAGES[s[0]][0] == language]
+        if not speakers:
+            continue
+        default = config.speech.speakers.get(language, speakers[0])
+        if default not in speakers:
+            default = speakers[0]
+        for speaker in [default] + [s for s in speakers if s != default]:
+            name, spoken = KOKORO_SPEAKERS[speaker], KOKORO_LANGUAGES[speaker[0]][1]
+            voices[language if speaker == default else f"{language}-{speaker}"] = (
+                name,
+                speaker,
+                spoken,
+            )
     return voices
 
 
@@ -99,33 +80,35 @@ def voice_language(voice: str) -> str:
     return re.split(r"[-+]", voice, maxsplit=1)[0]
 
 
+def resolve_voice(config: Settings, voice: str) -> str:
+    """The voice actually spoken.
+
+    A speaker this node does not have — one retired with an engine, or a message saved
+    elsewhere — is spoken by its language's voice rather than dropping to the basic engine.
+    An explicit eSpeak variant is left alone: it asks for that engine by name.
+    """
+    voices = kokoro_voices(config)
+    if voice in voices or "+" in voice:
+        return voice
+    language = voice_language(voice)
+    return language if language in voices else voice
+
+
 def speech_engine(config: Settings, voice: str) -> tuple[str, Path | None]:
     # A voice id names its own engine, so a rule that speaks with Heart keeps speaking
     # with Heart; only a missing model or an engine pinned in the configuration changes it.
-    if voice in kokoro_voices(config):
+    if resolve_voice(config, voice) in kokoro_voices(config):
         return "kokoro", kokoro_files(config)[0]
     if config.speech.engine == "kokoro":
         raise HardwareError(
             f"{voice!r} is not an installed Kokoro voice. Run scripts/setup_speech.sh, "
-            "or set speech.engine to auto to use the other voices."
+            "or set speech.engine to auto to fall back to the basic engine."
         )
-    model = None if "+" in voice else piper_models(config).get(voice)
-    available = (
-        model is not None
-        and model.is_file()
-        and Path(str(model) + ".json").is_file()
-        and importlib.util.find_spec("piper") is not None
-    )
-    if config.speech.engine == "piper" and not available:
-        raise HardwareError(f"Piper voice {voice!r} is not installed. Run scripts/setup_speech.sh.")
-    if config.speech.engine != "espeak" and available:
-        return "piper", model
     return "espeak", None
 
 
 def available_voices(config: Settings) -> dict:
-    """Voices grouped by language: Kokoro and Piper speakers, or eSpeak voice types."""
-    models = piper_models(config)
+    """Voices grouped by language: Kokoro speakers, or eSpeak voice types."""
     kokoro = kokoro_voices(config)
     voices = []
     for language in LANGUAGES:
@@ -134,21 +117,9 @@ def available_voices(config: Settings) -> dict:
             for voice, (name, _, _) in kokoro.items()
             if voice_language(voice) == language
         ]
-        natural = []
-        for voice, model in models.items():
-            if voice_language(voice) != language:
-                continue
-            try:
-                engine, _ = speech_engine(config, voice)
-            except HardwareError:
-                continue
-            if engine == "piper":
-                match = PIPER_MODEL.fullmatch(model.stem)
-                natural.append((voice, PIPER_SPEAKERS[match[2]]))
-        if studio or natural:
+        if studio:
             choices = [(*choice, "kokoro") for choice in studio]
-            choices += [(*choice, "piper") for choice in natural]
-        elif config.speech.engine in ("kokoro", "piper"):
+        elif config.speech.engine == "kokoro":
             continue
         else:
             # The plain language id already speaks with the default female variant.
@@ -253,6 +224,7 @@ def speak(
     if not 80 <= rate <= 450:
         raise ValueError("Speech rate must be between 80 and 450 words per minute.")
     engine, model = speech_engine(config, voice)
+    voice = resolve_voice(config, voice)
     speaker = Speaker(config.speaker)
     device = speaker.device()
     with tempfile.TemporaryDirectory(prefix="sentry-mode-speech-") as directory:
@@ -281,20 +253,6 @@ def speak(
                 f"{config.speaker.volume / 100:g}",
                 "--output",
                 str(output),
-            ]
-        elif engine == "piper":
-            args = [
-                sys.executable,
-                "-m",
-                "piper",
-                "--model",
-                str(model),
-                "--output-file",
-                str(output),
-                "--length-scale",
-                f"{175 / rate:g}",
-                "--volume",
-                f"{config.speaker.volume / 100:g}",
             ]
         else:
             args = [

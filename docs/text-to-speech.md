@@ -5,42 +5,36 @@ service is used.
 
 ## Voices
 
-Three local engines, in falling order of quality:
+Two local engines:
 
 | Marked | Engine | Voices |
 |---|---|---|
 | **Studio** | [Kokoro-82M](https://github.com/thewh1teagle/kokoro-onnx) | Heart, Bella, Nicole, Aoede, Kore, Sarah, Nova (American), Emma, Isabella (British), Sara (Italian) |
-| **Natural** | [Piper](https://github.com/rhasspy/piper) | Lessac, Amy, Kristin (US), Alba, Cori, Jenny (GB), Paola, Serena (Italian) |
-| **Basic** | eSpeak NG | Female 1, 2 and 3 in every language |
+| **Basic** | eSpeak NG | Female 1, 2 and 3 in every language, when Kokoro is not installed |
 
-Install them with:
+Install Kokoro with:
 
 ```bash
 ./scripts/setup_speech.sh
 ```
 
-It installs the optional `speech` Python extra, downloads the Piper models into ignored
-`models/piper/`, and the single Kokoro model and its voice pack (about 350 MB together)
-into ignored `models/kokoro/`. eSpeak NG comes from the system
-(`sudo apt-get install -y espeak-ng`, included by the Pi bootstrap helper). Restart the
-server and reload the page afterwards.
+It installs the optional `speech` Python extra and downloads the single Kokoro model with
+its voice pack (about 350 MB together) into ignored `models/kokoro/`. eSpeak NG comes from
+the system (`sudo apt-get install -y espeak-ng`, included by the Pi bootstrap helper).
+Restart the server and reload the page afterwards.
 
-Choose a **Language**, then a **Voice** for it. One Kokoro model holds every Studio
-speaker; each Piper model in `models/piper/` named like `en_GB-alba-medium` whose speaker
-is a known female voice is a Natural speaker of its language, and other models are ignored.
-A language with neither offers eSpeak NG's Female 1, 2 and 3. Voice ids are the language
-(`it`), `<language>-<speaker>` (`en-alba`, `it-if_sara`) or `<language>+<variant>`
-(`it+f2`), and any of them works as `speech.voice`. The id decides which engine speaks:
-`speech.engine` is `auto` by default and pins one engine when set to `kokoro`, `piper` or
-`espeak`. Other languages and male voices are rejected.
+Choose a **Language**, then a **Voice** for it. One model holds every Studio speaker, so
+the whole list is there as soon as it is downloaded. Each language's configured speaker
+answers to the plain language id (`en`, `it`) and the others are named after it
+(`en-af_bella`); eSpeak variants are `<language>+<variant>` (`it+f2`). Any of these works
+as `speech.voice`. Other languages and male voices are rejected.
 
-Kokoro is worth its cost only where it is heard, not where it is timed: the model is loaded
-by a short-lived subprocess for each utterance, so a sentence takes roughly its own length
-again in synthesis plus about a second and a half of loading — around four seconds for a
-two-second announcement on a Pi 5, against well under a second for Piper. Rules that must
-speak the instant something is detected are better off with a Natural voice until the
-prepared-phrase cache in the [low-latency plan](sentry-mode-low-latency-implementation-plan.md)
-exists.
+A Studio voice is loaded by a short-lived subprocess for each utterance, so a sentence
+takes roughly its own length again in synthesis plus about a second and a half of loading —
+around four seconds for a two-second announcement on a Pi 5. Nothing stays resident beside
+the detector. Rules that must speak the instant something is detected will want the
+prepared-phrase cache in the
+[low-latency plan](sentry-mode-low-latency-implementation-plan.md).
 
 ## Speaking
 
@@ -85,8 +79,9 @@ changes the rule.
 ## Defaults
 
 YAML `speech` or `SENTRY_MODE_SPEECH__VOICE=it` / `SENTRY_MODE_SPEECH__RATE=175` set the
-defaults. `speech.engine` is `piper` to require neural voices, `espeak` to force basic
-synthesis, or `auto` (default) to choose installed Piper models per language;
-`speech.models` and `speech.model_directory` name what to load.
+defaults. `speech.engine` is `kokoro` to require the Studio voices, `espeak` to force basic
+synthesis, or `auto` (default) to use Kokoro when it is installed and fall back when it is
+not. `speech.speakers` names the speaker each language answers with, and
+`speech.kokoro_directory` where the model lives.
 
 See also: [action sequencer](action-sequencer.md), [push-to-talk](push-to-talk.md).

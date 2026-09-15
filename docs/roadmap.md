@@ -15,7 +15,7 @@ detection, tracking, and snapshot/event storage.
 
 ## Phase 2 — Speech
 
-Microphone tests, local Piper/eSpeak NG synthesis, and live phone push-to-talk through
+Microphone tests, local Kokoro/eSpeak NG synthesis, and live phone push-to-talk through
 the node speaker are implemented, including Demon/Chipmunk/custom pitch and volume controls.
 Phone microphone access uses optional local HTTPS.
 Next: wake-word detection, speech-to-text, and additional TTS adapters.

@@ -19,7 +19,10 @@ logging:
 speech:
   enabled: true
   engine: auto
-  model_directory: models/piper
+  kokoro_directory: models/kokoro
+  speakers:
+    en: af_heart
+    it: if_sara
   lead_in_ms: 1000
   tail_ms: 750
   voice: en

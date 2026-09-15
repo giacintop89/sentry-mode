@@ -47,9 +47,9 @@ the camera if Sentry is disarmed; shutdown always releases it. Snapshots reuse t
 captured frame; status never reopens an active camera.
 The main UI is at `/`; hardware-test controls are at `/tests`.
 
-Speech synthesis passes validated text to local Piper or eSpeak NG through stdin and writes
-a temporary WAV. Installed Piper voices supply neural English/Italian speech; other voices
-can fall back to eSpeak when engine=auto. Model downloads are explicit setup operations and
+Speech synthesis passes validated text to local Kokoro or eSpeak NG through stdin and writes
+a temporary WAV. The Kokoro model supplies Studio English/Italian speech from a short-lived
+subprocess, so its weights never stay resident; without it engine=auto falls back to eSpeak. Model downloads are explicit setup operations and
 runtime speech stays local. A complete-sample check rejects truncated WAVs before playback.
 FFmpeg converts speech to 48 kHz stereo with configurable leading/trailing silence;
 PipeWire playback uses a configurable buffer to protect short Bluetooth utterances. Text is never interpreted as a

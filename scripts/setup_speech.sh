@@ -6,12 +6,7 @@ if [ ! -x "$root_dir/.venv/bin/python" ]; then
     exit 1
 fi
 "$root_dir/.venv/bin/python" -m pip install -e "$root_dir[speech]"
-mkdir -p "$root_dir/models/piper"
-"$root_dir/.venv/bin/python" -m piper.download_voices --data-dir "$root_dir/models/piper" \
-    en_US-lessac-medium en_US-amy-medium en_US-kristin-medium \
-    en_GB-alba-medium en_GB-cori-medium en_GB-jenny_dioco-medium \
-    it_IT-paola-medium it_IT-serena-medium
-# One Kokoro model speaks every Studio voice, so it is fetched once, next to the Piper models.
+# One Kokoro model speaks every voice, so it is fetched once and kept out of the repository.
 kokoro_dir="$root_dir/models/kokoro"
 kokoro_release=https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0
 mkdir -p "$kokoro_dir"
@@ -24,5 +19,5 @@ for file in kokoro-v1.0.onnx voices-v1.0.bin; do
         mv "$kokoro_dir/$file.part" "$kokoro_dir/$file"
     fi
 done
-echo 'English and Italian female voices ready: Kokoro Studio and Piper Natural.'
+echo 'English and Italian female Studio voices ready.'
 echo 'Restart sentry-mode serve to refresh voice choices.'

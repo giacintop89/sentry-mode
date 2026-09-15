@@ -57,25 +57,22 @@ class SpeakerConfig(AudioConfig):
 
 class SpeechConfig(Section):
     enabled: bool = True
-    engine: Literal["auto", "kokoro", "piper", "espeak"] = "auto"
-    model_directory: Path = Path("models/piper")
+    engine: Literal["auto", "kokoro", "espeak"] = "auto"
     kokoro_directory: Path = Path("models/kokoro")
-    models: dict[str, str] = Field(
-        default_factory=lambda: {"en": "en_US-lessac-medium", "it": "it_IT-paola-medium"}
-    )
+    speakers: dict[str, str] = Field(default_factory=lambda: {"en": "af_heart", "it": "if_sara"})
     lead_in_ms: int = Field(default=1000, ge=0, le=5000)
     tail_ms: int = Field(default=750, ge=0, le=5000)
     voice: str = Field(default="en", min_length=1, max_length=64)
     rate: int = Field(default=175, ge=80, le=450)
 
-    @field_validator("models")
+    @field_validator("speakers")
     @classmethod
-    def validate_models(cls, models: dict[str, str]) -> dict[str, str]:
+    def validate_speakers(cls, speakers: dict[str, str]) -> dict[str, str]:
         import re
 
-        if any(not re.fullmatch(r"[A-Za-z0-9_-]+", name) for name in models.values()):
-            raise ValueError("speech model names must be simple filenames without a path")
-        return models
+        if any(not re.fullmatch(r"[a-z]{2}_[a-z_]+", name) for name in speakers.values()):
+            raise ValueError("speech speakers must be Kokoro voice names such as if_sara")
+        return speakers
 
 
 class LoggingConfig(Section):

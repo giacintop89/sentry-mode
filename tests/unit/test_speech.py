@@ -58,24 +58,11 @@ def test_disabled_speech():
         speak(Settings(speech=SpeechConfig(enabled=False)), "Hello")
 
 
-def test_piper_voice_selection_and_missing_model_error(tmp_path):
-    from sentry_mode.audio.speech import speech_engine
-
-    config = Settings(speech=SpeechConfig(engine="piper", model_directory=tmp_path))
-    with pytest.raises(HardwareError, match="not installed"):
-        speech_engine(config, "it")
-    model = tmp_path / "it_IT-paola-medium.onnx"
-    model.write_bytes(b"model")
-    Path(str(model) + ".json").write_text("{}")
-    with patch("sentry_mode.audio.speech.importlib.util.find_spec", return_value=object()):
-        assert speech_engine(config, "it") == ("piper", model)
-
-
 def test_synthesis_preserves_multiline_utterance_without_overwriting(tmp_path):
 
     def synthesize(args, **kwargs):
         assert kwargs["input_text"] == "First line. Second line."
-        path = Path(args[args.index("--output-file") + 1])
+        path = Path(args[args.index("--output") + 1])
         with wave.open(str(path), "wb") as stream:
             stream.setnchannels(1)
             stream.setsampwidth(2)
@@ -85,15 +72,15 @@ def test_synthesis_preserves_multiline_utterance_without_overwriting(tmp_path):
     with (
         patch(
             "sentry_mode.audio.speech.speech_engine",
-            return_value=("piper", tmp_path / "model.onnx"),
+            return_value=("kokoro", tmp_path / "kokoro-v1.0.onnx"),
         ),
         patch("sentry_mode.audio.speech.command", side_effect=synthesize) as command,
         patch("sentry_mode.audio.speech.Speaker"),
         patch("sentry_mode.audio.speech.prepare_playback", return_value=2.75),
     ):
         result = speak(Settings(), "First line.\nSecond line.")
-    assert result["engine"] == "piper"
-    assert "--length-scale" in command.call_args.args[0]
+    assert result["engine"] == "kokoro"
+    assert "--speed" in command.call_args.args[0]
 
 
 def test_wave_header_cannot_hide_truncated_audio(tmp_path):
@@ -133,47 +120,10 @@ def test_playback_preparation_includes_padding_and_stereo_resampling(tmp_path):
     assert seconds == 2
 
 
-def install_voice(directory: Path, name: str) -> Path:
-    model = directory / f"{name}.onnx"
-    model.write_bytes(b"model")
-    Path(str(model) + ".json").write_text("{}")
-    return model
-
-
-def test_voice_types_list_female_piper_speakers_and_espeak_variants(tmp_path):
-    from sentry_mode.audio.speech import available_voices, speech_engine
-
-    for name in (
-        "it_IT-paola-medium",
-        "it_IT-serena-medium",
-        "it_IT-riccardo-x_low",
-        "en_US-lessac-medium",
-        "en_GB-jenny_dioco-medium",
-        "en_US-ryan-medium",
-        "es_ES-sharvard-medium",
-    ):
-        install_voice(tmp_path, name)
-    config = Settings(
-        speech=SpeechConfig(model_directory=tmp_path, kokoro_directory=tmp_path / "none")
-    )
-    with patch("sentry_mode.audio.speech.importlib.util.find_spec", return_value=object()):
-        voices = {voice["id"]: voice for voice in available_voices(config)["voices"]}
-        # Male speakers are never offered, so their ids fall back to a female eSpeak voice.
-        assert speech_engine(config, "it-riccardo") == ("espeak", None)
-    assert set(voices) == {"en", "en-jenny_dioco", "it", "it-serena"}
-    assert voices["it"]["name"] == "Paola" and voices["it"]["label"] == "Italiano · Paola"
-    # The configured model is the language id; another female speaker joins it by name.
-    assert voices["it-serena"]["label"] == "Italiano · Serena"
-    assert voices["en-jenny_dioco"]["name"] == "Jenny"
-    assert {voice["gender"] for voice in voices.values()} == {"female"}
-
-
 def test_languages_without_a_neural_voice_offer_female_espeak_variants(tmp_path):
     from sentry_mode.audio.speech import available_voices
 
-    config = Settings(
-        speech=SpeechConfig(model_directory=tmp_path, kokoro_directory=tmp_path / "none")
-    )
+    config = Settings(speech=SpeechConfig(kokoro_directory=tmp_path / "none"))
     voices = available_voices(config)["voices"]
     assert [voice["id"] for voice in voices] == ["en", "en+f2", "en+f4", "it", "it+f2", "it+f4"]
     assert {voice["gender"] for voice in voices} == {"female"}
@@ -219,49 +169,44 @@ def install_kokoro(directory: Path) -> Path:
     return directory / KOKORO_MODEL
 
 
-def test_kokoro_speakers_lead_the_voice_list_and_keep_the_piper_ones(tmp_path):
+def test_each_language_offers_its_speakers_with_the_configured_one_first(tmp_path):
     from sentry_mode.audio.speech import available_voices, speech_engine
 
-    (tmp_path / "piper").mkdir()
-    install_voice(tmp_path / "piper", "it_IT-paola-medium")
-    model = install_kokoro(tmp_path / "kokoro")
+    model = install_kokoro(tmp_path)
     config = Settings(
-        speech=SpeechConfig(
-            model_directory=tmp_path / "piper", kokoro_directory=tmp_path / "kokoro"
-        )
+        speech=SpeechConfig(kokoro_directory=tmp_path, speakers={"en": "bf_emma", "it": "if_sara"})
     )
     with patch("sentry_mode.audio.speech.importlib.util.find_spec", return_value=object()):
         voices = {voice["id"]: voice for voice in available_voices(config)["voices"]}
-        # The voice id says which engine speaks it, so Piper voices keep their engine.
-        assert speech_engine(config, "it-if_sara") == ("kokoro", model)
-        assert speech_engine(config, "it") == ("piper", tmp_path / "piper/it_IT-paola-medium.onnx")
-    assert voices["it-if_sara"]["label"] == "Italiano · Sara"
-    assert voices["it-if_sara"]["quality"] == "Studio" and voices["it"]["quality"] == "Natural"
-    assert voices["en-af_heart"]["language"] == "en" and voices["en-bf_emma"]["gender"] == "female"
-    # Studio voices come first, and every one of them is offered for its own language.
-    italian = [voice for voice in voices if voice.startswith("it")]
-    assert italian == ["it-if_sara", "it"]
+        assert speech_engine(config, "it") == ("kokoro", model)
+        assert speech_engine(config, "en-af_heart") == ("kokoro", model)
+    # A language's configured speaker answers to the plain id, so saved rules keep working.
+    assert voices["en"]["label"] == "English · Emma" and voices["it"]["label"] == "Italiano · Sara"
+    assert "en-bf_emma" not in voices and "it-if_sara" not in voices
+    assert voices["en-af_heart"]["name"] == "Heart" and voices["en-af_heart"]["quality"] == "Studio"
+    assert [voice for voice in voices if voice.startswith("it")] == ["it"]
+    assert {voice["gender"] for voice in voices.values()} == {"female"}
+    # An unknown speaker in the configuration falls back to a real one instead of failing.
+    odd = Settings(speech=SpeechConfig(kokoro_directory=tmp_path, speakers={"en": "af_missing"}))
+    with patch("sentry_mode.audio.speech.importlib.util.find_spec", return_value=object()):
+        assert available_voices(odd)["voices"][0]["name"] == "Heart"
 
 
 def test_kokoro_is_skipped_when_it_is_not_installed(tmp_path):
     from sentry_mode.audio.speech import available_voices, kokoro_installed, speech_engine
 
-    config = Settings(
-        speech=SpeechConfig(
-            model_directory=tmp_path / "piper", kokoro_directory=tmp_path / "kokoro"
-        )
-    )
+    config = Settings(speech=SpeechConfig(kokoro_directory=tmp_path / "kokoro"))
     assert not kokoro_installed(config)
     assert not [v for v in available_voices(config)["voices"] if v["engine"] == "kokoro"]
-    # Without the model an id of one of its voices is spoken by the basic engine, not refused.
-    assert speech_engine(config, "it-if_sara") == ("espeak", None)
+    # Without the model the voice of a rule is spoken by the basic engine, not refused.
+    assert speech_engine(config, "it") == ("espeak", None)
     install_kokoro(tmp_path / "kokoro")
     with patch("sentry_mode.audio.speech.importlib.util.find_spec", return_value=None):
         assert not kokoro_installed(config)
     pinned = Settings(speech=SpeechConfig(engine="kokoro", kokoro_directory=tmp_path / "kokoro"))
     with patch("sentry_mode.audio.speech.importlib.util.find_spec", return_value=object()):
         with pytest.raises(HardwareError, match="not an installed Kokoro voice"):
-            speech_engine(pinned, "en-alba")
+            speech_engine(pinned, "en+f2")
 
 
 def test_kokoro_synthesis_runs_in_its_own_process_with_the_editor_rate(tmp_path):
@@ -284,7 +229,7 @@ def test_kokoro_synthesis_runs_in_its_own_process_with_the_editor_rate(tmp_path)
         patch("sentry_mode.audio.speech.Speaker"),
         patch("sentry_mode.audio.speech.prepare_playback", return_value=2.0),
     ):
-        result = speak(config, "Ciao. Attendi qui.", voice="it-if_sara", rate=350)
+        result = speak(config, "Ciao. Attendi qui.", voice="it", rate=350)
     args = command.call_args.args[0]
     assert result["engine"] == "kokoro" and "Studio" in result["message"]
     assert args[1:3] == ["-m", "sentry_mode.audio.kokoro"]
@@ -329,5 +274,20 @@ def test_kokoro_worker_writes_a_playable_wave_at_the_asked_volume(tmp_path, monk
     with wave.open(str(output), "rb") as stream:
         assert stream.getframerate() == 24000 and stream.getnchannels() == 1
         peak = max(abs(int.from_bytes(stream.readframes(1)[:2], "little", signed=True)), 0)
-    # The speaker volume is applied to the samples, as Piper's --volume does.
+    # The speaker volume is applied to the samples before they reach the speaker.
     assert 8000 < peak < 8400
+
+
+def test_a_speaker_this_node_does_not_have_falls_back_to_its_language(tmp_path):
+    from sentry_mode.audio.speech import resolve_voice, speech_engine
+
+    install_kokoro(tmp_path)
+    config = Settings(speech=SpeechConfig(kokoro_directory=tmp_path))
+    with patch("sentry_mode.audio.speech.importlib.util.find_spec", return_value=object()):
+        # A message saved with a speaker that is gone still speaks Italian, not eSpeak.
+        assert resolve_voice(config, "it-paola") == "it"
+        assert speech_engine(config, "it-paola")[0] == "kokoro"
+        assert resolve_voice(config, "en-af_bella") == "en-af_bella"
+        # Asking for an eSpeak variant by name still gets that engine.
+        assert resolve_voice(config, "it+f2") == "it+f2"
+        assert speech_engine(config, "it+f2") == ("espeak", None)
