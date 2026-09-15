@@ -32,11 +32,15 @@
     const armed = !!status?.armed;
     for (const id of ['settings','rule-editor','ssh-editor','telegram-editor']) $(id).disabled = !config || busy || armed;
     $('new-rule').disabled = !config || busy || armed;
-    $('arm').disabled = !config || busy || armed || dirty.size > 0 || !config.rules.some(r=>r.enabled);
+    // Settings ride along with Start; only an unsaved rule or integration holds arming back.
+    const blocking = [...dirty].filter(section => section !== 'settings');
+    $('arm').disabled = !config || busy || armed || blocking.length > 0 || !config.rules.some(r=>r.enabled);
     $('disarm').disabled = busy || !armed;
     $('delete-rule').disabled = editing < 0;
     for (const button of $('rules').querySelectorAll('button')) button.disabled = busy || armed;
-    $('save-help').textContent = armed ? 'Disarm before changing saved rules or actions.' : dirty.size ? 'Unsaved changes: '+[...dirty].join(', ')+'. Save them before starting Sentry.' : '';
+    $('save-help').textContent = armed ? 'Disarm before changing saved rules or actions.'
+      : blocking.length ? 'Unsaved changes: '+blocking.join(', ')+'. Save them before starting Sentry.'
+      : dirty.has('settings') ? 'Detections/sec is saved when Sentry starts.' : '';
   }
   for (const [id, section] of [['settings','settings'],['rule-editor','rule'],['ssh-editor','command'],['telegram-editor','Telegram']]) {
     $(id).addEventListener('input', event => { if (event.target.id==='command-select'||event.target.id==='test-mode'||event.target.dataset.f==='sound-file') return; dirty.add(section); locks(); });
@@ -374,7 +378,6 @@
     }catch(error){message(error.message,'error');return false;}
     finally{busy=false;locks();}
   }
-  $('save-settings').addEventListener('click',()=>save(structuredClone(config),'settings'));
   // Test mode applies to every rule, so the switch saves itself instead of waiting for Save.
   $('test-mode').addEventListener('change',async()=>{
     if(busy)return;busy=true;locks();message('Saving…');
@@ -429,7 +432,10 @@
     catch(error){message(error.message,'error');}
     finally{busy=false;locks();}
   }
-  $('arm').addEventListener('click',()=>action('sentry/start'));
+  $('arm').addEventListener('click',async()=>{
+    // Detections/sec has no Save of its own: starting Sentry saves what is pending.
+    if(dirty.has('settings')&&!await save(structuredClone(config),'settings'))return;
+    action('sentry/start');});
   $('disarm').addEventListener('click',()=>action('sentry/stop'));
   async function poll() {
     try {

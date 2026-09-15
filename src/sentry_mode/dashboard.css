@@ -239,7 +239,6 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .sentry-control .sentry-settings label{margin:0;font-size:15.667px;white-space:nowrap}
 .sentry-control .sentry-fps{display:flex;align-items:center;gap:8px}
 .sentry-control .sentry-fps input{width:74px!important;min-height:38px;padding:6px 8px}
-.sentry-control .sentry-settings button{min-height:38px;padding:8px 14px}
 .sentry-control .sentry-arm{grid-area:arm;margin:0;flex-wrap:nowrap}
 .sentry-control .sentry-arm button{padding:10px 16px;white-space:nowrap}
 /* The notice line is reserved and never wraps: a message that appears out of nothing, or
@@ -250,8 +249,7 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .sentry-control .sentry-messages small{display:block;font-size:14.667px}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(max-width:1100px){.sentry-control{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"status arm" "settings settings" "messages messages"}
- .sentry-control #settings.sentry-settings{padding:10px 0 0;border-inline:0;border-top:1px solid var(--line)}
- .sentry-control .sentry-settings button{margin-left:auto}}
+ .sentry-control #settings.sentry-settings{padding:10px 0 0;border-inline:0;border-top:1px solid var(--line)}}
 @media(max-width:600px){.sentry-control{grid-template-columns:minmax(0,1fr);grid-template-areas:"status" "arm" "settings" "messages";padding:12px 14px;gap:10px}
  .sentry-control .sentry-arm button{flex:1}
  .sentry-control #settings.sentry-settings{flex-wrap:wrap;gap:10px 14px}}

@@ -53,7 +53,8 @@ refused while armed, never saves the rule, and reports what ran in the event log
 Test mode covers every rule, so its checkbox is a switch of its own: ticking or unticking
 it saves the node's choice immediately, with no Save and no rule edit. Like the other
 settings it is refused while armed, so the node never moves between rehearsal and real
-actions mid-run.
+actions mid-run. The Monitoring strip has no Save button of its own — a changed
+Detections/sec is written when you start Sentry.
 
 The usual rehearsal is: tick Test mode, arm, confirm `triggered` and `would_run` in the
 event log, then disarm, untick Test mode and arm again.
