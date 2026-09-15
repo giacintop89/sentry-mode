@@ -345,3 +345,11 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
 @media(max-width:540px){body{zoom:.84}}
 @media(max-width:400px){body{zoom:.78}
  input:not([type=range]):not([type=checkbox]),select,textarea{font-size:20.667px}}
+
+/* The view icons are hidden on a narrow screen because they steal the label's width
+   on one line. Stack them instead: the icon reads as the tab's mark and the label
+   keeps the full width of the cell. */
+@media(max-width:700px){
+  .app-views a{flex-direction:column;gap:4px;padding:8px 6px;line-height:1.2}
+  .app-views a svg{display:block;width:20px;height:20px}
+}
