@@ -306,7 +306,7 @@
   }
   function fillSoundboard(step) {
     options(f(step,'soundboard'),[['','Custom message'],...soundboard.map(m=>[m.id,m.text.length>60?m.text.slice(0,59)+'…':m.text])],'');
-    f(step,'soundboard-help').textContent=soundboard.length?'Pick a saved message to copy its text, voice, speed and modification into this rule.':'No saved messages yet. Save one from the soundboard on the Voice page.';
+    f(step,'soundboard-help').textContent=soundboard.length?'Copies the saved text, voice, speed and modification into this rule.':'Nothing saved yet. Save a message from the soundboard on the Voice page.';
   }
   async function loadSoundboard() {
     try{soundboard=(await api('soundboard')).messages;}catch{soundboard=[];}

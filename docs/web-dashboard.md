@@ -32,8 +32,8 @@ capture camera, list audio, test microphone and speaker, show and validate the e
 configuration, and start or stop an idle runtime. Audio tests execute on the node, not in
 the browser, and configuration show/validate never edit files.
 
-Its **Input and output devices** panel picks camera, microphone, speaker and speaker volume
-from what the node reports. POST `/api/hardware` merges them into the YAML file named by
+Its **Inputs and output** panel picks camera, microphone, speaker and speaker volume from
+what the node reports. POST `/api/hardware` merges them into the YAML file named by
 `SENTRY_MODE_CONFIG`, leaving every other setting untouched, and applies them to the running
 dashboard without a restart; without that variable there is no file to write and the change
 lasts until the next restart. Changing the camera requires stopping video and disarming

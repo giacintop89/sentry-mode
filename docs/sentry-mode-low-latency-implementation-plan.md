@@ -34,7 +34,7 @@ The reviewed repository implements capture, YOLOX Nano detection, appearance rul
 | P1 | The Sentry stale-sample tolerance is `max(2.0, 3 / detection_fps)` seconds. Overlay freshness is 1.5 seconds. | These tolerances must not be reused for moving a camera. | `Sentry.observe`, `DetectionWorker.overlay/status` [R3, R6] |
 | P1 | `DetectionWorker` has one result callback; `Sentry` assigns `self.observe` to it. | Adding tracking by assigning another callback would disconnect Sentry. A bounded fan-out is required. | `vision/detection.py`, `sentry/engine.py` [R3, R6] |
 | P1 | Speech, SSH, and Telegram execute through the same action worker. Speech can wait for the audio lock and then synthesize/play while owning it. | A busy speaker or slow network action can delay unrelated actions behind it. | `Sentry._worker` [R6] |
-| P1 | Piper runs in a new process for each utterance; speech is fully rendered, checked, converted with FFmpeg, then played. Default lead-in is 1000 ms and tail padding 750 ms. | Speech has explicit startup silence plus preparation cost. Tail padding also extends speaker occupancy. | `audio/speech.py`, `config.py` [R7, R8] |
+| P1 | Kokoro runs in a new process for each utterance; speech is fully rendered, checked, converted with FFmpeg, then played. Default lead-in is 1000 ms and tail padding 750 ms. | Speech has explicit startup silence plus preparation cost. Tail padding also extends speaker occupancy. | `audio/speech.py`, `config.py` [R7, R8] |
 | P2 | Phone audio uses 100 ms PCM packets, serialized HTTP requests, a frontend pending limit of 12, and a backend queue of 12 chunks. | Backlog can reach substantial durations; reducing packet size alone can worsen request-rate limitations. | `talk.js`, `audio/talk.py` [R9, R10] |
 
 ### Preserve what is already good
@@ -301,13 +301,13 @@ Preserve existing fixed SSH commands, timeouts, child-process cancellation, cred
 
 **Change:** `audio/speech.py`, `audio/playback.py`, `config.py`, action integration; add `audio/speech_cache.py` and optionally `audio/speech_worker.py`.
 
-Prioritize a prepared-phrase cache for the fixed texts already present in Sentry rules. Generate/cache them on explicit preparation or validated configuration update, outside the capture/control path. Do not block the camera while preparing speech, and do not quietly delay readiness without exposing a preparation state.
+Saved soundboard messages already work this way: each is synthesized once when it is saved and kept as an mp3 in `.local/soundboard/`, and playing a card only filters and pads that sample. Extend the same idea to the fixed texts already present in Sentry rules. Generate/cache them on explicit preparation or validated configuration update, outside the capture/control path. Do not block the camera while preparing speech, and do not quietly delay readiness without exposing a preparation state.
 
 Key the cache by normalized text, voice and model fingerprint, synthesis engine/version, rate, volume policy, effects, and output format. Include padding/profile in the key if caching a complete padded playback file. Use private bounded storage, atomic publication, and invalidation on voice/effect/config changes. Never play an old phrase under a new cache key.
 
 Move uncached synthesis out of the speaker lock; acquire that lock only when a valid, unexpired playback is ready. Both preparation and playback remain cancellable and subject to resource limits.
 
-For dynamic text, a bounded resident Piper worker may retain the model between jobs. Piper's documented Python API supports loading a voice object and WAV or chunked synthesis. Pin and verify the installed API before integrating it; retaining a model is an implementation choice to benchmark, not a speedup guarantee. [E4]
+For dynamic text, a bounded resident Kokoro worker may retain the model between jobs, saving the ~1.4 s of model load each utterance now pays. Weigh that against the ~650 MB the weights would keep resident beside the detector; retaining a model is an implementation choice to benchmark, not a speedup guarantee. [E4]
 
 The current 1000 ms lead-in and 750 ms tail were designed to protect Bluetooth utterances. Do not globally remove them as an untested quick fix. Introduce independently tested cold/warm output profiles. Test decreasing lead-in and tail, cache-hit playback, repeated short phrases, idle wake, first/last-word completeness, and cancellation. A persistent playback stream is optional only after device behavior is measured; it is not permission to keep a microphone recording.
 
@@ -315,7 +315,7 @@ The configured PipeWire latency is 250 ms. Treat it as an audio buffering settin
 
 A cached short acknowledgement sound can provide an immediate local response while a longer utterance is prepared, provided the rule explicitly asks for both and the speaker scheduling remains clear.
 
-**Acceptance:** a cache hit invokes neither Piper nor FFmpeg to regenerate the same asset; expired prepared audio never plays; speaker ownership excludes synthesis waiting; Bluetooth cold-start words are not truncated; actual audible latency is reported separately from software submission.
+**Acceptance:** a cache hit invokes neither the synthesizer nor FFmpeg to regenerate the same asset; expired prepared audio never plays; speaker ownership excludes synthesis waiting; Bluetooth cold-start words are not truncated; actual audible latency is reported separately from software submission.
 
 ### WP7 — Optimize live phone audio only after the core path
 
@@ -506,8 +506,8 @@ https://docs.kernel.org/userspace-api/media/v4l/buffer.html
 [E3] GStreamer appsink: bounded queues and versioned drop/leaky controls
 https://gstreamer.freedesktop.org/documentation/app/appsink.html
 
-[E4] Piper Python API: persistent voice object, WAV and chunked synthesis interfaces
-https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/API_PYTHON.md
+[E4] kokoro-onnx: voice object loading and synthesis interface
+https://github.com/thewh1teagle/kokoro-onnx
 
 [E5] PipeWire pw-cat / pw-play latency option and buffering tradeoff
 https://docs.pipewire.org/page_man_pw-cat_1.html

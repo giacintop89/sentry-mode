@@ -45,15 +45,21 @@ its latest resized JPEG through a condition variable, allowing multiple HTTP vie
 without opening multiple camera handles. Hiding preview ends viewer responses and releases
 the camera if Sentry is disarmed; shutdown always releases it. Snapshots reuse the latest
 captured frame; status never reopens an active camera.
-The main UI is at `/`; hardware-test controls are at `/tests`.
+The main UI is at `/`; hardware settings are at `/hardware` (`/tests` still resolves).
 
 Speech synthesis passes validated text to local Kokoro or eSpeak NG through stdin and writes
 a temporary WAV. The Kokoro model supplies Studio English/Italian speech from a short-lived
-subprocess, so its weights never stay resident; without it engine=auto falls back to eSpeak. Model downloads are explicit setup operations and
-runtime speech stays local. A complete-sample check rejects truncated WAVs before playback.
-FFmpeg converts speech to 48 kHz stereo with configurable leading/trailing silence;
-PipeWire playback uses a configurable buffer to protect short Bluetooth utterances. Text is never interpreted as a
-shell command. Language/rate defaults live in the speech configuration section.
+subprocess, so its weights never stay resident; without it engine=auto falls back to eSpeak.
+Model downloads are explicit setup operations and runtime speech stays local. A complete-sample
+check rejects truncated WAVs before playback. FFmpeg converts speech to 48 kHz stereo with
+configurable leading/trailing silence; PipeWire playback uses a configurable buffer to protect
+short Bluetooth utterances. Text is never interpreted as a shell command. Language/rate
+defaults live in the speech configuration section.
+
+A saved soundboard message is synthesized once, when it is saved, and kept as an mp3 sample
+beside the soundboard file. Playing a card filters and pads that sample instead of running the
+synthesizer, so a Studio voice answers immediately; a missing sample is rendered on first play
+and deleting a message deletes it.
 
 Phone push-to-talk captures only after explicit microphone permission and a held button.
 An AudioWorklet sends ordered 100 ms mono PCM16 packets over same-origin HTTPS requests.
@@ -80,9 +86,9 @@ Sentry evaluates completed inference results through a short callback, not by po
 overlay boxes. Rule state contains consecutive hits, a presence latch, observed-absence time,
 and last-trigger time. Confirmed appearances enqueue bounded action jobs, or log intended
 actions in test mode. A separate worker executes speech under the shared audio lock or a
-saved SSH command with a timeout. Testing a rule from the editor feeds the same executor with the
-draft's actions while disarmed, after the same checks arming makes. Stale jobs expire; disarm/fault signals cancel work and
-discard the queue. Commands are fixed configuration strings, never assembled from image data.
+saved SSH command with a timeout. Testing a rule from the editor feeds the same executor with
+the draft's actions while disarmed, after the same checks arming makes. Stale jobs expire;
+disarm/fault signals cancel work and discard the queue. Commands are fixed configuration strings, never assembled from image data.
 
 A rule's actions are an ordered sequence of steps rather than a set. Steps marked to start
 with the one before them form a group, and a queued job is one group: its members run on
