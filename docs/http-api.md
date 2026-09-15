@@ -6,7 +6,8 @@ Every endpoint is served by the dashboard process. Responses are JSON unless sta
 
 Every POST requires the same-origin header `X-Sentry-Mode-Control: 1`. These also require
 `Content-Type: application/json`: `/api/speech`, `/api/video/detection`,
-`/api/sentry/config`, `/api/sentry/rules/test`, `/api/soundboard`, `/api/soundboard/delete`,
+`/api/sentry/config`, `/api/sentry/test-mode`, `/api/sentry/rules/test`, `/api/soundboard`,
+`/api/soundboard/delete`,
 `/api/soundboard/play`, `/api/captures/delete`, `/api/hardware`, `/api/sounds/delete`,
 `/api/sounds/play`, `/api/tunes/play`. Uploads use `application/octet-stream`. There are no
 arbitrary shell or filesystem-path controls, and no login: bind to loopback or use a trusted
@@ -55,6 +56,7 @@ Presets are `natural`, `demon`, `chipmunk` and `custom` (with `pitch` in semiton
 |---|---|
 | GET `/api/sentry/config` | Rules, SSH commands, Telegram settings (blank `bot_token`), `telegram_token_configured`, categories, revision. |
 | POST `/api/sentry/config` | `{ "config": {...}, "revision": N }`, optional `"clear_telegram_token": true`. |
+| POST `/api/sentry/test-mode` | `{"enabled": true|false}`; saves at once and answers `test_mode` and the new `revision`. Refused while armed. |
 | GET `/api/sentry/status` | Armed/test state, action status, recent events. |
 | POST `/api/sentry/start`, `/api/sentry/stop` | Arm and disarm. |
 | POST `/api/sentry/rules/test` | Run a draft rule's steps once, without saving. |

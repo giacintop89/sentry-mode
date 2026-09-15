@@ -154,24 +154,50 @@ class Sentry:
                 config.telegram.bot_token = SecretStr("")
             elif not config.telegram.bot_token.get_secret_value():
                 config.telegram.bot_token = self.config.telegram.bot_token
-            saved_config = config.model_dump(mode="json")
-            saved_config["telegram"]["bot_token"] = config.telegram.bot_token.get_secret_value()
-            path = self.settings.sentry_state_file
-            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            name = None
-            try:
-                with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as out:
-                    name = Path(out.name)
-                    json.dump({"config": saved_config, "revision": revision + 1}, out)
-                    out.flush()
-                    os.fsync(out.fileno())
-                name.replace(path)
-            finally:
-                if name is not None:
-                    name.unlink(missing_ok=True)
-            self.config, self.revision, self.config_error = config, revision + 1, None
+            self._persist(config, revision + 1)
             self._event("configured", "Rules and actions saved.")
             return self.configuration()
+
+    def set_test_mode(self, enabled: bool) -> dict:
+        """Switch the node between logging actions and running them.
+
+        Test mode covers every rule, so it is its own switch rather than part of a rule
+        edit: it applies and is saved the moment it is toggled. Changing it while armed
+        would move the node between rehearsal and real actions mid-run, so it is refused.
+        """
+        with self.lifecycle, self.guard:
+            if self.armed:
+                raise BlockingIOError("Disarm Sentry before changing test mode.")
+            if self.config.test_mode is not enabled:
+                self._persist(
+                    self.config.model_copy(update={"test_mode": enabled}), self.revision + 1
+                )
+                self._event(
+                    "configured",
+                    "Test mode on; actions are only logged."
+                    if enabled
+                    else "Test mode off; actions run for real.",
+                )
+            return {"test_mode": self.config.test_mode, "revision": self.revision}
+
+    def _persist(self, config: SentryConfig, revision: int) -> None:
+        """Write the configuration and adopt it. The caller holds the guard."""
+        saved_config = config.model_dump(mode="json")
+        saved_config["telegram"]["bot_token"] = config.telegram.bot_token.get_secret_value()
+        path = self.settings.sentry_state_file
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        name = None
+        try:
+            with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as out:
+                name = Path(out.name)
+                json.dump({"config": saved_config, "revision": revision}, out)
+                out.flush()
+                os.fsync(out.fileno())
+            name.replace(path)
+        finally:
+            if name is not None:
+                name.unlink(missing_ok=True)
+        self.config, self.revision, self.config_error = config, revision, None
 
     def _check(self, rules: list[Rule], logged_only: bool = False):
         """Refuse actions whose file, saved command or credentials are missing.

@@ -452,6 +452,26 @@ def test_sentry_page_config_persistence_and_post_protection(web):
     assert request(base, "/api/sentry/start", "POST", {})[0] == 403
 
 
+def test_test_mode_switches_without_saving_rules(web):
+    controls, base = web
+    data = request(base, "/api/sentry/config")[1]
+    assert data["config"]["test_mode"] is False
+    assert request(base, "/api/sentry/test-mode", "POST", {}, {"enabled": True})[0] == 403
+    status, result, _ = request(base, "/api/sentry/test-mode", "POST", body={"enabled": True})
+    # No configuration payload and no revision: the switch is not a rule edit.
+    assert status == 200 and result == {"test_mode": True, "revision": data["revision"] + 1}
+    assert request(base, "/api/sentry/status")[1]["test_mode"] is True
+    assert json.loads(controls.config.sentry_state_file.read_text())["config"]["test_mode"] is True
+    assert request(base, "/api/sentry/test-mode", "POST", body={"enabled": "yes"})[0] == 400
+    with patch.object(controls.sentry, "armed", True):
+        refused = request(base, "/api/sentry/test-mode", "POST", body={"enabled": False})
+        assert refused[0] == 409 and "Disarm" in refused[1]["error"]
+    assert (
+        request(base, "/api/sentry/test-mode", "POST", body={"enabled": False})[1]["test_mode"]
+        is False
+    )
+
+
 def test_telegram_config_api_never_returns_token_even_on_validation_error(web):
     controls, base = web
     token = "123456:" + "a" * 35

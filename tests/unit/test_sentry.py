@@ -153,6 +153,28 @@ def test_configuration_is_atomic_revision_checked_and_never_auto_arms(sentry):
         sentry.update(config, 1)
 
 
+def test_test_mode_is_a_switch_of_its_own_saved_without_a_rule_edit(sentry):
+    rules = SentryConfig(rules=[Rule(name="entrance", object="person", actions=[PhotoAction()])])
+    sentry.update(rules, 0)
+    assert sentry.revision == 1 and sentry.config.test_mode is False
+    result = sentry.set_test_mode(True)
+    # The switch saves itself: no configuration payload, no revision from the caller.
+    assert result == {"test_mode": True, "revision": 2}
+    saved = json.loads(sentry.settings.sentry_state_file.read_text())
+    assert saved["config"]["test_mode"] is True
+    assert [rule["name"] for rule in saved["config"]["rules"]] == ["entrance"]
+    restarted = Sentry(sentry.settings, sentry.video, threading.Lock())
+    assert restarted.config.test_mode is True and restarted.revision == 2
+    assert "Test mode on" in events(sentry, "configured")[0]["message"]
+    # Setting it to what it already is writes nothing.
+    assert sentry.set_test_mode(True) == {"test_mode": True, "revision": 2}
+    assert sentry.set_test_mode(False) == {"test_mode": False, "revision": 3}
+    sentry.arm()
+    with pytest.raises(BlockingIOError, match="Disarm"):
+        sentry.set_test_mode(True)
+    assert sentry.config.test_mode is False
+
+
 def test_invalid_saved_configuration_prevents_arming(tmp_path):
     path = tmp_path / "sentry.json"
     path.write_text("{broken")

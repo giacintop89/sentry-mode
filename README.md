@@ -226,8 +226,11 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
    logged-only rule can go without. They act on the first click, since each names what it
    does; **Test rule**, which can fire several actions at once, says what will run and acts
    on a second click. None of them saves the rule.
-3. To rehearse first, check **Test mode**, save settings and start Sentry. Confirm `triggered` and `would_run` events in the event log.
-4. Disarm, uncheck **Test mode**, save settings, and start again to execute actions.
+3. To rehearse first, tick **Test mode** and start Sentry. The switch covers every rule, so
+   it saves itself the moment you tick it — no Save, no rule edit — though like the other
+   settings it is refused while armed. Confirm `triggered` and `would_run` events in the
+   event log.
+4. Disarm, untick **Test mode**, and start again to execute actions.
 5. Pause live video on the Video view to save work while monitoring continues. Disarm Sentry to stop rules;
    the camera is released when neither Sentry nor preview needs it.
 

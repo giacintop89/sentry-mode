@@ -50,8 +50,13 @@ pressing a button — **Test rule** and the per-step test buttons run for real e
 a Telegram test needs the credentials a logged-only rule can go without. **Test rule** is
 refused while armed, never saves the rule, and reports what ran in the event log.
 
-The usual rehearsal is: check Test mode, save settings, arm, confirm `triggered` and
-`would_run` in the event log, then disarm, uncheck Test mode, save and arm again.
+Test mode covers every rule, so its checkbox is a switch of its own: ticking or unticking
+it saves the node's choice immediately, with no Save and no rule edit. Like the other
+settings it is refused while armed, so the node never moves between rehearsal and real
+actions mid-run.
+
+The usual rehearsal is: tick Test mode, arm, confirm `triggered` and `would_run` in the
+event log, then disarm, untick Test mode and arm again.
 
 ## Event log
 

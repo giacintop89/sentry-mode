@@ -90,6 +90,11 @@ class SentryUpdate(BaseModel):
     clear_telegram_token: StrictBool = False
 
 
+class TestModeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: StrictBool
+
+
 class NodeControls:
     """Serialize hardware access and own the runtime started by this dashboard."""
 
@@ -382,6 +387,8 @@ class NodeControls:
         if path == "/api/sentry/config":
             update = SentryUpdate.model_validate(body)
             return self.sentry.update(update.config, update.revision, update.clear_telegram_token)
+        if path == "/api/sentry/test-mode":
+            return self.sentry.set_test_mode(TestModeRequest.model_validate(body).enabled)
         if path == "/api/sentry/rules/test":
             return self.sentry.test(Rule.model_validate(body))
         if path == "/api/sentry/start":
@@ -505,6 +512,7 @@ JSON_POSTS = {
     "/api/speech",
     "/api/video/detection",
     "/api/sentry/config",
+    "/api/sentry/test-mode",
     "/api/sentry/rules/test",
     "/api/soundboard",
     "/api/soundboard/delete",

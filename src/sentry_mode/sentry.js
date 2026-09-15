@@ -39,7 +39,7 @@
     $('save-help').textContent = armed ? 'Disarm before changing saved rules or actions.' : dirty.size ? 'Unsaved changes: '+[...dirty].join(', ')+'. Save them before starting Sentry.' : '';
   }
   for (const [id, section] of [['settings','settings'],['rule-editor','rule'],['ssh-editor','command'],['telegram-editor','Telegram']]) {
-    $(id).addEventListener('input', event => { if (event.target.id==='command-select'||event.target.dataset.f==='sound-file') return; dirty.add(section); locks(); });
+    $(id).addEventListener('input', event => { if (event.target.id==='command-select'||event.target.id==='test-mode'||event.target.dataset.f==='sound-file') return; dirty.add(section); locks(); });
   }
   function options(select, entries, selected) {
     select.replaceChildren();
@@ -375,6 +375,14 @@
     finally{busy=false;locks();}
   }
   $('save-settings').addEventListener('click',()=>save(structuredClone(config),'settings'));
+  // Test mode applies to every rule, so the switch saves itself instead of waiting for Save.
+  $('test-mode').addEventListener('change',async()=>{
+    if(busy)return;busy=true;locks();message('Saving…');
+    try{const data=await api('sentry/test-mode',{enabled:$('test-mode').checked},true);
+      config.test_mode=data.test_mode;revision=data.revision;$('test-mode').checked=data.test_mode;
+      message(data.test_mode?'Test mode on; actions are only logged.':'Test mode off; actions run for real.','success');}
+    catch(error){$('test-mode').checked=config.test_mode;message(error.message,'error');}
+    finally{busy=false;locks();}});
   function loadTelegram(hasToken) {
     $('telegram-token').value='';$('telegram-clear').disabled=!hasToken;
     $('telegram-chat').value=config.telegram.chat_id;
