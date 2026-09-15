@@ -9,8 +9,9 @@ Main video/speech UI on port 8083; hardware control dashboard at `/tests`.
 ## Phase 1 — Perception
 
 Explicit live capture, shared MJPEG viewing, and a toggle for local OpenCV DNN object
-detection are implemented. Sentry adds confirmed-appearance rules, optional preview, and an
-event log. Next: motion detection, tracking, and snapshot/event storage.
+detection are implemented. Sentry adds confirmed-appearance rules, ordered action sequences
+with waits and explicit parallel groups, optional preview, and an event log. Next: motion
+detection, tracking, and snapshot/event storage.
 
 ## Phase 2 — Speech
 

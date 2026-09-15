@@ -84,6 +84,15 @@ saved SSH command with a timeout. Testing a rule from the editor feeds the same 
 draft's actions while disarmed, after the same checks arming makes. Stale jobs expire; disarm/fault signals cancel work and
 discard the queue. Commands are fixed configuration strings, never assembled from image data.
 
+A rule's actions are an ordered sequence of steps rather than a set. Steps marked to start
+with the one before them form a group, and a queued job is one group: its members run on
+their own threads and the worker takes the next job only when all of them have returned, so
+order between groups is exact and concurrency inside one is explicit. A step that fails is
+logged and the sequence continues. A wait step is a cancellable sleep, and the expiry budget
+of every following group is shifted by the waits ahead of it, so a requested pause never
+makes later steps stale. Steps of the same type may repeat; speaker steps still serialize on
+the shared audio lock, and recordings keep running in the background beside the sequence.
+
 Telegram messages use the same action queue and appearance rules, with shared bot/chat
 settings. A short-lived Python child submits one plain-text HTTPS request to Telegram;
 credentials enter through stdin. The parent enforces a five-second total deadline and

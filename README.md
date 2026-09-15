@@ -6,6 +6,10 @@ tests, YAML/environment configuration, hardware status, an idle service runtime,
 explicitly started web dashboard with live video, local text-to-speech, and phone push-to-talk.
 Phone audio streams directly to the node speaker without saving recordings or using a cloud service.
 
+This page is the whole manual. [`docs/`](docs/README.md) has one page per feature — camera,
+detection, speech, push-to-talk, Sentry rules, the action sequencer, captures, Telegram, SSH
+commands — plus the HTTP API, configuration and security references.
+
 ## Raspberry Pi installation
 
 Use Raspberry Pi OS 64-bit, Python 3.11+, a USB StreamCam, and a Bluetooth speaker paired
@@ -120,7 +124,8 @@ the whole mark fades slowly in and out while the node streams, meaning live prev
 or someone is listening to the microphone or holding push-to-talk (`GET /api/streams`).
 Reduced-motion settings keep it steady.
 Video and Voice are separate views, and Sentry separates Rules, Integrations, and Event log.
-The rule editor has Conditions and Actions tabs with persistent save controls. **Test rule**,
+The rule editor has Conditions and Actions tabs with persistent save controls; the Actions
+tab is the rule's ordered list of steps, each of which closes into a one-line summary. **Test rule**,
 beside Delete rule, runs the actions in the editor once on the node without saving the rule or
 waiting for a detection; it is refused while armed, reports what ran in the event log, and runs
 for real whether or not test mode is on, since test mode holds back detections, not buttons. On a wide screen with the height for it, long editors
@@ -256,8 +261,10 @@ Rules are evaluated locally; recordings and snapshots are not saved automaticall
 
 Actions use a separate queue capped at 16 entries, one entry per step (a group of steps
 that start together counts as one). Old actions expire after 15 seconds by
-default, including announcements waiting for a busy PTT/speech operation. Failed actions
-are logged without automatic retries. Disarming discards queued work and cancels local
+default, including announcements waiting for a busy PTT/speech operation; a step's budget
+starts after the waits ahead of it, so a pause the rule asked for never makes the steps
+behind it stale. Failed actions are logged without automatic retries, and the rest of the
+sequence still runs. Disarming discards queued work and cancels local
 playback/SSH/Telegram requests. Camera or detector failure disarms Sentry. An SSH command already executing
 on the remote machine may continue after the local SSH process is stopped.
 
@@ -276,8 +283,8 @@ sign for groups), or a public channel `@username`. Start a conversation with you
 or add it to the destination and grant permission to send. A numeric chat ID can be read
 from `message.chat.id` in an update received by your bot through Telegram's
 [getUpdates API](https://core.telegram.org/bots/api#getupdates). Use the app's HTTPS address
-when entering the token. Enable **Send a Telegram message** on the desired rules, enter the
-message, optionally select silent delivery, and save each rule.
+when entering the token. Add a **Send a Telegram message** step to the desired rules, enter
+the message, optionally select silent delivery, and save each rule.
 
 Messages use Telegram's [sendMessage API](https://core.telegram.org/bots/api#sendmessage)
 over HTTPS, with plain text up to 4096 characters and no template substitution or image
@@ -304,6 +311,9 @@ GET `/api/sentry/config` returns effective rules, SSH commands, Telegram setting
 `bot_token`), `telegram_token_configured`, supported categories, and a revision. POST the
 edited `{ "config": {...}, "revision": N }` to the same endpoint to save. Optionally send
 `"clear_telegram_token": true` at the top level to remove the saved token.
+Each entry of a rule's `actions` list is one step, in the order it runs: a `wait` step has
+`seconds`, and any step with `"with_previous": true` starts together with the step before it.
+Saved configurations without the field keep running as the sequence they always were.
 GET `/api/sentry/status` returns armed/test state, action status, and recent events. POST
 `/api/sentry/start` and `/api/sentry/stop` arm/disarm. All POSTs require the same-origin
 `X-Sentry-Node-Control: 1` header; configuration saves also require JSON content type.
