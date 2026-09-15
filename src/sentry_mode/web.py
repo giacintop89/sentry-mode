@@ -23,7 +23,13 @@ from sentry_mode.audio.monitor import RATE as AUDIO_RATE
 from sentry_mode.audio.monitor import AudioMonitor
 from sentry_mode.audio.soundboard import Soundboard, SoundboardMessage
 from sentry_mode.audio.sounds import MAX_UPLOAD_BYTES
-from sentry_mode.audio.speech import available_voices, play_sample, render_sample, speak
+from sentry_mode.audio.speech import (
+    available_voices,
+    play_sample,
+    render_sample,
+    sample_audio,
+    speak,
+)
 from sentry_mode.audio.talk import MAX_CHUNK, TalkStream
 from sentry_mode.audio.tunes import TUNES, play_tune
 from sentry_mode.config import (
@@ -257,6 +263,14 @@ class NodeControls:
             logger.warning("Could not render the sample of %s: %s", message.id, exc)
             return {**saved, "sample": False}
         return {**saved, "sample": True}
+
+    def sample_audio_bytes(self, message_id: str) -> bytes:
+        """The mp3 of a saved message, so a browser can preview it on its own speaker."""
+        message = self.soundboard.get(message_id)
+        sample = self.soundboard.sample_path(message.id)
+        if not sample.is_file():
+            render_sample(self.config, message, sample, stop_event=self.shutdown_requested)
+        return sample_audio(sample, message.effects)
 
     def play_from_soundboard(self, message_id: str) -> dict:
         message = self.soundboard.get(message_id)
@@ -593,8 +607,20 @@ def make_handler(controls: NodeControls):
                 self.stream_audio()
             elif self.path.startswith("/captures/"):
                 self.send_capture(self.path.removeprefix("/captures/"))
+            elif self.path.startswith("/soundboard/"):
+                self.send_sample(self.path.removeprefix("/soundboard/"))
             else:
                 self.execute(lambda: controls.get(self.path))
+
+        def send_sample(self, name: str):
+            # Only ids already on the board are served, so the name cannot leave the folder.
+            try:
+                data = controls.sample_audio_bytes(name.removesuffix(".mp3"))
+            except (LookupError, HardwareError, OSError, ValueError) as exc:
+                logger.info("Sample %s is unavailable: %s", name, exc)
+                self.respond({"error": "That saved message has no sample."}, 404)
+                return
+            self.respond(data, content_type="audio/mpeg")
 
         def send_capture(self, name: str):
             try:

@@ -5,7 +5,7 @@
   const text = document.getElementById('speech-text'), voice = document.getElementById('voice');
   const rate = document.getElementById('rate'), speechResult = document.getElementById('speech-result');
   const presets = {natural: 'Natural', demon: 'Demon', chipmunk: 'Chipmunk', custom: 'Custom pitch'};
-  let messages = [], playing = null, busy = false;
+  let messages = [], playing = null, busy = false, preview = null;
 
   function status(message, kind = '') { result.textContent = message; result.className = 'result ' + kind; }
   async function call(path, body) {
@@ -34,24 +34,29 @@
       const card = document.createElement('li');
       card.className = 'sound-card';
       card.dataset.message = message.id;
-      const play = document.createElement('button');
-      play.type = 'button'; play.className = 'sound-play';
-      play.disabled = busy;
       const title = document.createElement('span');
       title.className = 'sound-title'; title.textContent = message.text;
       const meta = document.createElement('span');
       meta.className = 'sound-meta'; meta.textContent = details(message);
-      const action = document.createElement('span');
-      action.className = 'sound-action'; action.textContent = playing === message.id ? 'PLAYING…' : 'PLAY';
-      play.append(title, meta, action);
+      const play = document.createElement('button');
+      play.type = 'button'; play.className = 'sound-play';
+      play.disabled = busy;
+      play.textContent = playing === message.id ? 'PLAYING…' : 'PLAY';
       play.setAttribute('aria-label', 'Play “' + message.text + '” on the node');
       play.addEventListener('click', () => playMessage(message));
+      const listen = document.createElement('button');
+      listen.type = 'button'; listen.className = 'sound-preview';
+      const label = document.createElement('span');
+      label.textContent = 'PREVIEW';
+      listen.append(label);
+      listen.setAttribute('aria-label', 'Preview “' + message.text + '” through this device');
+      listen.addEventListener('click', () => previewMessage(message));
       const remove = document.createElement('button');
       remove.type = 'button'; remove.className = 'sound-delete';
       remove.textContent = '×'; remove.disabled = busy;
       remove.setAttribute('aria-label', 'Delete “' + message.text + '” from the soundboard');
       remove.addEventListener('click', () => deleteMessage(message));
-      card.append(play, remove);
+      card.append(title, meta, play, listen, remove);
       if (playing === message.id) card.classList.add('playing');
       grid.append(card);
     }
@@ -72,9 +77,20 @@
     catch (error) { status(error.message, 'error'); }
     finally { busy = false; playing = null; render(); }
   }
+  // The node speaker is not always where you are: preview plays the stored sample here.
+  function previewMessage(message) {
+    if (preview) { preview.pause(); preview = null; }
+    const player = new Audio('/soundboard/' + message.id + '.mp3');
+    preview = player;
+    player.addEventListener('ended', () => { if (preview === player) preview = null; });
+    player.play()
+      .then(() => status('Playing through this device\u2026'))
+      .catch(error => { if (preview === player) preview = null; status(error.message, 'error'); });
+  }
   async function deleteMessage(message) {
     if (busy) return;
     busy = true; render();
+    if (preview) { preview.pause(); preview = null; }
     try { await call('/api/soundboard/delete', {id: message.id}); status('Message deleted.', 'success'); }
     catch (error) { status(error.message, 'error'); }
     finally { busy = false; await refresh(); }

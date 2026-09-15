@@ -61,7 +61,8 @@ FFmpeg package includes.
 ## Soundboard
 
 **Save message** keeps the text with its voice, rate and voice modification on the
-**Soundboard**, where each message is a card: press it to speak it again, × to delete it.
+**Soundboard**, where each message is a card: **Play** speaks it on the node again,
+**Preview** plays it through the speaker of the browser you are holding, and × deletes it.
 Up to 48 messages are saved atomically to `.local/soundboard.json` with private file
 permissions (override with `soundboard_file` or `SENTRY_MODE_SOUNDBOARD_FILE`). Saving the
 same message twice keeps one card, and a card cannot play while other audio holds the
@@ -74,7 +75,8 @@ synthesized, so a Studio card answers as fast as a sound file instead of costing
 seconds a Kokoro voice needs. Samples are rendered at full scale and the card's pitch and
 volume are applied on playback, so changing `speaker.volume` still changes how loud a card
 sounds. A card whose sample is missing — saved before samples existed, or deleted by hand —
-is rendered the first time it plays, and deleting a card deletes its sample. A message
+is rendered the first time it plays, and deleting a card deletes its sample. Preview fetches the sample from `GET /soundboard/<id>.mp3`, pitched first when the card
+carries a modification, since the browser plays the file as it arrives. A message
 saved without an explicit voice or rate is rendered with the defaults of the moment, so its
 sample keeps the voice it was saved with even if the defaults change later.
 

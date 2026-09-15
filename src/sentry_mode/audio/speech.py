@@ -374,6 +374,41 @@ def render_sample(
     return {**spoken, "sample": sample.name}
 
 
+def sample_audio(sample: Path, effects: VoiceEffects | None = None) -> bytes:
+    """The stored sample as mp3 bytes, modified the way the node would play it.
+
+    A browser plays the file itself, so a pitch modification has to be baked in here:
+    what is kept on disk is always the plain synthesis.
+    """
+    pitch = effects.pitch_filter() if effects else None
+    if not pitch:
+        return sample.read_bytes()
+    with tempfile.TemporaryDirectory(prefix="sentry-mode-preview-") as directory:
+        pitched = Path(directory) / "preview.mp3"
+        command(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(sample),
+                "-af",
+                pitch,
+                "-c:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                "-f",
+                "mp3",
+                str(pitched),
+            ],
+            timeout=30,
+        )
+        return pitched.read_bytes()
+
+
 def play_sample(
     config: Settings,
     sample: Path,

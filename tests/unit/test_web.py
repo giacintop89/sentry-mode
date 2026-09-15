@@ -592,6 +592,34 @@ def test_soundboard_plays_the_stored_sample_and_shares_the_speaker(web, tmp_path
     assert not controls.audio_lock.locked()
 
 
+def test_a_browser_previews_the_sample_of_a_saved_message(web, tmp_path):
+    controls, base = web
+    body = {"text": "Hello", "voice": "en", "rate": 200, "effects": {"preset": "natural"}}
+    with patch("sentry_mode.web.render_sample", side_effect=fake_sample):
+        message = request(base, "/api/soundboard", "POST", body=body)[1]["saved"]
+    status, data, headers = request(base, f"/soundboard/{message}.mp3")
+    assert status == 200 and data == b"ID3 sample"
+    assert headers["Content-Type"] == "audio/mpeg"
+    # The browser plays the file as it arrives, so a modified card is pitched first.
+    pitched = {"text": "Hello", "voice": "en", "rate": 200, "effects": {"preset": "demon"}}
+    with patch("sentry_mode.web.render_sample", side_effect=fake_sample):
+        other = request(base, "/api/soundboard", "POST", body=pitched)[1]["saved"]
+    with patch("sentry_mode.web.sample_audio", return_value=b"pitched") as audio:
+        assert request(base, f"/soundboard/{other}.mp3")[1] == b"pitched"
+        audio.assert_called_once_with(
+            tmp_path / "soundboard" / f"{other}.mp3", VoiceEffects(preset="demon")
+        )
+    # Only ids on the board are served, so no name reaches outside the sample folder.
+    assert request(base, "/soundboard/" + "0" * 16 + ".mp3")[0] == 404
+    assert request(base, "/soundboard/..%2Fsoundboard.json")[0] == 404
+    # A sample that was lost is rendered the first time a browser asks for it.
+    (tmp_path / "soundboard" / f"{message}.mp3").unlink()
+    with patch("sentry_mode.web.render_sample", side_effect=fake_sample) as render:
+        assert request(base, f"/soundboard/{message}.mp3")[0] == 200
+        render.assert_called_once()
+    assert not controls.audio_lock.locked()
+
+
 def test_soundboard_limit_and_unreadable_file(tmp_path):
     from sentry_mode.audio.soundboard import MAX_MESSAGES, Soundboard, SoundboardMessage
 
