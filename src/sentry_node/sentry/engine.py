@@ -164,8 +164,12 @@ class Sentry:
             self._event("configured", "Rules and actions saved.")
             return self.configuration()
 
-    def _check(self, rules: list[Rule]):
-        """Refuse actions whose file, saved command or credentials are missing."""
+    def _check(self, rules: list[Rule], logged_only: bool = False):
+        """Refuse actions whose file, saved command or credentials are missing.
+
+        Rules that will only be logged are allowed to lack Telegram credentials; rules
+        whose actions are about to run are not.
+        """
         for rule in rules:
             for action in rule.actions:
                 if isinstance(action, SoundAction) and not self.sounds.exists(action.sound):
@@ -178,7 +182,7 @@ class Sentry:
                     and action.command_id not in self.config.ssh_commands
                 ):
                     raise ValueError(f"Unknown SSH command: {action.command_id}")
-        if self.config.test_mode or not any(
+        if logged_only or not any(
             isinstance(action, TelegramAction) for rule in rules for action in rule.actions
         ):
             return
@@ -259,7 +263,7 @@ class Sentry:
                 rules = [r for r in self.config.rules if r.enabled]
                 if not rules:
                     raise ValueError("Enable at least one rule before starting Sentry.")
-                self._check(rules)
+                self._check(rules, self.config.test_mode)
             if self.thread is not None:
                 self.thread.join(timeout=3)
                 if self.thread.is_alive():
@@ -286,19 +290,16 @@ class Sentry:
                 return self.status()
 
     def test(self, rule: Rule) -> dict:
-        """Run one rule's actions now, so the editor can check what a trigger would do."""
+        """Run one rule's actions now, because somebody asked for them by pressing a button.
+
+        Test mode holds back what a detection would do, not what the editor was told to do,
+        so a test runs its actions for real and needs everything they need.
+        """
         with self.lifecycle:
             with self.guard:
                 if self.armed:
                     raise BlockingIOError("Disarm Sentry before testing a rule.")
                 self._check([rule])
-                if self.config.test_mode:
-                    self._event(
-                        "tested", f"Test run of {rule.name}; test mode logs only.", rule.name
-                    )
-                    for action in rule.actions:
-                        self._event("would_run", self._describe(action), rule.name)
-                    return {"message": "Test mode is on, so the actions were logged, not run."}
             if self.thread is not None:
                 self.thread.join(timeout=3)
                 if self.thread.is_alive():

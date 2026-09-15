@@ -251,7 +251,8 @@
   $('test-rule').addEventListener('click',async()=>{
     if(!$('rule-form').reportValidity())return;
     const rule=collectRule();
-    if(!$('test-mode').checked&&rule.actions.some(a=>a.type==='ssh'||a.type==='telegram')
+    // A test always runs for real now, so the warning no longer depends on test mode.
+    if(rule.actions.some(a=>a.type==='ssh'||a.type==='telegram')
       &&!armButton($('test-rule'))){ruleMessage('This runs the actions for real, including SSH commands and Telegram messages. Click again to run.','error');return;}
     $('test-rule').disabled=true;ruleMessage('Testing this rule on the node…');
     try{ruleMessage((await api('sentry/rules/test',rule,true)).message,'success');}

@@ -122,8 +122,8 @@ Reduced-motion settings keep it steady.
 Video and Voice are separate views, and Sentry separates Rules, Integrations, and Event log.
 The rule editor has Conditions and Actions tabs with persistent save controls. **Test rule**,
 beside Delete rule, runs the actions in the editor once on the node without saving the rule or
-waiting for a detection; it is refused while armed, reports what ran in the event log, and only
-logs the actions when test mode is on. On a wide screen with the height for it, long editors
+waiting for a detection; it is refused while armed, reports what ran in the event log, and runs
+for real whether or not test mode is on, since test mode holds back detections, not buttons. On a wide screen with the height for it, long editors
 scroll inside the available frame height; narrower or shorter screens — phones and tablets in
 either orientation — scroll the page instead, stack the rule library above the editor, and give
 the camera the page's width.
@@ -199,10 +199,12 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
    note by the same interval and leaves the tune's length alone. Each action carries its own
    test button: **Test message** and **Test tune** play the editor's settings on the node
    speaker right away, while **Test send** and **Test command** run that single action
-   through Sentry, so they are refused while armed, log to the event log, and only log when
-   test mode is on. They act on the first click, since each names what it does; **Test rule**,
-   which can fire several actions at once, asks first: it says what will run and acts on a
-   second click. None of them saves the rule. Each rule supports one action of each type.
+   through Sentry, so they are refused while armed and appear in the event log. Every test
+   button runs for real, test mode included: test mode holds back what a detection would do,
+   not what you asked for by pressing a button, so a Telegram test needs the credentials a
+   logged-only rule can go without. They act on the first click, since each names what it
+   does; **Test rule**, which can fire several actions at once, says what will run and acts
+   on a second click. None of them saves the rule. Each rule supports one action of each type.
 3. To rehearse first, check **Test mode**, save settings and start Sentry. Confirm `triggered` and `would_run` events in the event log.
 4. Disarm, uncheck **Test mode**, save settings, and start again to execute actions.
 5. Pause live video on the Video view to save work while monitoring continues. Disarm Sentry to stop rules;

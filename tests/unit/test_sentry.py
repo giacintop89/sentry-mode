@@ -316,22 +316,32 @@ def test_rule_test_runs_the_editor_draft_once_without_arming_or_saving(sentry):
     sentry.video.set_sentry.assert_not_called()
 
 
-def test_rule_test_honours_test_mode_and_refuses_unrunnable_actions(sentry):
+def test_rule_test_runs_for_real_in_test_mode_and_refuses_unrunnable_actions(sentry):
     from sentry_node.sentry.config import SoundAction
 
+    # Test mode holds back detections, not a button the user pressed.
     sentry.config.test_mode = True
     draft = Rule(
         name="Draft",
         object="person",
         actions=[TTSAction(text="Hello"), TuneAction(tune="doorbell")],
     )
-    with patch("sentry_node.sentry.engine.speak") as speech:
-        assert "logged" in sentry.test(draft)["message"]
-    speech.assert_not_called()
-    assert sentry.thread is None
-    assert [e["message"] for e in events(sentry, "would_run")] == ["Tune: Doorbell", "TTS: Hello"]
+    spoken = threading.Event()
+    with (
+        patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()),
+        patch("sentry_node.sentry.engine.play_tune"),
+    ):
+        assert "Running the actions" in sentry.test(draft)["message"]
+        assert spoken.wait(5)
+        sentry.thread.join(5)
+    assert not events(sentry, "would_run")
+    assert [e["message"] for e in events(sentry, "action_started")] == [
+        "Playing tune: Doorbell",
+        "Playing announcement.",
+    ]
 
-    sentry.config.test_mode = False
+    # What a test cannot run, it refuses -- Telegram credentials included, which arming
+    # itself lets pass while test mode would only log the message.
     for actions, complaint in [
         ([TelegramAction(text="hi")], "bot token and chat ID"),
         ([SoundAction(sound="door-bell-0123abcd")], "audio file that was deleted"),
@@ -339,6 +349,9 @@ def test_rule_test_honours_test_mode_and_refuses_unrunnable_actions(sentry):
     ]:
         with pytest.raises(ValueError, match=complaint):
             sentry.test(Rule(name="Draft", object="person", actions=actions))
+    sentry.config.rules = [
+        Rule(name="Telegram", object="person", actions=[TelegramAction(text="hi")])
+    ]
     sentry.arm()
     with pytest.raises(BlockingIOError, match="Disarm"):
         sentry.test(draft)
