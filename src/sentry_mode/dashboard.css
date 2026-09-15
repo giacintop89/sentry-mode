@@ -346,6 +346,14 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
 @media(max-width:400px){body{zoom:.78}
  input:not([type=range]):not([type=checkbox]),select,textarea{font-size:20.667px}}
 
+/* A player's controls are drawn by the browser itself and do not follow the page zoom:
+   scaled down, the video overlay lands off its frame and the audio bar outgrows its card.
+   Undo the zoom on the element and take the same fraction off its width, so the box keeps
+   the place it had while the controls keep the size the browser drew them for. */
+@media(max-width:700px){.capture-card video,.capture-card audio{zoom:1.087}}
+@media(max-width:540px){.capture-card video,.capture-card audio{zoom:1.19}}
+@media(max-width:400px){.capture-card video,.capture-card audio{zoom:1.282}}
+
 /* The view icons are hidden on a narrow screen because they steal the label's width
    on one line. Stack them instead: the icon reads as the tab's mark and the label
    keeps the full width of the cell. */
