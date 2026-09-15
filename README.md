@@ -196,8 +196,11 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
    audio file, a saved SSH command, and/or a Telegram message.
    Announcements support language, speed, Demon/Chipmunk/custom pitch, and volume. Tunes
    support repeats (1-5), volume, and **Pitch (semitones)** from -24 to +24, which moves every
-   note by the same interval and leaves the tune's length alone; **Test tune** plays the
-   editor's settings on the node speaker. Each rule supports one action of each type.
+   note by the same interval and leaves the tune's length alone. Each action carries its own
+   test button: **Test message** and **Test tune** play the editor's settings on the node
+   speaker right away, while **Test send** and **Test command** run that single action
+   through Sentry, so they are refused while armed, log to the event log, and only log when
+   test mode is on. None of them saves the rule. Each rule supports one action of each type.
 3. To rehearse first, check **Test mode**, save settings and start Sentry. Confirm `triggered` and `would_run` events in the event log.
 4. Disarm, uncheck **Test mode**, save settings, and start again to execute actions.
 5. Pause live video on the Video view to save work while monitoring continues. Disarm Sentry to stop rules;

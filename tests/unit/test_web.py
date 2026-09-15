@@ -18,6 +18,7 @@ from sentry_node.config import Settings
 from sentry_node.core.errors import HardwareError
 from sentry_node.core.models import AudioDevice, HardwareStatus
 from sentry_node.hardware.microphone import Microphone
+from sentry_node.sentry.config import SSHCommand
 from sentry_node.web import NodeControls, make_handler, serve
 
 
@@ -654,6 +655,33 @@ def test_audio_files_upload_convert_play_and_stay_while_rules_use_them(web, tmp_
     assert request(base, "/api/sounds/delete", "POST", body={"id": sound})[1]["sounds"] == []
 
 
+def test_message_test_button_speaks_the_editor_draft_with_its_voice_and_effects(web):
+    controls, base = web
+    draft = {
+        "text": "Hello. Please wait here.",
+        "voice": "it",
+        "rate": 210,
+        "effects": {"preset": "custom", "pitch": -4, "volume": 55},
+    }
+    with patch("sentry_node.web.speak", return_value={"message": "played"}) as speech:
+        status, data, _ = request(base, "/api/speech", "POST", body=draft)
+    assert status == 200 and data["message"] == "played"
+    # The rule's own announcement settings are spoken, not the node's defaults.
+    speech.assert_called_once_with(
+        controls.config,
+        "Hello. Please wait here.",
+        "it",
+        210,
+        stop_event=controls.shutdown_requested,
+        effects=VoiceEffects(preset="custom", pitch=-4, volume=55),
+    )
+    with controls.audio_lock:
+        assert request(base, "/api/speech", "POST", body=draft)[0] == 409
+    assert not controls.audio_lock.locked()
+    page = request(base, "/sentry")[1]
+    assert b'id="test-message"' in page and b'id="rule-text"' in page
+
+
 def test_tune_test_button_plays_the_editor_settings_and_shares_the_speaker(web):
     controls, base = web
     played = []
@@ -704,6 +732,32 @@ def test_rule_test_button_runs_the_editor_draft_without_saving_it(web):
     assert not controls.sentry.armed
     assert request(base, "/api/sentry/rules/test", "POST", body={"name": "Draft"})[0] == 400
     assert b'id="test-rule"' in request(base, "/sentry")[1]
+
+
+def test_per_action_test_buttons_run_one_action_through_the_rule_test_endpoint(web):
+    controls, base = web
+    ran = threading.Event()
+    controls.sentry.config.ssh_commands["gate"] = SSHCommand(host="gate.local", command="uptime")
+    draft = {
+        "name": "Draft",
+        "object": "person",
+        "actions": [{"type": "ssh", "command_id": "gate"}],
+    }
+    with patch.object(controls.sentry, "_ssh", side_effect=lambda command: ran.set()) as ssh:
+        status, data, _ = request(base, "/api/sentry/rules/test", "POST", body=draft)
+        assert status == 200 and "Draft" in data["message"]
+        assert ran.wait(5)
+        controls.sentry.thread.join(5)
+    assert ssh.call_args.args[0].host == "gate.local"
+    # What the buttons cannot run, they refuse before anything is queued.
+    for actions in ([{"type": "ssh", "command_id": "gone"}], [{"type": "telegram", "text": "hi"}]):
+        assert (
+            request(base, "/api/sentry/rules/test", "POST", body={**draft, "actions": actions})[0]
+            == 400
+        )
+    assert [rule.name for rule in controls.sentry.config.rules] == ["Person at entrance"]
+    page = request(base, "/sentry")[1]
+    assert b'id="test-telegram"' in page and b'id="test-ssh"' in page
 
 
 def post_message(base, data, content_type="application/octet-stream"):

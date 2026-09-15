@@ -60,12 +60,38 @@
   }
   for(const id of ['use-photo','use-audio','use-video','use-tts','use-tune','use-sound','use-ssh','use-telegram','use-region'])$(id).addEventListener('change',showActionOptions);
   $('rule-photo-count').addEventListener('input',showActionOptions);
+  // Speaking the draft announcement uses the same speaker endpoint as the Voice view,
+  // so it is heard exactly as a trigger would say it, without saving or arming the rule.
+  $('test-message').addEventListener('click',async()=>{
+    if(!$('rule-text').reportValidity())return;
+    const button=$('test-message');button.disabled=true;button.textContent='Speaking…';message('');
+    try{const data=await api('speech',{text:$('rule-text').value,voice:$('rule-voice').value,rate:num('rule-rate'),effects:{preset:$('rule-preset').value,pitch:num('rule-pitch'),volume:num('rule-volume')}},true);message(data.message,'success');}
+    catch(error){message(error.message,'error');}
+    finally{button.disabled=false;button.textContent='Test message';}
+  });
   $('test-tune').addEventListener('click',async()=>{
     const button=$('test-tune');button.disabled=true;button.textContent='Playing…';message('');
     try{const data=await api('tunes/play',{tune:$('rule-tune').value,repeat:num('rule-tune-repeat'),volume:num('rule-tune-volume'),pitch:num('rule-tune-pitch')},true);message(data.message,'success');}
     catch(error){message(error.message,'error');}
     finally{button.disabled=false;button.textContent='Test tune';}
   });
+  // Telegram and SSH have nothing local to rehearse with, so their test runs through the
+  // Sentry executor as a rule of one action: the draft is validated, refused while armed,
+  // logged in the event log, and logged only when test mode is on, exactly like a trigger.
+  async function testAction(action, id, warning) {
+    if(!$('rule-form').reportValidity())return;
+    if(!$('test-mode').checked&&!confirm(warning))return;
+    $(id).disabled=true;message('Testing this action on the node…');
+    try{message((await api('sentry/rules/test',{...collectRule(),actions:[action]},true)).message,'success');}
+    catch(error){message(error.message,'error');}
+    finally{$(id).disabled=false;}
+  }
+  $('test-telegram').addEventListener('click',()=>testAction(
+    {type:'telegram',text:$('rule-telegram-text').value,silent:$('rule-telegram-silent').checked},
+    'test-telegram','A test sends this message to the saved Telegram chat for real. Continue?'));
+  $('test-ssh').addEventListener('click',()=>testAction(
+    {type:'ssh',command_id:$('rule-command').value},
+    'test-ssh','A test runs the saved SSH command on the remote machine for real. Continue?'));
   function loadRule(index) {
     editing=index;const r=config.rules[index]||{name:'',enabled:true,object:'person',min_confidence:.7,min_count:1,consecutive_detections:3,rearm_after_absence_seconds:10,cooldown_seconds:60,region:null,actions:[{type:'tts',text:'Hello. Please wait here.',voice:'en',rate:175,effects:{preset:'natural',pitch:0,volume:60}}]};
     $('rule-heading').textContent=index<0?'New rule':'Edit rule · '+r.name;
