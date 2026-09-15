@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import threading
 from contextlib import contextmanager
@@ -732,6 +733,15 @@ def test_rule_test_button_runs_the_editor_draft_without_saving_it(web):
     assert not controls.sentry.armed
     assert request(base, "/api/sentry/rules/test", "POST", body={"name": "Draft"})[0] == 400
     assert b'id="test-rule"' in request(base, "/sentry")[1]
+
+
+def test_editor_confirms_in_the_page_because_a_framed_dashboard_ignores_dialogs(web):
+    _, base = web
+    script = request(base, "/sentry.js")[1].decode()
+    # window.confirm returns false without asking inside a cross-origin frame, which is how
+    # the dashboard embeds this app, so a button that acts for real must not depend on it.
+    assert re.search(r"\bconfirm\(", script) is None
+    assert "armButton(" in script
 
 
 def test_per_action_test_buttons_run_one_action_through_the_rule_test_endpoint(web):

@@ -6,6 +6,21 @@
   function message(text, kind = '') { $('sentry-result').textContent = text; $('sentry-result').className = 'result ' + kind; }
   // Rule editor notices sit beside its buttons, where the user is looking.
   function ruleMessage(text, kind = '') { $('rule-result').textContent = text; $('rule-result').className = 'result ' + kind; }
+  // A cross-origin frame ignores window.confirm and answers it "no" without asking, and the
+  // dashboard embeds this app, so buttons that act for real confirm in the page: the first
+  // click arms the button, the second one runs it, and it disarms itself after a few seconds.
+  const arming = new Map();
+  function armButton(button, label = 'Click again') {
+    const pending = arming.get(button);
+    if (pending) { clearTimeout(pending); arming.delete(button); button.textContent = button.dataset.label; return true; }
+    button.dataset.label = button.textContent;
+    button.textContent = label;
+    arming.set(button, setTimeout(() => {
+      arming.delete(button);
+      button.textContent = button.dataset.label;
+    }, 6000));
+    return false;
+  }
   async function api(path, body, post = false) {
     const headers = post ? {'X-Sentry-Node-Control':'1'} : {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -80,7 +95,7 @@
   // logged in the event log, and logged only when test mode is on, exactly like a trigger.
   async function testAction(action, id, warning) {
     if(!$('rule-form').reportValidity())return;
-    if(!$('test-mode').checked&&!confirm(warning))return;
+    if(!$('test-mode').checked&&!armButton($(id))){message(warning,'error');return;}
     $(id).disabled=true;message('Testing this action on the node…');
     try{message((await api('sentry/rules/test',{...collectRule(),actions:[action]},true)).message,'success');}
     catch(error){message(error.message,'error');}
@@ -88,10 +103,10 @@
   }
   $('test-telegram').addEventListener('click',()=>testAction(
     {type:'telegram',text:$('rule-telegram-text').value,silent:$('rule-telegram-silent').checked},
-    'test-telegram','A test sends this message to the saved Telegram chat for real. Continue?'));
+    'test-telegram','This sends the message to the saved Telegram chat for real. Click again to send.'));
   $('test-ssh').addEventListener('click',()=>testAction(
     {type:'ssh',command_id:$('rule-command').value},
-    'test-ssh','A test runs the saved SSH command on the remote machine for real. Continue?'));
+    'test-ssh','This runs the saved command on the remote machine for real. Click again to run.'));
   function loadRule(index) {
     editing=index;const r=config.rules[index]||{name:'',enabled:true,object:'person',min_confidence:.7,min_count:1,consecutive_detections:3,rearm_after_absence_seconds:10,cooldown_seconds:60,region:null,actions:[{type:'tts',text:'Hello. Please wait here.',voice:'en',rate:175,effects:{preset:'natural',pitch:0,volume:60}}]};
     $('rule-heading').textContent=index<0?'New rule':'Edit rule · '+r.name;
@@ -179,7 +194,8 @@
     finally{renderSounds();}
   });
   $('sound-delete').addEventListener('click',async()=>{
-    const id=$('rule-sound').value;if(!id||!confirm('Delete this audio file from the node?'))return;
+    const id=$('rule-sound').value;if(!id)return;
+    if(!armButton($('sound-delete'))){ruleMessage('This deletes the audio file from the node. Click again to delete.','error');return;}
     try{sounds=(await api('sounds/delete',{id},true)).sounds;renderSounds('');ruleMessage('Audio file deleted.','success');}
     catch(error){ruleMessage(error.message,'error');}
   });
@@ -234,7 +250,7 @@
     if(!$('rule-form').reportValidity())return;
     const rule=collectRule();
     if(!$('test-mode').checked&&rule.actions.some(a=>a.type==='ssh'||a.type==='telegram')
-      &&!confirm('A test runs the actions for real, including SSH commands and Telegram messages. Continue?'))return;
+      &&!armButton($('test-rule'))){ruleMessage('This runs the actions for real, including SSH commands and Telegram messages. Click again to run.','error');return;}
     $('test-rule').disabled=true;ruleMessage('Testing this rule on the node…');
     try{ruleMessage((await api('sentry/rules/test',rule,true)).message,'success');}
     catch(error){ruleMessage(error.message,'error');}
