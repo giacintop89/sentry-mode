@@ -145,6 +145,7 @@ def test_voice_types_list_female_piper_speakers_and_espeak_variants(tmp_path):
 
     for name in (
         "it_IT-paola-medium",
+        "it_IT-serena-medium",
         "it_IT-riccardo-x_low",
         "en_US-lessac-medium",
         "en_GB-jenny_dioco-medium",
@@ -157,8 +158,10 @@ def test_voice_types_list_female_piper_speakers_and_espeak_variants(tmp_path):
         voices = {voice["id"]: voice for voice in available_voices(config)["voices"]}
         # Male speakers are never offered, so their ids fall back to a female eSpeak voice.
         assert speech_engine(config, "it-riccardo") == ("espeak", None)
-    assert set(voices) == {"en", "en-jenny_dioco", "it"}
+    assert set(voices) == {"en", "en-jenny_dioco", "it", "it-serena"}
     assert voices["it"]["name"] == "Paola" and voices["it"]["label"] == "Italiano · Paola"
+    # The configured model is the language id; another female speaker joins it by name.
+    assert voices["it-serena"]["label"] == "Italiano · Serena"
     assert voices["en-jenny_dioco"]["name"] == "Jenny"
     assert {voice["gender"] for voice in voices.values()} == {"female"}
 

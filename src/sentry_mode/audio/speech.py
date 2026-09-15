@@ -25,6 +25,7 @@ PIPER_SPEAKERS = {
     "kristin": "Kristin",
     "lessac": "Lessac",
     "paola": "Paola",
+    "serena": "Serena",
 }
 # Female eSpeak variants give the basic engine a choice of voice in every language.
 ESPEAK_VARIANTS = {"f3": "Female 1", "f2": "Female 2", "f4": "Female 3"}

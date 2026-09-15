@@ -212,7 +212,9 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
    A **Wait** step (0.1–60 seconds) holds the sequence where it stands; the steps after it
    get that much longer before they expire, and photo, audio and video keep recording in
    the background while it waits.
-   Announcements support language, speed, Demon/Chipmunk/custom pitch, and volume. Tunes
+   Announcements pick any voice installed on this node — the same list the Voice page
+   offers, so two steps can answer in different voices — with speed, Demon/Chipmunk/custom
+   pitch, and volume. Tunes
    support repeats (1-5), volume, and **Pitch (semitones)** from -24 to +24, which moves every
    note by the same interval and leaves the tune's length alone. Each action carries its own
    test button: **Test message** and **Test tune** play the editor's settings on the node
@@ -322,8 +324,8 @@ GET `/api/sentry/status` returns armed/test state, action status, and recent eve
 Text-to-speech speaks English and Italian with female voices only. It uses local Piper neural
 voices when installed, with eSpeak NG as a basic fallback (`sudo apt-get install -y espeak-ng`,
 included by the Pi bootstrap helper). Install the natural female voices (Lessac, Amy and
-Kristin in US English; Alba, Cori and Jenny in British English; Paola in Italian, the only
-female Italian Piper voice) with:
+Kristin in US English; Alba, Cori and Jenny in British English; Paola and Serena in Italian,
+the two female Italian Piper voices) with:
 
 ```bash
 ./scripts/setup_speech.sh

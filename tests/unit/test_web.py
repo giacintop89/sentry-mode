@@ -690,6 +690,26 @@ def test_message_test_button_speaks_the_editor_draft_with_its_voice_and_effects(
     assert b'id="test-message"' in page and b'id="rule-text"' in page
 
 
+def test_announcement_step_offers_the_voices_installed_on_this_node(web):
+    _, base = web
+    page = request(base, "/sentry")[1].decode()
+    # The step picks a voice, not just a language, so two steps can answer differently.
+    assert '<label for="rule-voice">Voice</label>' in page
+    assert '<select id="rule-voice" data-f="voice">' in page
+    script = request(base, "/sentry.js")[1].decode()
+    assert "speech/voices" in script and "renderVoices(" in script
+    offered = request(base, "/api/speech/voices")[1]["voices"]
+    assert offered and {"id", "label", "quality"} <= set(offered[0])
+    # A rule keeps the voice id it was given, whatever the node's own default voice is.
+    data = request(base, "/api/sentry/config")[1]
+    chosen = offered[-1]["id"]
+    data["config"]["rules"][0]["actions"] = [{"type": "tts", "text": "Hello", "voice": chosen}]
+    payload = {"config": data["config"], "revision": data["revision"]}
+    assert request(base, "/api/sentry/config", "POST", body=payload)[0] == 200
+    saved = request(base, "/api/sentry/config")[1]["config"]["rules"][0]["actions"][0]
+    assert saved["voice"] == chosen
+
+
 def test_tune_test_button_plays_the_editor_settings_and_shares_the_speaker(web):
     controls, base = web
     played = []

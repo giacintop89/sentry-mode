@@ -108,7 +108,7 @@
     else if(a.type==='audio')set('audio-duration',a.duration_seconds??10);
     else if(a.type==='video'){set('video-duration',a.duration_seconds??10);f(step,'video-audio').checked=a.audio!==false;}
     else if(a.type==='tts'){
-      voiceOption(step,a.voice);set('text',a.text??'Hello. Please wait here.');set('voice',a.voice||'en');set('rate',a.rate||175);
+      set('text',a.text??'Hello. Please wait here.');renderVoices(step,a.voice||'en');set('rate',a.rate||175);
       set('preset',a.effects?.preset||'natural');set('pitch',a.effects?.pitch||0);set('volume',a.effects?.volume??60);
       fillSoundboard(step);
     }
@@ -141,12 +141,14 @@
   }
   const shorten=text=>text.trim().length>48?text.trim().slice(0,47)+'…':text.trim();
   const label=(step,name)=>f(step,name).selectedOptions[0]?.textContent||'';
+  // "Italiano · Paola · Natural" is the speaker's name to a reader of the summary line.
+  const voiceName=step=>label(step,'voice').split(' · ')[1]||label(step,'voice');
   function stepSummary(step) {
     const type=step.dataset.type,say=text=>{step.querySelector('.step-summary').textContent=text;};
     if(type==='photo')return say(val(step,'photo-count')>1?val(step,'photo-count')+' pictures, every '+val(step,'photo-interval')+' s':'one picture');
     if(type==='audio')return say(val(step,'audio-duration')+' s of sound');
     if(type==='video')return say(val(step,'video-duration')+' s'+(f(step,'video-audio').checked?' with sound':', silent'));
-    if(type==='tts')return say(shorten(f(step,'text').value));
+    if(type==='tts')return say(shorten(f(step,'text').value)+' · '+voiceName(step));
     if(type==='tune')return say(label(step,'tune')+(val(step,'tune-repeat')>1?' ×'+val(step,'tune-repeat'):'')
       +(val(step,'tune-pitch')?' at '+(val(step,'tune-pitch')>0?'+':'')+val(step,'tune-pitch')+' st':''));
     if(type==='sound')return say(shorten(label(step,'sound')));
@@ -268,8 +270,25 @@
   }
   // Saved messages are copied into the rule, so deleting one from the soundboard never breaks a rule.
   let soundboard=[];
-  function voiceOption(step,id) {
-    if(id&&![...f(step,'voice').options].some(o=>o.value===id))f(step,'voice').add(new Option(id,id));
+  // Every voice installed on the node is offered per step, so two steps can answer in
+  // different voices; a rule keeps the voice id, so one that is no longer installed stays
+  // visible as a missing entry instead of quietly speaking with another voice.
+  let voices=[];
+  function renderVoices(step,selected=f(step,'voice').value) {
+    const select=f(step,'voice');
+    if(!voices.length){
+      if(selected&&![...select.options].some(o=>o.value===selected))select.add(new Option(selected,selected));
+      if(selected)select.value=selected;
+      return;
+    }
+    const entries=voices.map(v=>[v.id,v.label+' · '+v.quality]);
+    if(selected&&!voices.some(v=>v.id===selected))entries.unshift([selected,'Missing voice: '+selected]);
+    options(select,entries,selected||entries[0][0]);
+  }
+  async function loadVoices() {
+    try{voices=(await api('speech/voices')).voices;}catch{voices=[];}
+    // A closed step names its voice, so its summary is rewritten once the names are known.
+    for(const step of ttsSteps()){renderVoices(step);stepSummary(step);}
   }
   function syncSoundboard(step) {
     const match=soundboard.find(m=>m.text===f(step,'text').value&&(m.voice==null||m.voice===f(step,'voice').value)
@@ -279,8 +298,8 @@
   }
   function useSoundboard(step,id) {
     const m=soundboard.find(item=>item.id===id);if(!m)return;
-    voiceOption(step,m.voice);f(step,'text').value=m.text;
-    if(m.voice!=null)f(step,'voice').value=m.voice;
+    f(step,'text').value=m.text;
+    if(m.voice!=null)renderVoices(step,m.voice);
     if(m.rate!=null)f(step,'rate').value=m.rate;
     f(step,'preset').value=m.effects?.preset||'natural';f(step,'pitch').value=m.effects?.pitch||0;
     if(m.effects?.volume!=null)f(step,'volume').value=m.effects.volume;
@@ -304,7 +323,8 @@
     step.querySelector('[data-test=sound-preview]').disabled=step.querySelector('[data-test=sound-delete]').disabled=!known;
   }
   async function loadSounds() {
-    try{sounds=(await api('sounds')).sounds;for(const step of steps())if(step.dataset.type==='sound')renderSounds(step);}
+    try{sounds=(await api('sounds')).sounds;
+      for(const step of steps())if(step.dataset.type==='sound'){renderSounds(step);stepSummary(step);}}
     catch(error){ruleMessage(error.message,'error');}
   }
   async function uploadSound(step) {
@@ -444,7 +464,7 @@
   async function init(){try{const data=await api('sentry/config');config=data.config;revision=data.revision;
     $('test-mode').checked=config.test_mode;$('detection-fps').value=config.detection_fps;
     loadTelegram(data.telegram_token_configured);
-    objects=data.objects;options($('rule-objects'),objects.map(x=>[x,x]));refreshCommands();renderRules();loadRule(config.rules.length?0:-1);loadCommand('');await Promise.all([loadSoundboard(),loadSounds(),loadCaptures(),poll()]);message(data.error||'',data.error?'error':'');
+    objects=data.objects;options($('rule-objects'),objects.map(x=>[x,x]));refreshCommands();renderRules();loadRule(config.rules.length?0:-1);loadCommand('');await Promise.all([loadVoices(),loadSoundboard(),loadSounds(),loadCaptures(),poll()]);message(data.error||'',data.error?'error':'');
   }catch(error){message(error.message,'error');}finally{locks();}}
   init();setInterval(poll,1500);
 })();

@@ -8,8 +8,8 @@ service is used.
 Local [Piper](https://github.com/rhasspy/piper) neural voices are used when installed, with
 eSpeak NG as a basic fallback (`sudo apt-get install -y espeak-ng`, included by the Pi
 bootstrap helper). Install the natural female voices — Lessac, Amy and Kristin in US
-English; Alba, Cori and Jenny in British English; Paola in Italian, the only female Italian
-Piper voice — with:
+English; Alba, Cori and Jenny in British English; Paola and Serena in Italian, the two
+female Italian Piper voices — with:
 
 ```bash
 ./scripts/setup_speech.sh
@@ -56,8 +56,14 @@ permissions (override with `soundboard_file` or `SENTRY_MODE_SOUNDBOARD_FILE`). 
 same message twice keeps one card, and a card cannot play while other audio holds the
 speaker.
 
-A rule's announcement step can copy a saved message — text, voice, speed and modification —
-into the rule. The copy is what the rule keeps, so deleting the card never changes the rule.
+A rule's announcement step lists every voice installed on this node, the same list the
+Voice page offers, so two steps of one rule can answer in different voices. The rule keeps
+the voice id: a voice that is no longer installed stays in the step as a missing entry
+rather than being replaced by another one.
+
+A rule's announcement step can also copy a saved message — text, voice, speed and
+modification — into the rule. The copy is what the rule keeps, so deleting the card never
+changes the rule.
 
 ## Defaults
 

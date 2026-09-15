@@ -13,7 +13,7 @@ On the rule editor's **Actions** tab, **Add step** appends one of:
 | Take a picture | 1–20 pictures, 0.5–60 s apart |
 | Record audio | 1–60 seconds |
 | Record a video | 1–60 seconds, with or without sound |
-| Speak a message | up to 1000 characters, language, voice, speed, modification |
+| Speak a message | up to 1000 characters, any installed voice, speed, modification |
 | Play a tune | tune, 1–5 repeats, volume, −24…+24 semitones |
 | Play an audio file | an uploaded file, 1–5 repeats, volume |
 | Send a Telegram message | up to 4096 characters, optionally silent |
