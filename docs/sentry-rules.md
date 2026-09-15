@@ -76,4 +76,5 @@ persisted. A damaged saved configuration prevents arming until a valid one is sa
 `detection_fps` (0.5–5) sets how often Sentry samples, and `action_ttl_seconds` (1–120,
 15 by default) how long a queued step may wait before it is dropped as stale.
 
-See also: [action sequencer](action-sequencer.md), [object detection](object-detection.md).
+See also: [rule reference](rule-reference.md), [action sequencer](action-sequencer.md),
+[object detection](object-detection.md).

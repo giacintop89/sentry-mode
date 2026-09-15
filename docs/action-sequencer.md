@@ -72,5 +72,6 @@ Each entry of a rule's `actions` list is one step, in the order it runs. A `wait
 `seconds`; any step with `"with_previous": true` starts together with the step before it.
 Configurations saved before the field existed keep running as the sequence they always were.
 
-See also: [Sentry rules](sentry-rules.md), [tunes and audio files](tunes-and-audio-files.md),
-[captures](captures.md), [Telegram](telegram.md), [SSH commands](ssh-commands.md).
+See also: [rule reference](rule-reference.md), [Sentry rules](sentry-rules.md),
+[tunes and audio files](tunes-and-audio-files.md), [captures](captures.md),
+[Telegram](telegram.md), [SSH commands](ssh-commands.md).

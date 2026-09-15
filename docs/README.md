@@ -21,6 +21,7 @@ and where its limits are.
 
 ## Reference
 
+- [Rule reference](rule-reference.md) — every condition and action field, with its limits.
 - [HTTP API](http-api.md) — every endpoint, with the headers they require.
 - [Configuration](configuration.md) — YAML, environment variables, state files, services.
 - [Security model](security.md) — what is exposed, what is stored, what is refused.
