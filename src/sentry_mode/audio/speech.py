@@ -8,11 +8,11 @@ import threading
 import wave
 from pathlib import Path
 
-from sentry_node.audio.effects import VoiceEffects
-from sentry_node.audio.playback import command
-from sentry_node.config import Settings
-from sentry_node.core.errors import HardwareError
-from sentry_node.hardware.speaker import Speaker
+from sentry_mode.audio.effects import VoiceEffects
+from sentry_mode.audio.playback import command
+from sentry_mode.config import Settings
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.hardware.speaker import Speaker
 
 LANGUAGES = {"en": "English", "it": "Italiano"}
 # Piper voice files do not record the speaker's gender, so only these known female
@@ -196,7 +196,7 @@ def speak(
     engine, model = speech_engine(config, voice)
     speaker = Speaker(config.speaker)
     device = speaker.device()
-    with tempfile.TemporaryDirectory(prefix="sentry-node-speech-") as directory:
+    with tempfile.TemporaryDirectory(prefix="sentry-mode-speech-") as directory:
         output = Path(directory) / "speech.wav"
         # Flatten lines into a single utterance so stdin readers cannot overwrite
         # earlier lines. Text goes through stdin, never shell/command options.

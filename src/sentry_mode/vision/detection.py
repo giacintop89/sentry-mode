@@ -6,9 +6,9 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from sentry_node.config import DetectionConfig
-from sentry_node.core.errors import HardwareError
-from sentry_node.vision.labels import CLASSES
+from sentry_mode.config import DetectionConfig
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.vision.labels import CLASSES
 
 
 @dataclass(frozen=True)
@@ -178,7 +178,7 @@ class DetectionWorker:
             if self.detector is None:
                 self.detector = ObjectDetector(self.config)
             self.stopped.clear()
-            self.thread = threading.Thread(target=self._run, name="sentry-node-detection")
+            self.thread = threading.Thread(target=self._run, name="sentry-mode-detection")
             self.thread.start()
         except Exception as exc:
             self.error = str(exc)

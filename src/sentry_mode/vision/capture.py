@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sentry_node.hardware.camera import Camera
+from sentry_mode.hardware.camera import Camera
 
 
 def capture_image(camera: Camera, output: Path) -> None:

@@ -5,7 +5,7 @@ keep it on a network you trust.
 
 ## The web surface
 
-Every POST requires the same-origin header `X-Sentry-Node-Control: 1`, which a cross-origin
+Every POST requires the same-origin header `X-Sentry-Mode-Control: 1`, which a cross-origin
 page cannot set without the node's consent. There are no arbitrary shell or filesystem-path
 controls: paths served from `/captures/` are validated against the captures directory, and
 uploads are converted through fixed pipelines. The server listens on all interfaces only

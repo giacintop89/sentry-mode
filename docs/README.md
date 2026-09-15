@@ -1,4 +1,4 @@
-# Sentry Node documentation
+# Sentry Mode documentation
 
 The [README](../README.md) is the single-page manual: installation, troubleshooting and
 every option in one place. The pages here take one feature each and describe how it behaves
@@ -32,5 +32,5 @@ and where its limits are.
 
 Dated design documents, kept as written; they describe proposals, not current behavior.
 
-- [Low-latency implementation plan](sentry-node-low-latency-implementation-plan.md)
+- [Low-latency implementation plan](sentry-mode-low-latency-implementation-plan.md)
 - [Vision node self-centering functional plan](vision-node-self-centering-functional-plan.md)

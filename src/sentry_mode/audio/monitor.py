@@ -14,9 +14,9 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sentry_node.config import Settings
-from sentry_node.core.errors import HardwareError
-from sentry_node.hardware.microphone import Microphone
+from sentry_mode.config import Settings
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.hardware.microphone import Microphone
 
 RATE = 16000
 MAX_LISTENERS = 2

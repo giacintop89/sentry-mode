@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from cv2 import VideoCapture
 
-from sentry_node.config import CameraConfig
-from sentry_node.core.errors import HardwareError
+from sentry_mode.config import CameraConfig
+from sentry_mode.core.errors import HardwareError
 
 logger = logging.getLogger(__name__)
 

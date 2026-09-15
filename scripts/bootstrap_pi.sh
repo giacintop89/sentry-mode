@@ -26,5 +26,5 @@ sudo apt-get install -y "${packages[@]}"
 "$root_dir/.venv/bin/python" -m pip install -e "$root_dir"
 "$root_dir/scripts/detect_camera.sh"
 "$root_dir/scripts/detect_audio.sh"
-"$root_dir/.venv/bin/sentry-node" config validate
-printf '\nNext: source %s/.venv/bin/activate\nsentry-node status\nsentry-node camera test\nsentry-node audio test-output\n' "$root_dir"
+"$root_dir/.venv/bin/sentry-mode" config validate
+printf '\nNext: source %s/.venv/bin/activate\nsentry-mode status\nsentry-mode camera test\nsentry-mode audio test-output\n' "$root_dir"

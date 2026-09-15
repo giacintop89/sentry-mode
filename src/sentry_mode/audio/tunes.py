@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sentry_node.config import SpeakerConfig
+    from sentry_mode.config import SpeakerConfig
 
 RATE = 48000
 
@@ -96,9 +96,9 @@ def play_tune(
 ) -> float:
     """Render the tune to a temporary WAV, play it on the node speaker, and delete it."""
     # Imported here: Sentry's config reads TUNES while the settings module is still loading.
-    from sentry_node.hardware.speaker import Speaker
+    from sentry_mode.hardware.speaker import Speaker
 
-    with tempfile.TemporaryDirectory(prefix="sentry-node-tune-") as directory:
+    with tempfile.TemporaryDirectory(prefix="sentry-mode-tune-") as directory:
         path = Path(directory) / "tune.wav"
         seconds = generate_tune(path, name, repeat, volume, pitch)
         Speaker(speaker).play_file(path, timeout=seconds + 10, stop_event=stop_event)

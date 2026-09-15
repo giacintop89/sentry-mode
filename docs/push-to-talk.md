@@ -24,7 +24,7 @@ address cannot ask for it. The app serves HTTP and HTTPS together with shared co
 
 ```bash
 python3 scripts/setup_phone_https.py 192.168.11.240 pi5 pi5.local
-sentry-node serve --port 8083 --https-port 8443 \
+sentry-mode serve --port 8083 --https-port 8443 \
   --tls-cert .local/tls/server.crt --tls-key .local/tls/server.key --tls-ca .local/tls/ca.crt
 ```
 
@@ -47,7 +47,7 @@ microphone permission; the standalone HTTPS Voice view always remains available.
 
 AudioWorklet captures mono 48 kHz PCM16. POST `/api/talk/start` returns a session token,
 sample rate and duration limit; `/api/talk/chunk`, `/api/talk/stop` and `/api/talk/cancel`
-carry that token in `X-Sentry-Node-Talk`. Chunks are `application/octet-stream` with
+carry that token in `X-Sentry-Mode-Talk`. Chunks are `application/octet-stream` with
 consecutive `X-Audio-Sequence` values from zero and at most 9600 bytes each; the browser
 limits a chunk to 100 ms and uploads them in order. All four endpoints need the same-origin
 control header. `/api/talk/start` accepts the effects object as its optional JSON body.

@@ -3,8 +3,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sentry_node.core.errors import HardwareError
-from sentry_node.sentry.telegram import send_message
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.sentry.telegram import send_message
 
 TOKEN = "123456:" + "a" * 35
 PAYLOAD = {

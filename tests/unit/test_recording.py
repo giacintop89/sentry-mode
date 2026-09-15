@@ -4,9 +4,9 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from sentry_node.core.errors import HardwareError
-from sentry_node.vision import recording
-from sentry_node.vision.recording import Captures
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.vision import recording
+from sentry_mode.vision.recording import Captures
 
 
 class FakeEncoder:
@@ -37,7 +37,7 @@ def test_video_lasts_the_requested_time_at_a_fixed_even_size(tmp_path):
         return encoders[0]
 
     with (
-        patch("sentry_node.vision.recording.subprocess.Popen", side_effect=start),
+        patch("sentry_mode.vision.recording.subprocess.Popen", side_effect=start),
         patch.object(threading.Event, "wait", return_value=False),
     ):
         name, audio_error = captures.record_video(
@@ -55,7 +55,7 @@ def test_stopping_early_keeps_the_recording_and_missing_camera_fails(tmp_path):
     captures = Captures(tmp_path)
     stop = threading.Event()
     stop.set()
-    with patch("sentry_node.vision.recording.subprocess.Popen", side_effect=FakeEncoder):
+    with patch("sentry_mode.vision.recording.subprocess.Popen", side_effect=FakeEncoder):
         name, _ = captures.record_video(lambda: np.zeros((72, 128, 3), np.uint8), 30, "r", stop)
         assert captures.path(name).is_file()
         with pytest.raises(HardwareError, match="No camera frame"):

@@ -22,7 +22,7 @@ Encoding needs `ffmpeg` with libx264, installed by the Pi bootstrap helper.
 ## Storage
 
 Files are saved in `.local/captures/` — override with `captures_directory` or
-`SENTRY_NODE_CAPTURES_DIRECTORY` — and only the newest 200 are kept.
+`SENTRY_MODE_CAPTURES_DIRECTORY` — and only the newest 200 are kept.
 
 The **Captures** tab lists them to view, play or delete. GET `/api/captures` lists them,
 `/captures/<name>` serves one with byte ranges so phone video players can seek, and POST

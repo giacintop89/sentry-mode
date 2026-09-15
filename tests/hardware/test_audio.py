@@ -1,8 +1,8 @@
 import pytest
 
-from sentry_node.config import load_config
-from sentry_node.hardware.microphone import Microphone
-from sentry_node.hardware.speaker import Speaker
+from sentry_mode.config import load_config
+from sentry_mode.hardware.microphone import Microphone
+from sentry_mode.hardware.speaker import Speaker
 
 pytestmark = pytest.mark.hardware
 

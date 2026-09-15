@@ -14,13 +14,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sentry_node.audio.sounds import SoundLibrary
-from sentry_node.audio.speech import speak
-from sentry_node.audio.tunes import TUNES, play_tune
-from sentry_node.config import Settings
-from sentry_node.core.errors import HardwareError
-from sentry_node.hardware.microphone import Microphone
-from sentry_node.sentry.config import (
+from sentry_mode.audio.sounds import SoundLibrary
+from sentry_mode.audio.speech import speak
+from sentry_mode.audio.tunes import TUNES, play_tune
+from sentry_mode.config import Settings
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.hardware.microphone import Microphone
+from sentry_mode.sentry.config import (
     AudioAction,
     PhotoAction,
     Rule,
@@ -34,10 +34,10 @@ from sentry_node.sentry.config import (
     VideoAction,
     WaitAction,
 )
-from sentry_node.vision.detection import Detection
-from sentry_node.vision.labels import CLASSES
-from sentry_node.vision.recording import Captures
-from sentry_node.vision.stream import VideoStream
+from sentry_mode.vision.detection import Detection
+from sentry_mode.vision.labels import CLASSES
+from sentry_mode.vision.recording import Captures
+from sentry_mode.vision.stream import VideoStream
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +298,7 @@ class Sentry:
                 self.armed_at = time.monotonic()
                 self.error = None
                 self.armed = True
-                self.thread = threading.Thread(target=self._worker, name="sentry-node-sentry")
+                self.thread = threading.Thread(target=self._worker, name="sentry-mode-sentry")
                 self.thread.start()
                 self._event(
                     "armed",
@@ -349,7 +349,7 @@ class Sentry:
                 jobs = self._groups(rule, time.monotonic())
                 self._event("tested", f"Test run of {rule.name}; running its actions.", rule.name)
                 self.thread = threading.Thread(
-                    target=self._test, args=(jobs,), name="sentry-node-test"
+                    target=self._test, args=(jobs,), name="sentry-mode-test"
                 )
                 self.thread.start()
             return {"message": "Running the actions on the node."}
@@ -496,7 +496,7 @@ class Sentry:
             return
         threads = [
             threading.Thread(
-                target=self._step, args=(job.rule, action, deadline), name="sentry-node-step"
+                target=self._step, args=(job.rule, action, deadline), name="sentry-mode-step"
             )
             for action in job.steps
         ]
@@ -624,7 +624,7 @@ class Sentry:
     def _in_background(self, rule: str, started: str, work):
         # Videos and photo series run beside the queue, so an announcement is not held back.
         self.recorders = [r for r in self.recorders if r.is_alive()]
-        recorder = threading.Thread(target=work, name="sentry-node-recording")
+        recorder = threading.Thread(target=work, name="sentry-mode-recording")
         self.recorders.append(recorder)
         self._event("action_started", started, rule)
         recorder.start()
@@ -712,7 +712,7 @@ class Sentry:
         if self.cancelled.is_set():
             raise HardwareError("Telegram action cancelled.")
         process = subprocess.Popen(
-            [sys.executable, "-m", "sentry_node.sentry.telegram"],
+            [sys.executable, "-m", "sentry_mode.sentry.telegram"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

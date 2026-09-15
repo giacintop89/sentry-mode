@@ -64,7 +64,7 @@ messages go to the server log. Kinds include `detected`, `triggered`, `rearmed`,
 
 The editor atomically saves `.local/sentry.json` with private file permissions. That file
 takes precedence over the `sentry` YAML section, which supplies initial defaults; override
-the path with `sentry_state_file` or `SENTRY_NODE_SENTRY_STATE_FILE`. Arming is never
+the path with `sentry_state_file` or `SENTRY_MODE_SENTRY_STATE_FILE`. Arming is never
 persisted. A damaged saved configuration prevents arming until a valid one is saved.
 
 `detection_fps` (0.5–5) sets how often Sentry samples, and `action_ttl_seconds` (1–120,

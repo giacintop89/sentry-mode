@@ -4,24 +4,24 @@ Configuration comes from a YAML file, overridden by environment variables, with 
 defaults when neither is given.
 
 ```bash
-sentry-node --config config/sentry-node.yaml config validate
-sentry-node --config config/sentry-node.yaml config show     # effective configuration
+sentry-mode --config config/sentry-mode.yaml config validate
+sentry-mode --config config/sentry-mode.yaml config show     # effective configuration
 ```
 
-Pass `--config` before the command or set `SENTRY_NODE_CONFIG`. `.env` is not loaded
+Pass `--config` before the command or set `SENTRY_MODE_CONFIG`. `.env` is not loaded
 implicitly by the CLI: export the values yourself, or use the service's `EnvironmentFile`.
-`python -m sentry_node` is equivalent to `sentry-node`.
+`python -m sentry_mode` is equivalent to `sentry-mode`.
 
 ## Environment variables
 
-Every setting has an environment name prefixed `SENTRY_NODE_`, with `__` for nesting:
+Every setting has an environment name prefixed `SENTRY_MODE_`, with `__` for nesting:
 
 ```bash
-SENTRY_NODE_CAMERA__DEVICE=/dev/video2
-SENTRY_NODE_LOGGING__LEVEL=DEBUG
-SENTRY_NODE_SPEECH__VOICE=it
-SENTRY_NODE_SPEECH__RATE=175
-SENTRY_NODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
+SENTRY_MODE_CAMERA__DEVICE=/dev/video2
+SENTRY_MODE_LOGGING__LEVEL=DEBUG
+SENTRY_MODE_SPEECH__VOICE=it
+SENTRY_MODE_SPEECH__RATE=175
+SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
 ```
 
 ## Sections
@@ -29,7 +29,7 @@ SENTRY_NODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
 - `node` — `name`, reported in status output.
 - `camera` — `enabled`, `device`, `width`, `height`, `fps`. Prefer a stable
   `/dev/v4l/by-id/...` device path.
-- `microphone`, `speaker` — device names or descriptions from `sentry-node audio list`;
+- `microphone`, `speaker` — device names or descriptions from `sentry-mode audio list`;
   runtime numeric Pulse IDs are never stored. `speaker.volume` is the test tone amplitude
   and does not touch the OS sink. `speaker.pipewire_latency_ms` defaults to 250.
 - `speech` — `voice`, `rate`, `engine` (`auto`, `piper`, `espeak`), `models`,
@@ -61,14 +61,14 @@ initial defaults. Arming is never persisted: a restart always leaves Sentry disa
 
 ```bash
 sudo ./scripts/install_service.sh
-systemctl cat sentry-node
-sudo systemctl enable --now sentry-node
-journalctl -u sentry-node -f
+systemctl cat sentry-mode
+sudo systemctl enable --now sentry-mode
+journalctl -u sentry-mode -f
 ```
 
 The installer renders the current repository path and the sudo caller into the units and
-reloads systemd without enabling anything. It creates `sentry-node` (the idle `run`) and
-`sentry-node-web` (the dashboard on loopback HTTP 8083 and HTTPS 8443 for the network). Do
+reloads systemd without enabling anything. It creates `sentry-mode` (the idle `run`) and
+`sentry-mode-web` (the dashboard on loopback HTTP 8083 and HTTPS 8443 for the network). Do
 not run the app as root; development setup installs no service. Bluetooth audio generally
 needs a running user audio session — see [Raspberry Pi setup](raspberry-pi-setup.md).
 
@@ -76,7 +76,7 @@ The dashboard reads its HTML, CSS and JavaScript once at startup, so restart the
 after changing them:
 
 ```bash
-sudo systemctl restart sentry-node-web
+sudo systemctl restart sentry-mode-web
 ```
 
 See also: [security model](security.md), [HTTP API](http-api.md).

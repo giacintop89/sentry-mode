@@ -2,10 +2,10 @@ import tempfile
 import threading
 from pathlib import Path
 
-from sentry_node.audio.playback import command, generate_tone
-from sentry_node.config import SpeakerConfig
-from sentry_node.core.errors import HardwareError
-from sentry_node.hardware.microphone import discover_devices, select_device
+from sentry_mode.audio.playback import command, generate_tone
+from sentry_mode.config import SpeakerConfig
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.hardware.microphone import discover_devices, select_device
 
 
 class Speaker:
@@ -29,7 +29,7 @@ class Speaker:
 
     def test_output(self) -> None:
         device = self.device()
-        with tempfile.TemporaryDirectory(prefix="sentry-node-tone-") as directory:
+        with tempfile.TemporaryDirectory(prefix="sentry-mode-tone-") as directory:
             path = Path(directory) / "tone.wav"
             generate_tone(path, volume=self.config.volume)
             self.play_file(path, device=device)

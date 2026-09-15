@@ -1,14 +1,14 @@
 [Unit]
-Description=Sentry Node web dashboard
+Description=Sentry Mode web dashboard
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
-User=sentry-node
-WorkingDirectory=/opt/sentry-node
-EnvironmentFile=-/opt/sentry-node/.env
-ExecStart=/opt/sentry-node/.venv/bin/sentry-node serve --host 127.0.0.1 --port 8083 --https-host 0.0.0.0 --https-port 8443 --tls-cert /opt/sentry-node/.local/tls/server.crt --tls-key /opt/sentry-node/.local/tls/server.key --tls-ca /opt/sentry-node/.local/tls/ca.crt
+User=sentry-mode
+WorkingDirectory=/opt/sentry-mode
+EnvironmentFile=-/opt/sentry-mode/.env
+ExecStart=/opt/sentry-mode/.venv/bin/sentry-mode serve --host 127.0.0.1 --port 8083 --https-host 0.0.0.0 --https-port 8443 --tls-cert /opt/sentry-mode/.local/tls/server.crt --tls-key /opt/sentry-mode/.local/tls/server.key --tls-ca /opt/sentry-mode/.local/tls/ca.crt
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

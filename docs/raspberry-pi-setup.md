@@ -6,7 +6,7 @@ this repository into the normal user's home directory. Then run:
 ```bash
 ./scripts/bootstrap_pi.sh
 source .venv/bin/activate
-cp config/sentry-node.example.yaml config/sentry-node.yaml
+cp config/sentry-mode.example.yaml config/sentry-mode.yaml
 ./scripts/detect_camera.sh
 ./scripts/detect_audio.sh
 ```
@@ -36,25 +36,25 @@ user session as appropriate for your OS release. If needed, explicitly enable li
 sudo loginctl enable-linger "$USER"
 systemctl --user status pipewire pipewire-pulse
 sudo ./scripts/install_service.sh
-systemctl cat sentry-node sentry-node-web
-sudo systemctl enable --now sentry-node
-sudo systemctl enable --now sentry-node-web
-journalctl -u sentry-node-web -f
+systemctl cat sentry-mode sentry-mode-web
+sudo systemctl enable --now sentry-mode
+sudo systemctl enable --now sentry-mode-web
+journalctl -u sentry-mode-web -f
 ```
 
 The installer configures XDG_RUNTIME_DIR and the user's Pulse socket. That does not itself
 start PipeWire or guarantee Bluetooth reconnection at boot. Confirm audio after reboot.
-The template uses /opt/sentry-node and a non-root sentry-node account; use the installer to
+The template uses /opt/sentry-mode and a non-root sentry-mode account; use the installer to
 render your actual checkout and account. Environment values can be stored in the checkout's
-ignored .env file; use SENTRY_NODE_CONFIG with an absolute YAML path.
+ignored .env file; use SENTRY_MODE_CONFIG with an absolute YAML path.
 
-Two units are installed and neither is enabled for you. `sentry-node` runs the idle `run`
-command; `sentry-node-web` hosts the dashboard, serving the phone microphone view from the
+Two units are installed and neither is enabled for you. `sentry-mode` runs the idle `run`
+command; `sentry-mode-web` hosts the dashboard, serving the phone microphone view from the
 local certificate in `.local/tls`. It binds plain HTTP 8083 to 127.0.0.1 and exposes only
 HTTPS 8443 to the network, so nothing reaches the controls in clear text and a browser on
 the node itself still uses `http://127.0.0.1:8083`. Drop `--https-host` from the unit's
 `ExecStart` to serve both listeners on every interface. Most setups need only
-`sentry-node-web`; enabling both means the idle unit also probes the camera and audio
+`sentry-mode-web`; enabling both means the idle unit also probes the camera and audio
 devices once at start. Create the certificate before installing:
 
 ```bash
@@ -66,5 +66,5 @@ Without `.local/tls/server.crt`, `server.key`, and `ca.crt`, the installer says 
 renders the dashboard unit as loopback HTTP only, reachable from the node alone; rerun it
 after creating them to pick up HTTPS. The
 certificate and key stay readable only by the account the units run as. Change ports or
-add flags with `sudo systemctl edit sentry-node-web` and a full `ExecStart=` override, or
-edit `systemd/sentry-node-web.service` in the checkout and rerun the installer.
+add flags with `sudo systemctl edit sentry-mode-web` and a full `ExecStart=` override, or
+edit `systemd/sentry-mode-web.service` in the checkout and rerun the installer.

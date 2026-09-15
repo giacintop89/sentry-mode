@@ -1,5 +1,5 @@
 node:
-  name: sentry-node
+  name: sentry-mode
 camera:
   enabled: true
   device: 0

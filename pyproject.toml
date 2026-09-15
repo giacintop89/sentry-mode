@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sentry-node"
+name = "sentry-mode"
 version = "0.1.0"
 description = "Headless, local-first Raspberry Pi hardware node"
 requires-python = ">=3.11"
@@ -14,13 +14,13 @@ speech = ["piper-tts>=1.3,<2"]
 dev = ["pytest>=8", "pytest-cov", "ruff", "mypy", "types-PyYAML"]
 
 [project.scripts]
-sentry-node = "sentry_node.cli:main"
+sentry-mode = "sentry_mode.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-sentry_node = ["*.html", "*.js", "*.css"]
+sentry_mode = ["*.html", "*.js", "*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

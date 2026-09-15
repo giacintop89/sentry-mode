@@ -9,10 +9,10 @@ import tempfile
 import threading
 import time
 
-from sentry_node.audio.effects import VoiceEffects
-from sentry_node.config import Settings
-from sentry_node.core.errors import HardwareError
-from sentry_node.hardware.speaker import Speaker
+from sentry_mode.audio.effects import VoiceEffects
+from sentry_mode.config import Settings
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.hardware.speaker import Speaker
 
 RATE = 48000
 MAX_CHUNK = 9600  # 100 ms of mono PCM16, little endian.
@@ -153,7 +153,7 @@ class TalkStream:
                 self.thread = threading.Thread(
                     target=self._play,
                     args=(process, errors, effect_process),
-                    name="sentry-node-talk",
+                    name="sentry-mode-talk",
                 )
                 self.thread.start()
                 return {

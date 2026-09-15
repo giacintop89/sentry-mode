@@ -1,14 +1,14 @@
 [Unit]
-Description=Sentry Node hardware runtime
+Description=Sentry Mode hardware runtime
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
-User=sentry-node
-WorkingDirectory=/opt/sentry-node
-EnvironmentFile=-/opt/sentry-node/.env
-ExecStart=/opt/sentry-node/.venv/bin/sentry-node run
+User=sentry-mode
+WorkingDirectory=/opt/sentry-mode
+EnvironmentFile=-/opt/sentry-mode/.env
+ExecStart=/opt/sentry-mode/.venv/bin/sentry-mode run
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

@@ -12,15 +12,15 @@ from urllib.request import Request, urlopen
 import pytest
 import yaml
 
-from sentry_node.audio.effects import VoiceEffects
-from sentry_node.audio.monitor import MAX_LISTENERS
-from sentry_node.audio.monitor import RATE as AUDIO_RATE
-from sentry_node.config import Settings
-from sentry_node.core.errors import HardwareError
-from sentry_node.core.models import AudioDevice, HardwareStatus
-from sentry_node.hardware.microphone import Microphone
-from sentry_node.sentry.config import SSHCommand
-from sentry_node.web import NodeControls, make_handler, serve
+from sentry_mode.audio.effects import VoiceEffects
+from sentry_mode.audio.monitor import MAX_LISTENERS
+from sentry_mode.audio.monitor import RATE as AUDIO_RATE
+from sentry_mode.config import Settings
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.core.models import AudioDevice, HardwareStatus
+from sentry_mode.hardware.microphone import Microphone
+from sentry_mode.sentry.config import SSHCommand
+from sentry_mode.web import NodeControls, make_handler, serve
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def web(tmp_path):
 
 
 def request(base, path, method="GET", headers=None, body=None):
-    selected = {"X-Sentry-Node-Control": "1"} if method == "POST" else {}
+    selected = {"X-Sentry-Mode-Control": "1"} if method == "POST" else {}
     if headers is not None:
         selected = headers
     if body is not None:
@@ -93,7 +93,7 @@ def test_only_configured_dashboard_origins_can_embed(web):
             base,
             "/api/sentry/stop",
             "POST",
-            {"X-Sentry-Node-Control": "1", "Origin": "http://127.0.0.1:8092"},
+            {"X-Sentry-Mode-Control": "1", "Origin": "http://127.0.0.1:8092"},
         )[0]
         == 403
     )
@@ -118,7 +118,7 @@ def test_invalid_frame_origins_rejected(origin):
 def test_status_is_cached(web):
     _, base = web
     status = HardwareStatus(True, False, True, False)
-    with patch("sentry_node.web.inspect_hardware", return_value=status) as inspect:
+    with patch("sentry_mode.web.inspect_hardware", return_value=status) as inspect:
         assert request(base, "/api/status")[1] == asdict(status)
         assert request(base, "/api/status")[0] == 200
         inspect.assert_called_once()
@@ -128,9 +128,9 @@ def test_device_lists_use_adapters(web):
     _, base = web
     device = AudioDevice("streamcam", "StreamCam", "pulse")
     with (
-        patch("sentry_node.web.list_cameras", return_value=["/dev/video2"]),
-        patch("sentry_node.web.Microphone.list_devices", return_value=[device]),
-        patch("sentry_node.web.Speaker.list_devices", return_value=[]),
+        patch("sentry_mode.web.list_cameras", return_value=["/dev/video2"]),
+        patch("sentry_mode.web.Microphone.list_devices", return_value=[device]),
+        patch("sentry_mode.web.Speaker.list_devices", return_value=[]),
     ):
         assert request(base, "/api/camera/list")[1]["devices"] == ["/dev/video2"]
         devices = request(base, "/api/audio/list")[1]
@@ -140,7 +140,7 @@ def test_device_lists_use_adapters(web):
 
 def test_camera_test_releases_camera(web):
     _, base = web
-    with patch("sentry_node.web.Camera") as adapter:
+    with patch("sentry_mode.web.Camera") as adapter:
         camera = adapter.return_value.__enter__.return_value
         camera.info.return_value = {"width": 640, "height": 480, "fps": 30}
         status, result, _ = request(base, "/api/camera/test", "POST")
@@ -157,25 +157,25 @@ def test_capture_download_cleans_temporary_file(web):
         paths.append(output)
         output.write_bytes(b"jpeg-content")
 
-    with patch("sentry_node.web.capture_image", side_effect=capture):
+    with patch("sentry_mode.web.capture_image", side_effect=capture):
         status, content, headers = request(base, "/api/camera/capture", "POST")
     assert status == 200 and content == b"jpeg-content"
     assert headers.get_content_type() == "image/jpeg"
-    assert "sentry-node-frame.jpg" in headers["Content-Disposition"]
+    assert "sentry-mode-frame.jpg" in headers["Content-Disposition"]
     assert not paths[0].exists()
 
 
 def test_audio_tests_and_errors(web):
     _, base = web
     with (
-        patch("sentry_node.web.Microphone.test_input", return_value={"seconds": 2}) as record,
-        patch("sentry_node.web.Speaker.test_output") as play,
+        patch("sentry_mode.web.Microphone.test_input", return_value={"seconds": 2}) as record,
+        patch("sentry_mode.web.Speaker.test_output") as play,
     ):
         assert request(base, "/api/audio/test-input", "POST")[1]["seconds"] == 2
         assert request(base, "/api/audio/test-output", "POST")[0] == 200
         record.assert_called_once()
         play.assert_called_once()
-    with patch("sentry_node.web.Speaker.test_output", side_effect=HardwareError("disconnected")):
+    with patch("sentry_mode.web.Speaker.test_output", side_effect=HardwareError("disconnected")):
         status, result, _ = request(base, "/api/audio/test-output", "POST")
     assert status == 503 and result["error"] == "disconnected"
 
@@ -188,7 +188,7 @@ def test_busy_hardware_returns_conflict(web):
 
 def test_controls_cannot_be_triggered_by_get_or_cross_site_post(web):
     _, base = web
-    with patch("sentry_node.web.Speaker.test_output") as play:
+    with patch("sentry_mode.web.Speaker.test_output") as play:
         assert request(base, "/api/audio/test-output")[0] == 404
         assert request(base, "/api/audio/test-output", "POST", {})[0] == 403
         assert (
@@ -196,7 +196,7 @@ def test_controls_cannot_be_triggered_by_get_or_cross_site_post(web):
                 base,
                 "/api/audio/test-output",
                 "POST",
-                {"X-Sentry-Node-Control": "1", "Origin": "http://different-host.test"},
+                {"X-Sentry-Mode-Control": "1", "Origin": "http://different-host.test"},
             )[0]
             == 403
         )
@@ -212,7 +212,7 @@ def test_runtime_start_stop_and_restart(web):
         started.set()
         stopped.wait(5)
 
-    with patch("sentry_node.web.run", side_effect=runtime) as run:
+    with patch("sentry_mode.web.run", side_effect=runtime) as run:
         assert request(base, "/api/runtime")[1]["running"] is False
         assert request(base, "/api/runtime/start", "POST")[1]["running"] is True
         assert started.wait(2)
@@ -227,7 +227,7 @@ def test_runtime_start_stop_and_restart(web):
 
 def test_runtime_failures_are_reported():
     controls = NodeControls(Settings())
-    with patch("sentry_node.web.run", side_effect=RuntimeError("startup failed")):
+    with patch("sentry_mode.web.run", side_effect=RuntimeError("startup failed")):
         controls.start_runtime()
         controls.thread.join(timeout=2)
     assert controls.runtime_status() == {"running": False, "error": "startup failed"}
@@ -237,7 +237,7 @@ def test_speech_uses_speaker_even_while_camera_is_busy(web):
     controls, base = web
     with (
         controls.hardware_lock,
-        patch("sentry_node.web.speak", return_value={"message": "played"}) as speech,
+        patch("sentry_mode.web.speak", return_value={"message": "played"}) as speech,
     ):
         status, result, _ = request(
             base, "/api/speech", "POST", body={"text": "Hello", "voice": "it", "rate": 160}
@@ -266,7 +266,7 @@ def test_speech_uses_speaker_even_while_camera_is_busy(web):
 )
 def test_invalid_speech_is_rejected_before_synthesis(web, body):
     _, base = web
-    with patch("sentry_node.web.speak") as speech:
+    with patch("sentry_mode.web.speak") as speech:
         assert request(base, "/api/speech", "POST", body=body)[0] == 400
         speech.assert_not_called()
 
@@ -275,14 +275,14 @@ def test_speech_busy_and_provider_failures(web):
     controls, base = web
     with controls.audio_lock:
         assert request(base, "/api/speech", "POST", body={"text": "hello"})[0] == 409
-    with patch("sentry_node.web.speak", side_effect=HardwareError("speaker disconnected")):
+    with patch("sentry_mode.web.speak", side_effect=HardwareError("speaker disconnected")):
         assert request(base, "/api/speech", "POST", body={"text": "hello"})[0] == 503
     assert not controls.audio_lock.locked()
 
 
 def test_shared_video_stream_and_snapshot(web):
     controls, base = web
-    with patch("sentry_node.vision.stream.Camera") as adapter:
+    with patch("sentry_mode.vision.stream.Camera") as adapter:
         adapter.return_value.__enter__.return_value.encode_jpeg.return_value = b"mock-jpeg"
         assert request(base, "/api/video")[0] == 409
         assert request(base, "/api/video/start", "POST")[1]["running"]
@@ -299,9 +299,9 @@ def test_shared_video_stream_and_snapshot(web):
         assert request(base, "/api/camera/test", "POST")[0] == 409
         assert request(base, "/api/runtime/start", "POST")[0] == 409
         with (
-            patch("sentry_node.web.Microphone.is_available", return_value=True),
-            patch("sentry_node.web.Speaker.is_available", return_value=True),
-            patch("sentry_node.web.network_available", return_value=False),
+            patch("sentry_mode.web.Microphone.is_available", return_value=True),
+            patch("sentry_mode.web.Speaker.is_available", return_value=True),
+            patch("sentry_mode.web.network_available", return_value=False),
         ):
             assert request(base, "/api/status")[1]["camera_available"]
         assert not request(base, "/api/video/stop", "POST")[1]["running"]
@@ -373,8 +373,8 @@ def test_phone_assets_and_setup(web, tmp_path):
 def test_phone_pcm_endpoint_enforces_limits_and_session(web):
     controls, base = web
     headers = {
-        "X-Sentry-Node-Control": "1",
-        "X-Sentry-Node-Talk": "session",
+        "X-Sentry-Mode-Control": "1",
+        "X-Sentry-Mode-Talk": "session",
         "X-Audio-Sequence": "0",
         "Content-Type": "application/octet-stream",
     }
@@ -403,14 +403,14 @@ def test_phone_stream_shares_speaker_lock_with_speech(web):
     with controls.audio_lock:
         assert request(base, "/api/talk/start", "POST")[0] == 409
     with patch.object(controls.talk, "finish", return_value={"message": "finished"}) as finish:
-        headers = {"X-Sentry-Node-Control": "1", "X-Sentry-Node-Talk": "token"}
+        headers = {"X-Sentry-Mode-Control": "1", "X-Sentry-Mode-Talk": "token"}
         assert request(base, "/api/talk/stop", "POST", headers)[0] == 200
         finish.assert_called_once_with("token", cancel=False)
 
 
 def test_detection_toggle_validates_boolean_and_preserves_camera(web):
     controls, base = web
-    with patch("sentry_node.vision.detection.ObjectDetector"):
+    with patch("sentry_mode.vision.detection.ObjectDetector"):
         status, result, _ = request(base, "/api/video/detection", "POST", body={"enabled": True})
         assert status == 200 and result["detection"]["enabled"]
         assert not result["running"]
@@ -425,7 +425,7 @@ def test_detection_toggle_validates_boolean_and_preserves_camera(web):
 )
 def test_invalid_voice_effects_never_reach_audio(web, effects):
     controls, base = web
-    with patch.object(controls.talk, "start") as talk, patch("sentry_node.web.speak") as speech:
+    with patch.object(controls.talk, "start") as talk, patch("sentry_mode.web.speak") as speech:
         assert request(base, "/api/talk/start", "POST", body=effects)[0] == 400
         assert (
             request(base, "/api/speech", "POST", body={"text": "test", "effects": effects})[0]
@@ -437,7 +437,7 @@ def test_invalid_voice_effects_never_reach_audio(web, effects):
 
 def test_sentry_page_config_persistence_and_post_protection(web):
     controls, base = web
-    assert b"Sentry mode" in request(base, "/sentry")[1]
+    assert b"Sentry rules" in request(base, "/sentry")[1]
     data = request(base, "/api/sentry/config")[1]
     assert data["config"]["test_mode"] is False
     assert not request(base, "/api/sentry/status")[1]["armed"]
@@ -520,7 +520,7 @@ def test_soundboard_saves_lists_and_deletes_messages(web, tmp_path):
 )
 def test_invalid_soundboard_requests_are_rejected(web, path, body):
     controls, base = web
-    with patch("sentry_node.web.speak") as speech:
+    with patch("sentry_mode.web.speak") as speech:
         assert request(base, path, "POST", body=body)[0] == 400
         speech.assert_not_called()
     assert not controls.config.soundboard_file.exists()
@@ -530,7 +530,7 @@ def test_soundboard_plays_saved_settings_and_shares_the_speaker(web):
     controls, base = web
     body = {"text": "Hello", "voice": "en", "rate": 200, "effects": {"preset": "chipmunk"}}
     message = request(base, "/api/soundboard", "POST", body=body)[1]["saved"]
-    with patch("sentry_node.web.speak", return_value={"message": "played"}) as speech:
+    with patch("sentry_mode.web.speak", return_value={"message": "played"}) as speech:
         status, result, _ = request(base, "/api/soundboard/play", "POST", body={"id": message})
         assert status == 200 and result["message"] == "played"
         speech.assert_called_once_with(
@@ -549,7 +549,7 @@ def test_soundboard_plays_saved_settings_and_shares_the_speaker(web):
 
 
 def test_soundboard_limit_and_unreadable_file(tmp_path):
-    from sentry_node.audio.soundboard import MAX_MESSAGES, Soundboard, SoundboardMessage
+    from sentry_mode.audio.soundboard import MAX_MESSAGES, Soundboard, SoundboardMessage
 
     board = Soundboard(tmp_path / "board.json")
     for index in range(MAX_MESSAGES):
@@ -615,7 +615,7 @@ def upload(base, data, name="Door Bell.wav", content_type="application/octet-str
         method="POST",
         data=data,
         headers={
-            "X-Sentry-Node-Control": "1",
+            "X-Sentry-Mode-Control": "1",
             "Content-Type": content_type,
             "X-Sound-Name": name,
         },
@@ -633,7 +633,7 @@ def test_audio_files_upload_convert_play_and_stay_while_rules_use_them(web, tmp_
 
     if not shutil.which("ffmpeg"):
         pytest.skip("ffmpeg is required to convert audio files")
-    from sentry_node.audio.tunes import generate_tune
+    from sentry_mode.audio.tunes import generate_tune
 
     controls, base = web
     assert b'<template id="step-sound">' in request(base, "/sentry")[1]
@@ -648,7 +648,7 @@ def test_audio_files_upload_convert_play_and_stay_while_rules_use_them(web, tmp_
     assert abs(saved["sounds"][0]["seconds"] - 1.15) < 0.1
     sound = saved["saved"]
 
-    with patch("sentry_node.audio.sounds.Speaker") as speaker:
+    with patch("sentry_mode.audio.sounds.Speaker") as speaker:
         result = request(base, "/api/sounds/play", "POST", body={"id": sound})[1]
     assert result["seconds"] > 1.1 and speaker.return_value.play_file.call_count == 1
     assert request(base, "/api/sounds/play", "POST", body={"id": "../../etc-00000000"})[0] == 404
@@ -671,7 +671,7 @@ def test_message_test_button_speaks_the_editor_draft_with_its_voice_and_effects(
         "rate": 210,
         "effects": {"preset": "custom", "pitch": -4, "volume": 55},
     }
-    with patch("sentry_node.web.speak", return_value={"message": "played"}) as speech:
+    with patch("sentry_mode.web.speak", return_value={"message": "played"}) as speech:
         status, data, _ = request(base, "/api/speech", "POST", body=draft)
     assert status == 200 and data["message"] == "played"
     # The rule's own announcement settings are spoken, not the node's defaults.
@@ -698,7 +698,7 @@ def test_tune_test_button_plays_the_editor_settings_and_shares_the_speaker(web):
         played.append((path.stat().st_size, timeout))
         assert controls.audio_lock.locked()
 
-    with patch("sentry_node.hardware.speaker.Speaker.play_file", play):
+    with patch("sentry_mode.hardware.speaker.Speaker.play_file", play):
         status, data, _ = request(
             base, "/api/tunes/play", "POST", body={"tune": "doorbell", "repeat": 2, "volume": 40}
         )
@@ -731,7 +731,7 @@ def test_rule_test_button_runs_the_editor_draft_without_saving_it(web):
         "object": "person",
         "actions": [{"type": "tts", "text": "Testing this rule"}],
     }
-    with patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()):
+    with patch("sentry_mode.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()):
         status, data, _ = request(base, "/api/sentry/rules/test", "POST", body=draft)
         assert status == 200 and data["message"] == "Running the actions on the node."
         assert spoken.wait(5)
@@ -800,7 +800,7 @@ def post_message(base, data, content_type="application/octet-stream"):
     req = Request(
         base + "/api/captures/message",
         method="POST",
-        headers={"X-Sentry-Node-Control": "1", "Content-Type": content_type},
+        headers={"X-Sentry-Mode-Control": "1", "Content-Type": content_type},
         data=data,
     )
     try:
@@ -867,7 +867,7 @@ def test_the_video_view_records_to_the_captures_tab(web):
 
 
 def test_hardware_page_lists_devices_and_saves_the_choice(web, tmp_path, monkeypatch):
-    from sentry_node.core.models import AudioDevice
+    from sentry_mode.core.models import AudioDevice
 
     controls, base = web
     page = request(base, "/hardware")[1]
@@ -876,9 +876,9 @@ def test_hardware_page_lists_devices_and_saves_the_choice(web, tmp_path, monkeyp
     speaker = AudioDevice("bluez_output.aukey", "Aukey SK-M7", "pipewire")
     microphone = AudioDevice("alsa_input.cam", "StreamCam", "pipewire")
     with (
-        patch("sentry_node.web.list_cameras", return_value=["/dev/video0"]),
-        patch("sentry_node.web.Microphone.list_devices", return_value=[microphone]),
-        patch("sentry_node.web.Speaker.list_devices", return_value=[speaker]),
+        patch("sentry_mode.web.list_cameras", return_value=["/dev/video0"]),
+        patch("sentry_mode.web.Microphone.list_devices", return_value=[microphone]),
+        patch("sentry_mode.web.Speaker.list_devices", return_value=[speaker]),
     ):
         listing = request(base, "/api/hardware")[1]
     assert listing["cameras"] == ["/dev/video0", "0"]
@@ -888,7 +888,7 @@ def test_hardware_page_lists_devices_and_saves_the_choice(web, tmp_path, monkeyp
 
     config_file = tmp_path / "config.yaml"
     config_file.write_text("node:\n  name: doorstep\nspeaker:\n  volume: 70\n")
-    monkeypatch.setenv("SENTRY_NODE_CONFIG", str(config_file))
+    monkeypatch.setenv("SENTRY_MODE_CONFIG", str(config_file))
     choice = {
         "camera": "/dev/video0",
         "microphone": microphone.name,

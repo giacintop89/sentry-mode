@@ -9,8 +9,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from sentry_node.audio.playback import command
-from sentry_node.core.errors import HardwareError
+from sentry_mode.audio.playback import command
+from sentry_mode.core.errors import HardwareError
 
 MAX_CAPTURES = 200
 VIDEO_MAX_WIDTH = 1280
@@ -158,7 +158,7 @@ class Captures:
         path = self._new_path("phone message", "m4a")
         partial = path.with_name(path.stem + ".part.m4a")
         try:
-            with tempfile.TemporaryDirectory(prefix="sentry-node-message-") as directory:
+            with tempfile.TemporaryDirectory(prefix="sentry-mode-message-") as directory:
                 source = Path(directory) / "message"
                 source.write_bytes(data)
                 command(

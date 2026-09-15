@@ -3,9 +3,9 @@ from unittest.mock import patch
 
 import pytest
 
-from sentry_node.config import CameraConfig
-from sentry_node.core.errors import HardwareError
-from sentry_node.vision.stream import VideoStream
+from sentry_mode.config import CameraConfig
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.vision.stream import VideoStream
 
 
 def test_disabled_camera_fails_cleanly():
@@ -21,7 +21,7 @@ def test_disabled_camera_fails_cleanly():
 def test_worker_read_failure_releases_camera():
     lock = threading.Lock()
     stream = VideoStream(CameraConfig(), lock)
-    with patch("sentry_node.vision.stream.Camera") as adapter:
+    with patch("sentry_mode.vision.stream.Camera") as adapter:
         camera = adapter.return_value.__enter__.return_value
         camera.encode_jpeg.return_value = b"jpeg"
         camera.capture_frame.side_effect = [object()] * 5 + [HardwareError("camera disconnected")]
@@ -49,8 +49,8 @@ def test_sentry_without_preview_never_encodes_and_preview_can_stop_independently
     lock = threading.Lock()
     stream = VideoStream(CameraConfig(), lock)
     with (
-        patch("sentry_node.vision.stream.Camera") as adapter,
-        patch("sentry_node.vision.detection.ObjectDetector") as detector,
+        patch("sentry_mode.vision.stream.Camera") as adapter,
+        patch("sentry_mode.vision.detection.ObjectDetector") as detector,
     ):
         camera = adapter.return_value.__enter__.return_value
         camera.capture_frame.return_value = np.zeros((120, 160, 3), np.uint8)

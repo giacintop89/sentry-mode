@@ -52,7 +52,7 @@ FFmpeg package includes.
 **Save message** keeps the text with its voice, rate and voice modification on the
 **Soundboard**, where each message is a card: press it to speak it again, × to delete it.
 Up to 48 messages are saved atomically to `.local/soundboard.json` with private file
-permissions (override with `soundboard_file` or `SENTRY_NODE_SOUNDBOARD_FILE`). Saving the
+permissions (override with `soundboard_file` or `SENTRY_MODE_SOUNDBOARD_FILE`). Saving the
 same message twice keeps one card, and a card cannot play while other audio holds the
 speaker.
 
@@ -61,7 +61,7 @@ into the rule. The copy is what the rule keeps, so deleting the card never chang
 
 ## Defaults
 
-YAML `speech` or `SENTRY_NODE_SPEECH__VOICE=it` / `SENTRY_NODE_SPEECH__RATE=175` set the
+YAML `speech` or `SENTRY_MODE_SPEECH__VOICE=it` / `SENTRY_MODE_SPEECH__RATE=175` set the
 defaults. `speech.engine` is `piper` to require neural voices, `espeak` to force basic
 synthesis, or `auto` (default) to choose installed Piper models per language;
 `speech.models` and `speech.model_directory` name what to load.

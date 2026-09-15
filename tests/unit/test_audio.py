@@ -5,23 +5,23 @@ from unittest.mock import patch
 
 import pytest
 
-from sentry_node.audio.playback import command, generate_tone
-from sentry_node.config import SpeakerConfig
-from sentry_node.core.errors import HardwareError
-from sentry_node.core.models import AudioDevice
-from sentry_node.hardware.microphone import discover_devices, select_device
-from sentry_node.hardware.speaker import Speaker
+from sentry_mode.audio.playback import command, generate_tone
+from sentry_mode.config import SpeakerConfig
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.core.models import AudioDevice
+from sentry_mode.hardware.microphone import discover_devices, select_device
+from sentry_mode.hardware.speaker import Speaker
 
 
 def test_discovery_filters_monitor_sources():
     data = [{"name": "streamcam", "description": "Logitech StreamCam"}, {"name": "speaker.monitor"}]
-    with patch("sentry_node.hardware.microphone.command", return_value=json.dumps(data)):
+    with patch("sentry_mode.hardware.microphone.command", return_value=json.dumps(data)):
         assert [d.name for d in discover_devices("sources")] == ["streamcam"]
 
 
 def test_alsa_fallback():
     with patch(
-        "sentry_node.hardware.microphone.command",
+        "sentry_mode.hardware.microphone.command",
         side_effect=[
             HardwareError("missing"),
             HardwareError("missing"),
@@ -50,9 +50,9 @@ def test_generated_tone_is_valid(tmp_path):
 
 def test_timeout_becomes_hardware_error():
     with (
-        patch("sentry_node.audio.playback.shutil.which", return_value="/bin/tool"),
+        patch("sentry_mode.audio.playback.shutil.which", return_value="/bin/tool"),
         patch(
-            "sentry_node.audio.playback.subprocess.run",
+            "sentry_mode.audio.playback.subprocess.run",
             side_effect=subprocess.TimeoutExpired("tool", 8),
         ),
     ):
@@ -63,8 +63,8 @@ def test_timeout_becomes_hardware_error():
 def test_speaker_uses_name_without_changing_session_defaults():
     device = AudioDevice("bluez_sink.current", "Living room", "pulse")
     with (
-        patch("sentry_node.hardware.speaker.discover_devices", return_value=[device]),
-        patch("sentry_node.hardware.speaker.command") as call,
+        patch("sentry_mode.hardware.speaker.discover_devices", return_value=[device]),
+        patch("sentry_mode.hardware.speaker.command") as call,
     ):
         Speaker(SpeakerConfig(device="Living room")).test_output()
     assert call.call_args.args[0][:2] == ["paplay", "--device=bluez_sink.current"]
@@ -92,7 +92,7 @@ def test_native_pipewire_discovery_without_pactl():
         },
     ]
     with patch(
-        "sentry_node.hardware.microphone.command",
+        "sentry_mode.hardware.microphone.command",
         side_effect=[
             HardwareError("pactl missing"),
             HardwareError("pactl missing"),
@@ -117,8 +117,8 @@ def test_native_pipewire_playback_uses_default_target():
         AudioDevice("bluetooth", "Bluetooth speaker", "pipewire"),
     ]
     with (
-        patch("sentry_node.hardware.speaker.discover_devices", return_value=devices),
-        patch("sentry_node.hardware.speaker.command") as command,
+        patch("sentry_mode.hardware.speaker.discover_devices", return_value=devices),
+        patch("sentry_mode.hardware.speaker.command") as command,
     ):
         Speaker(SpeakerConfig()).test_output()
     assert command.call_args.args[0][:3] == ["pw-play", "--target", "auto"]
@@ -128,11 +128,11 @@ def test_native_pipewire_playback_uses_default_target():
 def test_native_pipewire_recording_stops_gracefully(exit_code):
     import signal
 
-    from sentry_node.audio.playback import record_for
+    from sentry_mode.audio.playback import record_for
 
     with (
-        patch("sentry_node.audio.playback.shutil.which", return_value="/usr/bin/pw-record"),
-        patch("sentry_node.audio.playback.subprocess.Popen") as popen,
+        patch("sentry_mode.audio.playback.shutil.which", return_value="/usr/bin/pw-record"),
+        patch("sentry_mode.audio.playback.subprocess.Popen") as popen,
     ):
         process = popen.return_value
         process.communicate.side_effect = [subprocess.TimeoutExpired("pw-record", 2), ("", "")]
@@ -144,11 +144,11 @@ def test_native_pipewire_recording_stops_gracefully(exit_code):
 
 
 def test_native_pipewire_recording_reaps_unresponsive_child():
-    from sentry_node.audio.playback import record_for
+    from sentry_mode.audio.playback import record_for
 
     with (
-        patch("sentry_node.audio.playback.shutil.which", return_value="/usr/bin/pw-record"),
-        patch("sentry_node.audio.playback.subprocess.Popen") as popen,
+        patch("sentry_mode.audio.playback.shutil.which", return_value="/usr/bin/pw-record"),
+        patch("sentry_mode.audio.playback.subprocess.Popen") as popen,
     ):
         process = popen.return_value
         process.communicate.side_effect = [
@@ -164,11 +164,11 @@ def test_native_pipewire_recording_reaps_unresponsive_child():
 
 
 def test_recording_early_failure_is_not_treated_as_signal_stop():
-    from sentry_node.audio.playback import record_for
+    from sentry_mode.audio.playback import record_for
 
     with (
-        patch("sentry_node.audio.playback.shutil.which", return_value="/usr/bin/pw-record"),
-        patch("sentry_node.audio.playback.subprocess.Popen") as popen,
+        patch("sentry_mode.audio.playback.shutil.which", return_value="/usr/bin/pw-record"),
+        patch("sentry_mode.audio.playback.subprocess.Popen") as popen,
     ):
         process = popen.return_value
         process.communicate.return_value = ("", "")
@@ -179,23 +179,23 @@ def test_recording_early_failure_is_not_treated_as_signal_stop():
 
 
 def test_live_listening_is_counted_while_a_listener_is_connected():
-    from sentry_node.audio.monitor import AudioMonitor
-    from sentry_node.config import Settings
+    from sentry_mode.audio.monitor import AudioMonitor
+    from sentry_mode.config import Settings
 
     monitor = AudioMonitor()
     with (
-        patch("sentry_node.audio.monitor.shutil.which", return_value="/usr/bin/pw-record"),
+        patch("sentry_mode.audio.monitor.shutil.which", return_value="/usr/bin/pw-record"),
         patch(
-            "sentry_node.audio.monitor.Microphone.device",
+            "sentry_mode.audio.monitor.Microphone.device",
             return_value=AudioDevice("mic", "Microphone", "pipewire"),
         ),
-        patch("sentry_node.audio.monitor.subprocess.Popen") as popen,
+        patch("sentry_mode.audio.monitor.subprocess.Popen") as popen,
     ):
         popen.return_value.poll.return_value = 0
         with monitor.listen(Settings()):
             assert monitor.listening == 1
         assert monitor.listening == 0
-        with patch("sentry_node.audio.monitor.shutil.which", return_value=None):
+        with patch("sentry_mode.audio.monitor.shutil.which", return_value=None):
             with pytest.raises(HardwareError):
                 with monitor.listen(Settings()):
                     pass
@@ -210,7 +210,7 @@ def test_shutdown_cancels_and_reaps_active_audio_process():
     timer = threading.Timer(0.3, stopped.set)
     timer.start()
     try:
-        with patch("sentry_node.audio.playback.subprocess.Popen", wraps=subprocess.Popen) as spawn:
+        with patch("sentry_mode.audio.playback.subprocess.Popen", wraps=subprocess.Popen) as spawn:
             with pytest.raises(HardwareError, match="cancelled"):
                 command([sys.executable, "-c", "import time; time.sleep(60)"], stop_event=stopped)
             spawn.assert_called_once()

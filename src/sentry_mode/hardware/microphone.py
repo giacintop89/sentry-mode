@@ -6,10 +6,10 @@ import tempfile
 import wave
 from pathlib import Path
 
-from sentry_node.audio.playback import command, record_for
-from sentry_node.config import AudioConfig
-from sentry_node.core.errors import HardwareError
-from sentry_node.core.models import AudioDevice
+from sentry_mode.audio.playback import command, record_for
+from sentry_mode.config import AudioConfig
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.core.models import AudioDevice
 
 
 def discover_devices(kind: str) -> list[AudioDevice]:
@@ -111,7 +111,7 @@ class Microphone:
 
     def test_input(self) -> dict[str, float]:
         device = self.device()
-        with tempfile.TemporaryDirectory(prefix="sentry-node-input-") as directory:
+        with tempfile.TemporaryDirectory(prefix="sentry-mode-input-") as directory:
             path = Path(directory) / "input.wav"
             if device.backend == "pulse":
                 args = [

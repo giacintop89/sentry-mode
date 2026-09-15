@@ -4,8 +4,8 @@ import http.client
 import json
 import sys
 
-from sentry_node.core.errors import HardwareError
-from sentry_node.sentry.config import TelegramAction, TelegramConfig
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.sentry.config import TelegramAction, TelegramConfig
 
 
 def send_message(payload: dict):

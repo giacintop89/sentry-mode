@@ -4,11 +4,11 @@ import threading
 from _thread import LockType
 from collections.abc import Callable
 
-from sentry_node.config import CameraConfig, DetectionConfig
-from sentry_node.core.errors import HardwareError
-from sentry_node.hardware.camera import Camera
-from sentry_node.vision.detection import DetectionWorker
-from sentry_node.vision.recording import VIDEO_FPS, VIDEO_MAX_WIDTH
+from sentry_mode.config import CameraConfig, DetectionConfig
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.hardware.camera import Camera
+from sentry_mode.vision.detection import DetectionWorker
+from sentry_mode.vision.recording import VIDEO_FPS, VIDEO_MAX_WIDTH
 
 
 class VideoStream:
@@ -127,7 +127,7 @@ class VideoStream:
         self.jpeg = None
         self.raw_frame = None
         self.detection.start()
-        self.thread = threading.Thread(target=self._capture, name="sentry-node-video")
+        self.thread = threading.Thread(target=self._capture, name="sentry-mode-video")
         try:
             self.thread.start()
         except Exception:

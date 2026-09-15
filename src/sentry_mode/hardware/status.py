@@ -2,11 +2,11 @@
 
 import socket
 
-from sentry_node.config import Settings
-from sentry_node.core.models import HardwareStatus
-from sentry_node.hardware.camera import Camera
-from sentry_node.hardware.microphone import Microphone
-from sentry_node.hardware.speaker import Speaker
+from sentry_mode.config import Settings
+from sentry_mode.core.models import HardwareStatus
+from sentry_mode.hardware.camera import Camera
+from sentry_mode.hardware.microphone import Microphone
+from sentry_mode.hardware.speaker import Speaker
 
 
 def network_available() -> bool:

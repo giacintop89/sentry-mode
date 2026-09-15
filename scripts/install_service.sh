@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if [ "$(id -u)" -ne 0 ] || [ -z "${SUDO_USER:-}" ] || [ "$SUDO_USER" = root ]; then
-    echo 'Run with sudo from the normal account that will run Sentry Node.' >&2
+    echo 'Run with sudo from the normal account that will run Sentry Mode.' >&2
     exit 1
 fi
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-[ -x "$root_dir/.venv/bin/sentry-node" ] || { echo 'Create .venv and install first.' >&2; exit 1; }
+[ -x "$root_dir/.venv/bin/sentry-mode" ] || { echo 'Create .venv and install first.' >&2; exit 1; }
 # Render literal paths using Python, including systemd quoting.
 python3 - "$root_dir" "$SUDO_USER" <<'PY'
 import pathlib
@@ -14,8 +14,8 @@ import re
 import shlex
 import sys
 
-TEMPLATE_ROOT = '/opt/sentry-node'
-UNITS = ('sentry-node.service', 'sentry-node-web.service')
+TEMPLATE_ROOT = '/opt/sentry-mode'
+UNITS = ('sentry-mode.service', 'sentry-mode-web.service')
 TLS_OPTIONS = ('--https-host', '--https-port', '--tls-cert', '--tls-key', '--tls-ca')
 SAFE = re.compile(r'[A-Za-z0-9_@:./,=+-]+')
 root, user = sys.argv[1:]
@@ -78,6 +78,6 @@ for unit in UNITS:
     pathlib.Path('/etc/systemd/system/' + unit).write_text('\n'.join(lines) + '\n')
 PY
 systemctl daemon-reload
-echo 'Installed without enabling. Review: systemctl cat sentry-node sentry-node-web'
-echo 'To start explicitly: sudo systemctl enable --now sentry-node'
-echo 'Dashboard on 8083/8443:  sudo systemctl enable --now sentry-node-web'
+echo 'Installed without enabling. Review: systemctl cat sentry-mode sentry-mode-web'
+echo 'To start explicitly: sudo systemctl enable --now sentry-mode'
+echo 'Dashboard on 8083/8443:  sudo systemctl enable --now sentry-mode-web'

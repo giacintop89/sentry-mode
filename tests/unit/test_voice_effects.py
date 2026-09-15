@@ -9,11 +9,11 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from sentry_node.audio.effects import VoiceEffects
-from sentry_node.audio.speech import prepare_playback
-from sentry_node.audio.talk import TalkStream
-from sentry_node.config import Settings
-from sentry_node.core.models import AudioDevice
+from sentry_mode.audio.effects import VoiceEffects
+from sentry_mode.audio.speech import prepare_playback
+from sentry_mode.audio.talk import TalkStream
+from sentry_mode.config import Settings
+from sentry_mode.core.models import AudioDevice
 
 
 def tone():
@@ -72,9 +72,9 @@ def test_live_effect_pipeline_drains_and_releases_children(tmp_path, rubberband,
 
     stream = TalkStream(Settings(speech={"lead_in_ms": 0, "tail_ms": 0}), threading.Lock())
     with (
-        patch("sentry_node.audio.talk.subprocess.Popen", side_effect=launch),
+        patch("sentry_mode.audio.talk.subprocess.Popen", side_effect=launch),
         patch(
-            "sentry_node.audio.talk.Speaker.device",
+            "sentry_mode.audio.talk.Speaker.device",
             return_value=AudioDevice("auto", "Test", "pipewire"),
         ),
     ):

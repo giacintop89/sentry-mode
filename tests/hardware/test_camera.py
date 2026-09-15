@@ -1,8 +1,8 @@
 import pytest
 
-from sentry_node.config import load_config
-from sentry_node.hardware.camera import Camera
-from sentry_node.vision.capture import capture_image
+from sentry_mode.config import load_config
+from sentry_mode.hardware.camera import Camera
+from sentry_mode.vision.capture import capture_image
 
 pytestmark = pytest.mark.hardware
 

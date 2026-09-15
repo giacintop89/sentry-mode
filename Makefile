@@ -12,8 +12,8 @@ lint:
 format:
 	$(BIN)/ruff format .
 status:
-	$(BIN)/sentry-node status
+	$(BIN)/sentry-mode status
 camera-test:
-	$(BIN)/sentry-node camera test
+	$(BIN)/sentry-mode camera test
 audio-test:
-	$(BIN)/sentry-node audio test-output
+	$(BIN)/sentry-mode audio test-output

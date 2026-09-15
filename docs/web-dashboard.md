@@ -4,11 +4,11 @@ The dashboard is started explicitly and serves three pages: the main video/voice
 Sentry page at `/sentry`, and hardware settings at `/hardware` (`/tests` still resolves).
 
 ```bash
-sentry-node serve --port 8083                       # all interfaces
-sentry-node serve --host 127.0.0.1 --port 8083      # this machine only
+sentry-mode serve --port 8083                       # all interfaces
+sentry-mode serve --host 127.0.0.1 --port 8083      # this machine only
 ```
 
-No web server starts in `sentry-node run`, which is the idle service runtime.
+No web server starts in `sentry-mode run`, which is the idle service runtime.
 
 ## Views
 
@@ -34,7 +34,7 @@ the browser, and configuration show/validate never edit files.
 
 Its **Input and output devices** panel picks camera, microphone, speaker and speaker volume
 from what the node reports. POST `/api/hardware` merges them into the YAML file named by
-`SENTRY_NODE_CONFIG`, leaving every other setting untouched, and applies them to the running
+`SENTRY_MODE_CONFIG`, leaving every other setting untouched, and applies them to the running
 dashboard without a restart; without that variable there is no file to write and the change
 lasts until the next restart. Changing the camera requires stopping video and disarming
 Sentry first.
@@ -56,9 +56,9 @@ page instead, stack the rule library above the editor, and give the camera the p
 ## Embedding
 
 Set `web_frame_origins` in YAML, or the JSON-list environment variable
-`SENTRY_NODE_WEB_FRAME_ORIGINS`, to the dashboard's exact HTTP(S) origins, for example
+`SENTRY_MODE_WEB_FRAME_ORIGINS`, to the dashboard's exact HTTP(S) origins, for example
 `["http://127.0.0.1:8092"]`. Default configuration blocks embedding, and the parent
-dashboard must also list Sentry Node as an allowed application. This grants the parent no
+dashboard must also list Sentry Mode as an allowed application. This grants the parent no
 access to control APIs.
 
 A cross-origin frame answers `window.confirm()` with "no" without asking, so buttons that

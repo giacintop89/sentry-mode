@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from sentry_node.audio.effects import VoiceEffects
+from sentry_mode.audio.effects import VoiceEffects
 
 MAX_MESSAGES = 48
 MAX_FILE_BYTES = 262144

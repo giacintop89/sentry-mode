@@ -13,9 +13,9 @@ from pydantic import (
     model_validator,
 )
 
-from sentry_node.audio.effects import VoiceEffects
-from sentry_node.audio.tunes import TUNES
-from sentry_node.vision.labels import CLASSES
+from sentry_mode.audio.effects import VoiceEffects
+from sentry_mode.audio.tunes import TUNES
+from sentry_mode.vision.labels import CLASSES
 
 
 class Model(BaseModel):

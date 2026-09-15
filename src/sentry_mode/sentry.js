@@ -22,7 +22,7 @@
     return false;
   }
   async function api(path, body, post = false) {
-    const headers = post ? {'X-Sentry-Node-Control':'1'} : {};
+    const headers = post ? {'X-Sentry-Mode-Control':'1'} : {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     const r = await fetch('/api/' + path, {method:post?'POST':'GET', headers,
       body:body===undefined?undefined:JSON.stringify(body)});
@@ -313,7 +313,7 @@
     const upload=step.querySelector('[data-test=sound-upload]');
     ruleMessage('Uploading and converting '+file.name+'…');upload.disabled=true;
     try{
-      const r=await fetch('/api/sounds/upload',{method:'POST',headers:{'X-Sentry-Node-Control':'1','Content-Type':'application/octet-stream','X-Sound-Name':encodeURIComponent(file.name)},body:file});
+      const r=await fetch('/api/sounds/upload',{method:'POST',headers:{'X-Sentry-Mode-Control':'1','Content-Type':'application/octet-stream','X-Sound-Name':encodeURIComponent(file.name)},body:file});
       const data=await r.json();if(!r.ok)throw Error(data.error||'Upload failed.');
       sounds=data.sounds;renderSounds(step,data.saved);touched();ruleMessage('Uploaded. Save the rule to use it.','success');
     }catch(error){ruleMessage(error.message,'error');}

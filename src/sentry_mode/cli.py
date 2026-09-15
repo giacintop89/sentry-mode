@@ -6,20 +6,20 @@ from pathlib import Path
 from pydantic import ValidationError
 from yaml import YAMLError
 
-from sentry_node.app import run
-from sentry_node.config import load_config
-from sentry_node.core.errors import HardwareError
-from sentry_node.hardware.camera import Camera, list_cameras
-from sentry_node.hardware.microphone import Microphone
-from sentry_node.hardware.speaker import Speaker
-from sentry_node.hardware.status import inspect_hardware
-from sentry_node.logging_config import configure_logging
-from sentry_node.vision.capture import capture_image
+from sentry_mode.app import run
+from sentry_mode.config import load_config
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.hardware.camera import Camera, list_cameras
+from sentry_mode.hardware.microphone import Microphone
+from sentry_mode.hardware.speaker import Speaker
+from sentry_mode.hardware.status import inspect_hardware
+from sentry_mode.logging_config import configure_logging
+from sentry_mode.vision.capture import capture_image
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(description="Headless Sentry Node hardware CLI")
-    root.add_argument("--config", type=Path, help="YAML configuration (or SENTRY_NODE_CONFIG)")
+    root = argparse.ArgumentParser(description="Headless Sentry Mode hardware CLI")
+    root.add_argument("--config", type=Path, help="YAML configuration (or SENTRY_MODE_CONFIG)")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="Inspect hardware and local network")
     commands.add_parser("run", help="Run until SIGINT/SIGTERM")
@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "status":
             status = inspect_hardware(config)
-            print("Sentry Node\n-----------")
+            print("Sentry Mode\n-----------")
             for name in ("camera", "microphone", "speaker", "network"):
                 print(
                     f"{name.capitalize() + ':':14} "
@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"Microphone capture successful: {microphone.test_input()}")
         elif args.command == "serve":
-            from sentry_node.web import serve
+            from sentry_mode.web import serve
 
             serve(
                 config,

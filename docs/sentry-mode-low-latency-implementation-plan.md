@@ -1,6 +1,6 @@
-# Sentry-Node — Low-Latency Implementation Plan
+# Sentry-Mode — Low-Latency Implementation Plan
 
-**Repository:** `giacintop89/sentry-node`  
+**Repository:** `giacintop89/sentry-mode`  
 **Reviewed branch:** `main`  
 **Reviewed commit:** `eb559a3898bc83b6ef7d231c9042d90626d89b78`  
 **Review date:** 14 September 2026  
@@ -470,19 +470,19 @@ All repository references below are pinned to the reviewed commit. Functions are
 
 ```text
 Base:
-https://github.com/giacintop89/sentry-node/blob/eb559a3898bc83b6ef7d231c9042d90626d89b78/
+https://github.com/giacintop89/sentry-mode/blob/eb559a3898bc83b6ef7d231c9042d90626d89b78/
 
 [R1]  docs/architecture.md and the recursive repository tree at the reviewed commit
-[R2]  src/sentry_node/vision/stream.py
-[R3]  src/sentry_node/vision/detection.py
-[R4]  src/sentry_node/hardware/camera.py
-[R5]  src/sentry_node/sentry/config.py
-[R6]  src/sentry_node/sentry/engine.py (reviewed lines 1–620)
-[R7]  src/sentry_node/config.py
-[R8]  src/sentry_node/audio/speech.py
-[R9]  src/sentry_node/audio/talk.py (reviewed lines 1–215)
-[R10] src/sentry_node/talk.js
-[R11] src/sentry_node/web.py (reviewed lines 1–115)
+[R2]  src/sentry_mode/vision/stream.py
+[R3]  src/sentry_mode/vision/detection.py
+[R4]  src/sentry_mode/hardware/camera.py
+[R5]  src/sentry_mode/sentry/config.py
+[R6]  src/sentry_mode/sentry/engine.py (reviewed lines 1–620)
+[R7]  src/sentry_mode/config.py
+[R8]  src/sentry_mode/audio/speech.py
+[R9]  src/sentry_mode/audio/talk.py (reviewed lines 1–215)
+[R10] src/sentry_mode/talk.js
+[R11] src/sentry_mode/web.py (reviewed lines 1–115)
 [R12] tests/unit/test_stream.py
 ```
 

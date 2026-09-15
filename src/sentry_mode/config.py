@@ -10,7 +10,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from sentry_node.sentry.config import SentryConfig
+from sentry_mode.sentry.config import SentryConfig
 
 
 class Section(BaseModel):
@@ -18,7 +18,7 @@ class Section(BaseModel):
 
 
 class NodeConfig(Section):
-    name: str = Field(default="sentry-node", min_length=1)
+    name: str = Field(default="sentry-mode", min_length=1)
 
 
 class CameraConfig(Section):
@@ -83,7 +83,7 @@ class LoggingConfig(Section):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="SENTRY_NODE_", env_nested_delimiter="__", extra="forbid"
+        env_prefix="SENTRY_MODE_", env_nested_delimiter="__", extra="forbid"
     )
     node: NodeConfig = Field(default_factory=NodeConfig)
     camera: CameraConfig = Field(default_factory=CameraConfig)
@@ -122,7 +122,7 @@ class Settings(BaseSettings):
 
 def config_path() -> Path | None:
     """The YAML file this process was started with, if any."""
-    selected = os.environ.get("SENTRY_NODE_CONFIG")
+    selected = os.environ.get("SENTRY_MODE_CONFIG")
     return Path(selected) if selected else None
 
 
@@ -151,7 +151,7 @@ def save_sections(path: Path, sections: dict[str, dict]) -> None:
 
 
 def load_config(path: str | Path | None = None) -> Settings:
-    selected = path or os.environ.get("SENTRY_NODE_CONFIG")
+    selected = path or os.environ.get("SENTRY_MODE_CONFIG")
     if selected is None:
         return Settings()
     with Path(selected).open(encoding="utf-8") as stream:

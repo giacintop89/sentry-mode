@@ -5,9 +5,9 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from sentry_node.config import DetectionConfig
-from sentry_node.core.errors import HardwareError
-from sentry_node.vision.detection import Detection, DetectionWorker, ObjectDetector, annotate
+from sentry_mode.config import DetectionConfig
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.vision.detection import Detection, DetectionWorker, ObjectDetector, annotate
 
 
 def test_model_missing_is_explicit(tmp_path):
@@ -44,7 +44,7 @@ def test_disabling_inflight_detection_discards_result_and_frees_worker():
         assert release.wait(2)
         return [Detection("person", 0.9, (0.1, 0.1, 0.9, 0.9))]
 
-    with patch("sentry_node.vision.detection.ObjectDetector") as factory:
+    with patch("sentry_mode.vision.detection.ObjectDetector") as factory:
         factory.return_value.detect.side_effect = detect
         worker.configure(True, True)
         worker.submit(np.zeros((60, 80, 3), np.uint8))
@@ -62,7 +62,7 @@ def test_disabling_inflight_detection_discards_result_and_frees_worker():
 
 def test_inference_failure_does_not_crash_video_and_stale_boxes_expire():
     worker = DetectionWorker(DetectionConfig())
-    with patch("sentry_node.vision.detection.ObjectDetector") as factory:
+    with patch("sentry_mode.vision.detection.ObjectDetector") as factory:
         factory.return_value.detect.side_effect = RuntimeError("inference failed")
         worker.configure(True, True)
         worker.submit(np.zeros((60, 80, 3), np.uint8))

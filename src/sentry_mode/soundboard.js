@@ -9,7 +9,7 @@
 
   function status(message, kind = '') { result.textContent = message; result.className = 'result ' + kind; }
   async function call(path, body) {
-    const options = body === undefined ? {} : {method: 'POST', headers: {'X-Sentry-Node-Control': '1', 'Content-Type': 'application/json'}, body: JSON.stringify(body)};
+    const options = body === undefined ? {} : {method: 'POST', headers: {'X-Sentry-Mode-Control': '1', 'Content-Type': 'application/json'}, body: JSON.stringify(body)};
     const response = await fetch(path, options);
     const data = await response.json();
     if (!response.ok) throw Error(data.error || 'Command failed');

@@ -1,4 +1,4 @@
-# Sentry Node
+# Sentry Mode
 
 Headless, local-first hardware foundation for a Raspberry Pi 5 physical AI node.
 Phase 0 supports Logitech StreamCam capture, microphone/speaker discovery, short audio
@@ -18,8 +18,8 @@ at OS level. Run from the normal account that owns the PipeWire/PulseAudio sessi
 ```bash
 ./scripts/bootstrap_pi.sh
 source .venv/bin/activate
-cp config/sentry-node.example.yaml config/sentry-node.yaml
-sentry-node --config config/sentry-node.yaml config validate
+cp config/sentry-mode.example.yaml config/sentry-mode.yaml
+sentry-mode --config config/sentry-mode.yaml config validate
 ```
 
 The helper installs available Debian OS packages using sudo. It does not pair devices,
@@ -44,14 +44,14 @@ backends target Linux. OpenCV uses the headless distribution and never opens GUI
 source .venv/bin/activate
 ./scripts/detect_camera.sh
 ./scripts/detect_audio.sh
-sentry-node camera list
-sentry-node audio list
-sentry-node --config config/sentry-node.yaml config validate
-sentry-node --config config/sentry-node.yaml status
-sentry-node --config config/sentry-node.yaml camera test
-sentry-node --config config/sentry-node.yaml camera capture --output /tmp/sentry-node-frame.jpg
-sentry-node --config config/sentry-node.yaml audio test-input
-sentry-node --config config/sentry-node.yaml audio test-output
+sentry-mode camera list
+sentry-mode audio list
+sentry-mode --config config/sentry-mode.yaml config validate
+sentry-mode --config config/sentry-mode.yaml status
+sentry-mode --config config/sentry-mode.yaml camera test
+sentry-mode --config config/sentry-mode.yaml camera capture --output /tmp/sentry-mode-frame.jpg
+sentry-mode --config config/sentry-mode.yaml audio test-input
+sentry-mode --config config/sentry-mode.yaml audio test-output
 ```
 
 Inspect the JPEG and confirm the tone is audible through the intended speaker. A successful
@@ -59,11 +59,11 @@ recording checks sample capture, not microphone sound quality. Status reports a 
 route rather than Internet connectivity. Missing hardware is reported as unavailable; an
 explicit failed hardware test exits nonzero.
 
-`python -m sentry_node` is equivalent to `sentry-node`. Pass `--config` before the command,
-or set `SENTRY_NODE_CONFIG`. With neither, safe defaults are used. Environment variables
-such as `SENTRY_NODE_CAMERA__DEVICE=/dev/video2` and `SENTRY_NODE_LOGGING__LEVEL=DEBUG`
+`python -m sentry_mode` is equivalent to `sentry-mode`. Pass `--config` before the command,
+or set `SENTRY_MODE_CONFIG`. With neither, safe defaults are used. Environment variables
+such as `SENTRY_MODE_CAMERA__DEVICE=/dev/video2` and `SENTRY_MODE_LOGGING__LEVEL=DEBUG`
 override YAML. `.env` is not implicitly loaded by the CLI; export values yourself or use the
-service's EnvironmentFile. `sentry-node config show` prints the effective configuration.
+service's EnvironmentFile. `sentry-mode config show` prints the effective configuration.
 
 ## Camera troubleshooting
 
@@ -77,7 +77,7 @@ Capture output directories must already exist.
 
 Run `./scripts/detect_audio.sh`, `wpctl status`, and `pactl list short sinks`. Pair and connect
 with `bluetoothctl`, then select the OS default or configure the exact sink/source name or
-unique description from `sentry-node audio list`. Runtime numeric Pulse IDs are not stored.
+unique description from `sentry-mode audio list`. Runtime numeric Pulse IDs are not stored.
 Discovery retries on each operation: Pulse, then native PipeWire, then ALSA.
 Pulse capture uses FFmpeg; output uses paplay. Native PipeWire uses pw-dump discovery and
 pw-record/pw-play, even when pactl is missing. ALSA uses arecord/aplay and its configured
@@ -89,22 +89,22 @@ not modify the OS sink volume.
 ## Runtime and dashboard
 
 ```bash
-sentry-node run                 # idle service runtime; Ctrl-C to stop
-sentry-node serve --port 8083   # hardware controls on http://localhost:8083
+sentry-mode run                 # idle service runtime; Ctrl-C to stop
+sentry-mode serve --port 8083   # hardware controls on http://localhost:8083
 # Restrict the dashboard to this machine if desired:
-sentry-node serve --host 127.0.0.1 --port 8083
+sentry-mode serve --host 127.0.0.1 --port 8083
 ```
 
 `--https-host` binds the HTTPS listener separately from `--host`, so plain HTTP can stay on
 loopback while phones reach HTTPS across the network:
 
 ```bash
-sentry-node serve --host 127.0.0.1 --port 8083 --https-host 0.0.0.0 --https-port 8443 \
+sentry-mode serve --host 127.0.0.1 --port 8083 --https-host 0.0.0.0 --https-port 8443 \
   --tls-cert .local/tls/server.crt --tls-key .local/tls/server.key --tls-ca .local/tls/ca.crt
 ```
 
 Both commands are also packaged as systemd units. `scripts/install_service.sh` renders
-`sentry-node` (idle `run`) and `sentry-node-web` (the dashboard on loopback HTTP 8083 and
+`sentry-mode` (idle `run`) and `sentry-mode-web` (the dashboard on loopback HTTP 8083 and
 HTTPS 8443 for the network) against your checkout and account, enabling neither; see the
 Raspberry Pi guide.
 
@@ -113,7 +113,7 @@ Raspberry Pi guide.
 test microphone/speaker, show/validate effective configuration, and start/stop an idle runtime.
 Its **Input and output devices** panel picks the camera, microphone, speaker, and speaker
 volume from what the node reports; POST `/api/hardware` merges them into the YAML file named
-by `SENTRY_NODE_CONFIG`, leaving every other setting untouched, and applies them to the
+by `SENTRY_MODE_CONFIG`, leaving every other setting untouched, and applies them to the
 running dashboard without a restart. Without that variable there is no file to write and the
 change lasts until the next restart. Changing the camera requires stopping video and
 disarming Sentry first.
@@ -136,9 +136,9 @@ Drafts survive switching tabs. Direct links include `/#speech`, `/#push-to-talk`
 `/sentry#integrations`, and `/sentry#events`. Assets require no external CDN.
 
 To embed the app, set `web_frame_origins` in YAML (or the JSON-list environment variable
-`SENTRY_NODE_WEB_FRAME_ORIGINS`) to the dashboard's exact HTTP(S) origins, for example
+`SENTRY_MODE_WEB_FRAME_ORIGINS`) to the dashboard's exact HTTP(S) origins, for example
 `["http://127.0.0.1:8092"]`. Default configuration blocks embedding. The parent dashboard
-must also list Sentry Node as an allowed application. This does not grant the parent access
+must also list Sentry Mode as an allowed application. This does not grant the parent access
 to control APIs. Phone microphone use inside a frame additionally requires a secure parent
 and delegated microphone permission; the standalone HTTPS Voice view remains available.
 Capture shows a preview and JPEG download; temporary files are deleted after each request.
@@ -187,9 +187,9 @@ be missed. Video remains available if the detector fails. The `detection` YAML s
 startup enablement, model path, confidence threshold (default 0.45), and maximum inference
 rate. A missing model is reported when detection is enabled; runtime never downloads it.
 
-### Sentry mode
+### Sentry rules
 
-Open **Sentry mode** from the main page or visit `/sentry`. A starter person rule is provided:
+Open **Sentry rules** from the main page or visit `/sentry`. A starter person rule is provided:
 70% confidence, three consecutive detections, ten seconds of observed absence before rearming,
 and a 60-second cooldown. It announces “Hello. Please wait here.” when actions are enabled.
 Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it is armed. To use it:
@@ -241,7 +241,7 @@ a **Wait** after one to hold the sequence for as long as it records. Disarming s
 recording early and keeps what was captured.
 Encoding needs `ffmpeg` with libx264 (installed by the Pi bootstrap helper). Files are saved
 in `.local/captures/` (override with `captures_directory` or
-`SENTRY_NODE_CAPTURES_DIRECTORY`); only the newest 200 are kept. The **Captures** tab lists
+`SENTRY_MODE_CAPTURES_DIRECTORY`); only the newest 200 are kept. The **Captures** tab lists
 them to view, play, or delete; GET `/api/captures` lists them, `/captures/<name>` serves one
 (with byte ranges for phone video players), and POST `/api/captures/delete` with
 `{"name": ...}` removes one. Test mode logs photos, audio and video as `would_run` without
@@ -270,7 +270,7 @@ on the remote machine may continue after the local SSH process is stopped.
 
 Configure SSH commands in the saved-command editor using the host/alias, optional user,
 port, remote command, optional identity-file path on the node, and timeout. Set up key-based
-access and verify host keys first as the normal user running Sentry Node. Sentry uses
+access and verify host keys first as the normal user running Sentry Mode. Sentry uses
 OpenSSH batch mode and strict host-key checking, as documented in
 [ssh_config](https://man.openbsd.org/ssh_config); it does not accept passwords or automatically
 trust unknown hosts. The saved command runs exactly as entered, with no detection-data
@@ -301,7 +301,7 @@ by Telegram actions across all rules. No bot or destination is configured by def
 
 The rule editor atomically saves `.local/sentry.json` (private file permissions). This file
 takes precedence over the `sentry` YAML section, which supplies initial defaults; override
-the path with `sentry_state_file` or `SENTRY_NODE_SENTRY_STATE_FILE`. Saving is disabled while
+the path with `sentry_state_file` or `SENTRY_MODE_SENTRY_STATE_FILE`. Saving is disabled while
 armed, and revision checks reject stale updates from other tabs. Restarting always leaves
 Sentry disarmed. The UI displays the latest 200 events in the current server session;
 event messages also go to the regular server log. A damaged saved configuration prevents
@@ -316,7 +316,7 @@ Each entry of a rule's `actions` list is one step, in the order it runs: a `wait
 Saved configurations without the field keep running as the sequence they always were.
 GET `/api/sentry/status` returns armed/test state, action status, and recent events. POST
 `/api/sentry/start` and `/api/sentry/stop` arm/disarm. All POSTs require the same-origin
-`X-Sentry-Node-Control: 1` header; configuration saves also require JSON content type.
+`X-Sentry-Mode-Control: 1` header; configuration saves also require JSON content type.
 `/api/video/status` distinguishes preview `running` from `capture_running` and `monitoring`.
 
 Text-to-speech speaks English and Italian with female voices only. It uses local Piper neural
@@ -340,7 +340,7 @@ and any of them works as `speech.voice`. Other languages and male eSpeak variant
 rejected. Enter up to 1000 characters, choose a voice and speech rate, and click
 **Speak on node**. Speech uses the same configured speaker/backend as the tone test. Temporary
 WAV files are deleted after playback. Default voice/rate are configured through YAML `speech`
-or `SENTRY_NODE_SPEECH__VOICE=it` / `SENTRY_NODE_SPEECH__RATE=175`. Set `speech.engine` to `piper` to require installed neural voices, `espeak` to force basic
+or `SENTRY_MODE_SPEECH__VOICE=it` / `SENTRY_MODE_SPEECH__RATE=175`. Set `speech.engine` to `piper` to require installed neural voices, `espeak` to force basic
 synthesis, or `auto` (default) to choose installed Piper models per language. Choose each
 language's default model through `speech.models` and set `speech.model_directory` as needed.
 No cloud service is used.
@@ -349,7 +349,7 @@ No cloud service is used.
 **Soundboard**, where each saved message is a card: press it to speak it on the node again,
 or × to delete it. Up to 48 messages are saved atomically to `.local/soundboard.json`
 (private file permissions; override with `soundboard_file` or
-`SENTRY_NODE_SOUNDBOARD_FILE`). Saving the same message twice keeps one card, and a card
+`SENTRY_MODE_SOUNDBOARD_FILE`). Saving the same message twice keeps one card, and a card
 cannot play while other audio is using the speaker.
 
 Speech WAVs are checked for complete sample data, converted before playback to 48 kHz stereo,
@@ -388,7 +388,7 @@ cannot request it. The app can serve HTTP on 8083 and HTTPS on 8443 with shared 
 ```bash
 python3 scripts/setup_phone_https.py 192.168.11.240 pi5 pi5.local
 # Replace the IP/names above with this node's addresses. Then run:
-sentry-node serve --port 8083 --https-port 8443 \
+sentry-mode serve --port 8083 --https-port 8443 \
   --tls-cert .local/tls/server.crt --tls-key .local/tls/server.key --tls-ca .local/tls/ca.crt
 ```
 
@@ -400,7 +400,7 @@ link and allow microphone access. Installing/trusting the CA is a one-time phone
 the helper does not change any device's trust settings. It stores private keys in ignored
 `.local/tls/`, reuses the CA on reruns, and issues a one-year server certificate. Rerun it
 and restart after changing the Pi address or before the server certificate expires
-(`sudo systemctl restart sentry-node-web` when the dashboard runs as a service).
+(`sudo systemctl restart sentry-mode-web` when the dashboard runs as a service).
 Only the public CA is served at `/local-ca.crt`. A certificate already trusted by your
 phone can instead be supplied through the same TLS options without `--tls-ca`.
 
@@ -423,11 +423,11 @@ and `/api/config`; hardware actions use POST `/api/camera/test`, `/api/camera/ca
 GET `/api/runtime` and POST `/api/runtime/start` or `/api/runtime/stop`. Video uses POST
 `/api/video/start`, POST `/api/video/stop`, POST `/api/video/record/start`, POST
 `/api/video/record/stop`, GET `/api/video/status`, and GET `/api/video` for MJPEG. Speech uses POST `/api/speech` with a JSON body containing `text`, optional `voice`, and
-optional `rate`. POST actions require `X-Sentry-Node-Control: 1`; speech also requires
+optional `rate`. POST actions require `X-Sentry-Mode-Control: 1`; speech also requires
 `Content-Type: application/json`.
 Phone audio uses POST `/api/talk/start`, `/api/talk/chunk`, `/api/talk/stop`, and
 `/api/talk/cancel`. Start returns a session token, sample rate, and duration limit. Subsequent
-requests require `X-Sentry-Node-Talk` with that token. Chunks also require
+requests require `X-Sentry-Mode-Talk` with that token. Chunks also require
 `Content-Type: application/octet-stream` and consecutive `X-Audio-Sequence` values starting
 at zero, with up to 9600 bytes per chunk. The same-origin control header is required on all
 four endpoints. GET `/api/talk/config` supplies the HTTPS setup link settings.
@@ -444,10 +444,10 @@ pytest tests/unit
 pytest tests/hardware -m hardware  # explicitly exercises camera, recording, and audible playback
 make lint
 sudo ./scripts/install_service.sh
-systemctl cat sentry-node
-sudo systemctl enable --now sentry-node  # explicit opt-in after reviewing the unit
-journalctl -u sentry-node -f
-sudo systemctl stop sentry-node
+systemctl cat sentry-mode
+sudo systemctl enable --now sentry-mode  # explicit opt-in after reviewing the unit
+journalctl -u sentry-mode -f
+sudo systemctl stop sentry-mode
 ```
 
 Normal pytest deselects hardware tests. The installer renders the current repository path

@@ -17,16 +17,16 @@ from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
-from sentry_node.app import run
-from sentry_node.audio.effects import VoiceEffects
-from sentry_node.audio.monitor import RATE as AUDIO_RATE
-from sentry_node.audio.monitor import AudioMonitor
-from sentry_node.audio.soundboard import Soundboard, SoundboardMessage
-from sentry_node.audio.sounds import MAX_UPLOAD_BYTES
-from sentry_node.audio.speech import available_voices, speak
-from sentry_node.audio.talk import MAX_CHUNK, TalkStream
-from sentry_node.audio.tunes import TUNES, play_tune
-from sentry_node.config import (
+from sentry_mode.app import run
+from sentry_mode.audio.effects import VoiceEffects
+from sentry_mode.audio.monitor import RATE as AUDIO_RATE
+from sentry_mode.audio.monitor import AudioMonitor
+from sentry_mode.audio.soundboard import Soundboard, SoundboardMessage
+from sentry_mode.audio.sounds import MAX_UPLOAD_BYTES
+from sentry_mode.audio.speech import available_voices, speak
+from sentry_mode.audio.talk import MAX_CHUNK, TalkStream
+from sentry_mode.audio.tunes import TUNES, play_tune
+from sentry_mode.config import (
     AudioConfig,
     CameraConfig,
     Settings,
@@ -34,16 +34,16 @@ from sentry_node.config import (
     config_path,
     save_sections,
 )
-from sentry_node.core.errors import HardwareError
-from sentry_node.hardware.camera import Camera, list_cameras
-from sentry_node.hardware.microphone import Microphone
-from sentry_node.hardware.speaker import Speaker
-from sentry_node.hardware.status import inspect_hardware, network_available
-from sentry_node.sentry.config import Rule, SentryConfig, TuneAction
-from sentry_node.sentry.engine import Sentry
-from sentry_node.vision.capture import capture_image
-from sentry_node.vision.recording import MAX_MESSAGE_BYTES, MEDIA_TYPES
-from sentry_node.vision.stream import VideoStream
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.hardware.camera import Camera, list_cameras
+from sentry_mode.hardware.microphone import Microphone
+from sentry_mode.hardware.speaker import Speaker
+from sentry_mode.hardware.status import inspect_hardware, network_available
+from sentry_mode.sentry.config import Rule, SentryConfig, TuneAction
+from sentry_mode.sentry.engine import Sentry
+from sentry_mode.vision.capture import capture_image
+from sentry_mode.vision.recording import MAX_MESSAGE_BYTES, MEDIA_TYPES
+from sentry_mode.vision.stream import VideoStream
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ class NodeControls:
                         self.runtime_error = str(exc)
                         logger.exception("Dashboard runtime failed")
 
-                self.thread = threading.Thread(target=worker, name="sentry-node-runtime")
+                self.thread = threading.Thread(target=worker, name="sentry-mode-runtime")
                 self.thread.start()
             return self.runtime_status()
 
@@ -295,7 +295,7 @@ class NodeControls:
                     self.video.add_recording(-1)
 
             self.recording_result = None
-            thread = threading.Thread(target=record, name="sentry-node-manual-video")
+            thread = threading.Thread(target=record, name="sentry-mode-manual-video")
             self.recording = {"thread": thread, "stop": stop, "started": time.time()}
             thread.start()
             return self.video_status()
@@ -454,7 +454,7 @@ class NodeControls:
                         camera.capture_frame()
                     return {"message": "Camera test successful", **camera.info()}
             if path == "/api/camera/capture":
-                with tempfile.TemporaryDirectory(prefix="sentry-node-web-") as directory:
+                with tempfile.TemporaryDirectory(prefix="sentry-mode-web-") as directory:
                     output = Path(directory) / "frame.jpg"
                     capture_image(Camera(self.config.camera), output)
                     return output.read_bytes()
@@ -486,18 +486,18 @@ JSON_POSTS = {
 
 
 def make_handler(controls: NodeControls):
-    page = files("sentry_node").joinpath("web.html").read_bytes()
-    tests_page = files("sentry_node").joinpath("tests.html").read_bytes()
-    sentry_page = files("sentry_node").joinpath("sentry.html").read_bytes()
-    stylesheet = files("sentry_node").joinpath("dashboard.css").read_bytes()
+    page = files("sentry_mode").joinpath("web.html").read_bytes()
+    tests_page = files("sentry_mode").joinpath("tests.html").read_bytes()
+    sentry_page = files("sentry_mode").joinpath("sentry.html").read_bytes()
+    stylesheet = files("sentry_mode").joinpath("dashboard.css").read_bytes()
     scripts = {
-        "/dashboard.js": files("sentry_node").joinpath("dashboard.js").read_bytes(),
-        "/talk.js": files("sentry_node").joinpath("talk.js").read_bytes(),
-        "/pcm-worklet.js": files("sentry_node").joinpath("pcm-worklet.js").read_bytes(),
-        "/voice-effects.js": files("sentry_node").joinpath("voice-effects.js").read_bytes(),
-        "/sentry.js": files("sentry_node").joinpath("sentry.js").read_bytes(),
-        "/soundboard.js": files("sentry_node").joinpath("soundboard.js").read_bytes(),
-        "/listen.js": files("sentry_node").joinpath("listen.js").read_bytes(),
+        "/dashboard.js": files("sentry_mode").joinpath("dashboard.js").read_bytes(),
+        "/talk.js": files("sentry_mode").joinpath("talk.js").read_bytes(),
+        "/pcm-worklet.js": files("sentry_mode").joinpath("pcm-worklet.js").read_bytes(),
+        "/voice-effects.js": files("sentry_mode").joinpath("voice-effects.js").read_bytes(),
+        "/sentry.js": files("sentry_mode").joinpath("sentry.js").read_bytes(),
+        "/soundboard.js": files("sentry_mode").joinpath("soundboard.js").read_bytes(),
+        "/listen.js": files("sentry_mode").joinpath("listen.js").read_bytes(),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -527,7 +527,7 @@ def make_handler(controls: NodeControls):
             )
             self.send_header("Content-Security-Policy", "frame-ancestors " + ancestors)
             if content_type == "image/jpeg":
-                self.send_header("Content-Disposition", 'inline; filename="sentry-node-frame.jpg"')
+                self.send_header("Content-Disposition", 'inline; filename="sentry-mode-frame.jpg"')
             self.end_headers()
             self.wfile.write(content)
 
@@ -663,7 +663,7 @@ def make_handler(controls: NodeControls):
             # A custom header and same-origin request prevent cross-site form actions.
             origin = self.headers.get("Origin")
             if (
-                self.headers.get("X-Sentry-Node-Control") != "1"
+                self.headers.get("X-Sentry-Mode-Control") != "1"
                 or origin is not None
                 and urlsplit(origin).netloc != self.headers.get("Host")
             ):
@@ -696,7 +696,7 @@ def make_handler(controls: NodeControls):
                     body_bytes = self.rfile.read(length)
                     if len(body_bytes) != length:
                         raise ValueError("Incomplete audio chunk")
-                    token = self.headers.get("X-Sentry-Node-Talk", "")
+                    token = self.headers.get("X-Sentry-Mode-Talk", "")
                     sequence = int(self.headers.get("X-Audio-Sequence", "-1"))
                     self.execute(lambda: controls.talk.chunk(token, sequence, body_bytes))
                 elif self.path == "/api/sounds/upload":
@@ -725,7 +725,7 @@ def make_handler(controls: NodeControls):
                         raise ValueError("Incomplete recorded message")
                     self.execute(lambda: controls.save_message(body_bytes))
                 elif self.path in {"/api/talk/stop", "/api/talk/cancel"} and not length:
-                    token = self.headers.get("X-Sentry-Node-Talk", "")
+                    token = self.headers.get("X-Sentry-Mode-Talk", "")
                     self.execute(
                         lambda: controls.talk.finish(token, cancel=self.path == "/api/talk/cancel")
                     )
@@ -826,13 +826,13 @@ def serve(
 
                 secure = stack.enter_context(SecureServer((secure_host, https_port), handler))
                 secure_thread = threading.Thread(
-                    target=secure.serve_forever, name="sentry-node-https"
+                    target=secure.serve_forever, name="sentry-mode-https"
                 )
                 secure_thread.start()
                 logger.info("Serving phone controls over HTTPS on %s:%s", secure_host, https_port)
             server.daemon_threads = False
             server.timeout = 0.5
-            logger.info("Serving Sentry Node on %s:%s", host, port)
+            logger.info("Serving Sentry Mode on %s:%s", host, port)
             try:
                 while not stopped.is_set():
                     server.handle_request()

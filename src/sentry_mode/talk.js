@@ -8,9 +8,9 @@
   const MAX_MESSAGE_SECONDS = 120;
   function status(message, kind = '') { result.textContent = message; result.className = 'result ' + kind; }
   async function api(path, session, data, sequence) {
-    const headers = {'X-Sentry-Node-Control':'1'};
+    const headers = {'X-Sentry-Mode-Control':'1'};
     if (path === 'start') {headers['Content-Type']='application/json';data=JSON.stringify(getVoiceEffects('ptt'));}
-    if (session) headers['X-Sentry-Node-Talk'] = session.token;
+    if (session) headers['X-Sentry-Mode-Talk'] = session.token;
     if (data && path !== 'start') { headers['Content-Type'] = 'application/octet-stream'; headers['X-Audio-Sequence'] = String(sequence); }
     const response = await fetch('/api/talk/' + path, {method:'POST', headers, body:data,
       signal: AbortSignal.timeout(8000)});
@@ -49,7 +49,7 @@
         const blob = new Blob(chunks, {type});
         if (!blob.size) throw Error('The recording is empty.');
         const response = await fetch('/api/captures/message', {method:'POST',
-          headers:{'X-Sentry-Node-Control':'1', 'Content-Type':'application/octet-stream'},
+          headers:{'X-Sentry-Mode-Control':'1', 'Content-Type':'application/octet-stream'},
           body: blob, signal: AbortSignal.timeout(60000)});
         const info = await response.json();
         if (!response.ok) throw Error(info.error || 'The message could not be saved.');

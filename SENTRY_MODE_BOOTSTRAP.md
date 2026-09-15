@@ -1,8 +1,8 @@
-# Sentry Node — Repository Bootstrap Specification
+# Sentry Mode — Repository Bootstrap Specification
 
 ## 1. Purpose
 
-Bootstrap a new repository named **`sentry-node`** for a Raspberry Pi 5 based physical AI node using:
+Bootstrap a new repository named **`sentry-mode`** for a Raspberry Pi 5 based physical AI node using:
 
 - Logitech StreamCam for video and microphone input
 - Bluetooth speaker for audio output
@@ -45,13 +45,13 @@ Development on Linux/macOS should remain possible where hardware-dependent featu
 ## 3. Repository Name
 
 ```text
-sentry-node
+sentry-mode
 ```
 
 Suggested Git remote:
 
 ```text
-git@github.com:<owner>/sentry-node.git
+git@github.com:<owner>/sentry-mode.git
 ```
 
 Do not hard-code a GitHub username into application code.
@@ -82,7 +82,7 @@ The bootstrap must follow these rules:
 Create this structure:
 
 ```text
-sentry-node/
+sentry-mode/
 ├── README.md
 ├── pyproject.toml
 ├── .gitignore
@@ -90,7 +90,7 @@ sentry-node/
 ├── LICENSE
 ├── Makefile
 ├── config/
-│   └── sentry-node.example.yaml
+│   └── sentry-mode.example.yaml
 ├── docs/
 │   ├── architecture.md
 │   ├── raspberry-pi-setup.md
@@ -101,9 +101,9 @@ sentry-node/
 │   ├── detect_audio.sh
 │   └── install_service.sh
 ├── systemd/
-│   └── sentry-node.service
+│   └── sentry-mode.service
 ├── src/
-│   └── sentry_node/
+│   └── sentry_mode/
 │       ├── __init__.py
 │       ├── __main__.py
 │       ├── cli.py
@@ -154,19 +154,19 @@ Preferred tooling:
 Application package:
 
 ```text
-sentry_node
+sentry_mode
 ```
 
 Expose a CLI command:
 
 ```bash
-sentry-node
+sentry-mode
 ```
 
 Equivalent fallback:
 
 ```bash
-python -m sentry_node
+python -m sentry_mode
 ```
 
 ---
@@ -197,7 +197,7 @@ ruff
 mypy
 ```
 
-Use **`opencv-python-headless`**, not `opencv-python`, for the Raspberry Pi runtime. Sentry Node is headless-first and must not depend on OpenCV GUI/highgui functionality such as `cv2.imshow()`, `cv2.waitKey()`, or desktop window backends.
+Use **`opencv-python-headless`**, not `opencv-python`, for the Raspberry Pi runtime. Sentry Mode is headless-first and must not depend on OpenCV GUI/highgui functionality such as `cv2.imshow()`, `cv2.waitKey()`, or desktop window backends.
 
 OpenCV is the default bootstrap vision library for:
 
@@ -225,7 +225,7 @@ Example:
 
 ```yaml
 node:
-  name: sentry-node
+  name: sentry-mode
 
 camera:
   enabled: true
@@ -250,14 +250,14 @@ logging:
 Environment variables should use a common prefix:
 
 ```text
-SENTRY_NODE_
+SENTRY_MODE_
 ```
 
 Examples:
 
 ```text
-SENTRY_NODE_LOGGING__LEVEL=DEBUG
-SENTRY_NODE_CAMERA__DEVICE=0
+SENTRY_MODE_LOGGING__LEVEL=DEBUG
+SENTRY_MODE_CAMERA__DEVICE=0
 ```
 
 No secrets should be placed in committed YAML files.
@@ -271,13 +271,13 @@ Implement a simple CLI with these commands.
 ### General status
 
 ```bash
-sentry-node status
+sentry-mode status
 ```
 
 Output should include at minimum:
 
 ```text
-Sentry Node
+Sentry Mode
 -----------
 Camera:       OK / unavailable
 Microphone:   OK / unavailable
@@ -288,9 +288,9 @@ Network:      OK / unavailable
 ### Camera information
 
 ```bash
-sentry-node camera list
-sentry-node camera test
-sentry-node camera capture --output ./frame.jpg
+sentry-mode camera list
+sentry-mode camera test
+sentry-mode camera capture --output ./frame.jpg
 ```
 
 `camera test` should:
@@ -303,9 +303,9 @@ sentry-node camera capture --output ./frame.jpg
 ### Audio information
 
 ```bash
-sentry-node audio list
-sentry-node audio test-output
-sentry-node audio test-input
+sentry-mode audio list
+sentry-mode audio test-output
+sentry-mode audio test-input
 ```
 
 `test-output` should play a short generated test tone or included test audio.
@@ -315,8 +315,8 @@ Avoid checking in large binary audio assets if a generated tone is sufficient.
 ### Configuration
 
 ```bash
-sentry-node config show
-sentry-node config validate
+sentry-mode config show
+sentry-mode config validate
 ```
 
 ---
@@ -409,7 +409,7 @@ Use Python `logging`.
 Default output:
 
 ```text
-2026-09-13 12:34:56 INFO sentry_node.camera Camera opened: Logitech StreamCam
+2026-09-13 12:34:56 INFO sentry_mode.camera Camera opened: Logitech StreamCam
 ```
 
 Requirements:
@@ -430,13 +430,13 @@ Do not implement custom log rotation initially; systemd/journald can handle serv
 Create:
 
 ```text
-systemd/sentry-node.service
+systemd/sentry-mode.service
 ```
 
 The initial service may run:
 
 ```bash
-sentry-node run
+sentry-mode run
 ```
 
 The service must:
@@ -543,7 +543,7 @@ Do not modify the user's default devices in this diagnostic script.
 Create a minimal `run` mode:
 
 ```bash
-sentry-node run
+sentry-mode run
 ```
 
 At bootstrap stage it should:
@@ -560,11 +560,11 @@ It does **not** yet need to continuously stream video, transcribe speech, or cal
 Example log:
 
 ```text
-INFO sentry_node.app Starting Sentry Node
-INFO sentry_node.camera Camera available
-INFO sentry_node.microphone Microphone available
-INFO sentry_node.speaker Speaker available
-INFO sentry_node.app Sentry Node ready
+INFO sentry_mode.app Starting Sentry Mode
+INFO sentry_mode.camera Camera available
+INFO sentry_mode.microphone Microphone available
+INFO sentry_mode.speaker Speaker available
+INFO sentry_mode.app Sentry Mode ready
 ```
 
 ---
@@ -672,12 +672,12 @@ Keep empty runtime directories only if they are truly required.
 Provide documentation-only placeholders, for example:
 
 ```bash
-SENTRY_NODE_LOGGING__LEVEL=INFO
+SENTRY_MODE_LOGGING__LEVEL=INFO
 
 # Future external AI provider configuration.
 # Do not enable during bootstrap.
-# SENTRY_NODE_AI__PROVIDER=
-# SENTRY_NODE_AI__API_KEY=
+# SENTRY_MODE_AI__PROVIDER=
+# SENTRY_MODE_AI__API_KEY=
 ```
 
 Never commit real API keys.
@@ -726,7 +726,7 @@ Initial architecture:
                  └─────────┬────────────┘
                            │
                   ┌────────▼─────────┐
-                  │    Sentry Node   │
+                  │    Sentry Mode   │
                   │      Core        │
                   └────────┬─────────┘
                            │
@@ -892,7 +892,7 @@ Suggested sequence:
 git init
 git branch -M main
 git add .
-git commit -m "chore: bootstrap sentry-node"
+git commit -m "chore: bootstrap sentry-mode"
 ```
 
 If a remote already exists, do not recreate the repository.
@@ -922,9 +922,9 @@ pip install -e .
 ### CLI
 
 ```bash
-sentry-node --help
-sentry-node config validate
-sentry-node status
+sentry-mode --help
+sentry-mode config validate
+sentry-mode status
 ```
 
 ### Camera
@@ -932,8 +932,8 @@ sentry-node status
 On the Raspberry Pi with StreamCam attached:
 
 ```bash
-sentry-node camera test
-sentry-node camera capture --output /tmp/sentry-node-frame.jpg
+sentry-mode camera test
+sentry-mode camera capture --output /tmp/sentry-mode-frame.jpg
 ```
 
 The resulting image must be valid and non-empty.
@@ -943,8 +943,8 @@ The resulting image must be valid and non-empty.
 With the Bluetooth speaker connected:
 
 ```bash
-sentry-node audio list
-sentry-node audio test-output
+sentry-mode audio list
+sentry-mode audio test-output
 ```
 
 The test sound must play through the configured/default speaker.
@@ -963,7 +963,7 @@ must pass without requiring attached hardware.
 The application must start and stop cleanly through:
 
 ```bash
-sentry-node run
+sentry-mode run
 ```
 
 and the provided systemd unit must be structurally valid.

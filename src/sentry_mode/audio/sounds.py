@@ -7,10 +7,10 @@ import threading
 import wave
 from pathlib import Path
 
-from sentry_node.audio.playback import command
-from sentry_node.config import Settings
-from sentry_node.core.errors import HardwareError
-from sentry_node.hardware.speaker import Speaker
+from sentry_mode.audio.playback import command
+from sentry_mode.config import Settings
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.hardware.speaker import Speaker
 
 MAX_SOUNDS = 64
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -136,7 +136,7 @@ class SoundLibrary:
         source = self.path(sound_id)
         speaker = Speaker(settings.speaker)
         device = speaker.device()
-        with tempfile.TemporaryDirectory(prefix="sentry-node-sound-") as directory:
+        with tempfile.TemporaryDirectory(prefix="sentry-mode-sound-") as directory:
             output = Path(directory) / "playback.wav"
             # Same lead-in and tail as speech so Bluetooth speakers do not clip the start.
             filters = ",".join(

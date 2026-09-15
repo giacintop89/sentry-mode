@@ -5,10 +5,10 @@ from unittest.mock import patch
 
 import pytest
 
-from sentry_node.audio.talk import TalkStream
-from sentry_node.config import Settings
-from sentry_node.core.errors import HardwareError
-from sentry_node.core.models import AudioDevice
+from sentry_mode.audio.talk import TalkStream
+from sentry_mode.config import Settings
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.core.models import AudioDevice
 
 
 @pytest.fixture
@@ -27,9 +27,9 @@ def talk(tmp_path, monkeypatch):
             **kwargs,
         )
 
-    monkeypatch.setattr("sentry_node.audio.talk.subprocess.Popen", sink)
+    monkeypatch.setattr("sentry_mode.audio.talk.subprocess.Popen", sink)
     monkeypatch.setattr(
-        "sentry_node.audio.talk.Speaker.device", lambda _: AudioDevice("auto", "Test", "pipewire")
+        "sentry_mode.audio.talk.Speaker.device", lambda _: AudioDevice("auto", "Test", "pipewire")
     )
     config = Settings(speech={"lead_in_ms": 10, "tail_ms": 10})
     stream = TalkStream(config, threading.Lock())
@@ -77,7 +77,7 @@ def test_bad_audio_or_sequence_never_enters_stream(talk):
 
 def test_lost_phone_expires_and_reaps_player(talk, monkeypatch):
     stream, _ = talk
-    monkeypatch.setattr("sentry_node.audio.talk.IDLE_SECONDS", 0.1)
+    monkeypatch.setattr("sentry_mode.audio.talk.IDLE_SECONDS", 0.1)
     token = stream.start()["token"]
     stream.thread.join(timeout=2)
     assert not stream.thread.is_alive()
@@ -96,7 +96,7 @@ def test_shutdown_releases_live_audio(talk):
 
 def test_missing_player_releases_lock(talk):
     stream, _ = talk
-    with patch("sentry_node.audio.talk.subprocess.Popen", side_effect=FileNotFoundError("pw-play")):
+    with patch("sentry_mode.audio.talk.subprocess.Popen", side_effect=FileNotFoundError("pw-play")):
         with pytest.raises(FileNotFoundError):
             stream.start()
     assert not stream.lock.locked()

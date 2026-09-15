@@ -10,7 +10,7 @@ import time
 import wave
 from pathlib import Path
 
-from sentry_node.core.errors import HardwareError
+from sentry_mode.core.errors import HardwareError
 
 
 def command(

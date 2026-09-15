@@ -107,7 +107,7 @@ def main():
     print(
         shlex.join(
             [
-                ".venv/bin/sentry-node",
+                ".venv/bin/sentry-mode",
                 "serve",
                 "--port",
                 "8083",

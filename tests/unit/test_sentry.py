@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sentry_node.config import Settings
-from sentry_node.core.errors import HardwareError
-from sentry_node.sentry.config import (
+from sentry_mode.config import Settings
+from sentry_mode.core.errors import HardwareError
+from sentry_mode.sentry.config import (
     AudioAction,
     PhotoAction,
     Rule,
@@ -24,8 +24,8 @@ from sentry_node.sentry.config import (
     VideoAction,
     WaitAction,
 )
-from sentry_node.sentry.engine import Job, RuleState, Sentry
-from sentry_node.vision.detection import Detection
+from sentry_mode.sentry.engine import Job, RuleState, Sentry
+from sentry_mode.vision.detection import Detection
 
 PERSON = Detection("person", 0.9, (0.2, 0.2, 0.8, 0.8))
 
@@ -58,7 +58,7 @@ def direct_arm(engine):
 
 
 def sample(engine, timestamp, detections=None):
-    with patch("sentry_node.sentry.engine.time.monotonic", return_value=timestamp):
+    with patch("sentry_mode.sentry.engine.time.monotonic", return_value=timestamp):
         engine.observe([PERSON] if detections is None else detections, timestamp)
 
 
@@ -69,7 +69,7 @@ def events(engine, kind):
 def test_confirmation_test_mode_and_no_retrigger_while_present(sentry):
     sentry.config.test_mode = True
     direct_arm(sentry)
-    with patch("sentry_node.sentry.engine.speak") as speech, patch("subprocess.Popen") as ssh:
+    with patch("sentry_mode.sentry.engine.speak") as speech, patch("subprocess.Popen") as ssh:
         sample(sentry, 100)
         sample(sentry, 100.5)
         assert not events(sentry, "triggered")
@@ -105,7 +105,7 @@ def test_duplicate_stale_and_missing_frames_cannot_confirm_or_fake_absence(sentr
     sample(sentry, 100)
     sample(sentry, 100)
     assert sentry.states["Person at entrance"].hits == 1
-    with patch("sentry_node.sentry.engine.time.monotonic", return_value=120):
+    with patch("sentry_mode.sentry.engine.time.monotonic", return_value=120):
         sentry.observe([PERSON], 100.5)
     assert sentry.states["Person at entrance"].hits == 1
     sample(sentry, 120)
@@ -173,7 +173,7 @@ def test_disarm_cancels_running_tts_discards_queue_and_releases_audio(sentry):
         assert stop_event.wait(2)
         raise HardwareError("Cancelled")
 
-    with patch("sentry_node.sentry.engine.speak", side_effect=speak):
+    with patch("sentry_mode.sentry.engine.speak", side_effect=speak):
         sentry.arm()
         sentry.jobs.put(Job("first", [TTSAction(text="hello")], time.monotonic()))
         assert started.wait(2)
@@ -197,7 +197,7 @@ def test_sensor_fault_cancels_actions_and_disarms(sentry):
 
 def test_expired_jobs_do_not_speak_and_backlog_is_bounded(sentry):
     sentry.config.test_mode = False
-    with patch("sentry_node.sentry.engine.speak") as speech:
+    with patch("sentry_mode.sentry.engine.speak") as speech:
         sentry.arm()
         sentry.jobs.put(Job("old", [TTSAction(text="old")], time.monotonic() - 100))
         deadline = time.monotonic() + 2
@@ -214,7 +214,7 @@ def test_ssh_uses_saved_command_no_shell_and_reports_failure(sentry):
     process.poll.return_value = 1
     process.returncode = 1
     command = SSHCommand(host="test-host", user="operator", command='echo "$HOME"; false')
-    with patch("sentry_node.sentry.engine.subprocess.Popen", return_value=process) as popen:
+    with patch("sentry_mode.sentry.engine.subprocess.Popen", return_value=process) as popen:
         with pytest.raises(HardwareError, match="SSH exited"):
             sentry._ssh(command)
     args = popen.call_args.args[0]
@@ -234,7 +234,7 @@ def test_ssh_timeout_reaps_local_client_without_retry(sentry):
         children.append(child)
         return child
 
-    with patch("sentry_node.sentry.engine.subprocess.Popen", side_effect=sleeping_client):
+    with patch("sentry_mode.sentry.engine.subprocess.Popen", side_effect=sleeping_client):
         with pytest.raises(HardwareError, match="timed out"):
             sentry._ssh(SSHCommand(host="unused-host", command="unused", timeout_seconds=1))
     assert len(children) == 1 and children[0].poll() is not None
@@ -271,13 +271,13 @@ def test_unknown_ssh_reference_and_option_like_host_rejected():
 
 
 def test_confirmed_appearance_executes_one_announcement_with_effects(sentry):
-    from sentry_node.audio.effects import VoiceEffects
+    from sentry_mode.audio.effects import VoiceEffects
 
     sentry.config.test_mode = False
     sentry.config.rules[0].actions[0].effects = VoiceEffects(preset="demon", volume=40)
     spoken = threading.Event()
     with patch(
-        "sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()
+        "sentry_mode.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()
     ) as speech:
         sentry.arm()
         for _ in range(3):
@@ -302,7 +302,7 @@ def test_rule_test_runs_the_editor_draft_once_without_arming_or_saving(sentry):
     draft = Rule(name="Draft", object="person", actions=[TTSAction(text="Testing one two")])
     spoken = threading.Event()
     with patch(
-        "sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()
+        "sentry_mode.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()
     ) as speech:
         # The notice is short on purpose: the toolbar keeps it to one line.
         assert sentry.test(draft)["message"] == "Running the actions on the node."
@@ -319,7 +319,7 @@ def test_rule_test_runs_the_editor_draft_once_without_arming_or_saving(sentry):
 
 
 def test_rule_test_runs_for_real_in_test_mode_and_refuses_unrunnable_actions(sentry):
-    from sentry_node.sentry.config import SoundAction
+    from sentry_mode.sentry.config import SoundAction
 
     # Test mode holds back detections, not a button the user pressed.
     sentry.config.test_mode = True
@@ -330,8 +330,8 @@ def test_rule_test_runs_for_real_in_test_mode_and_refuses_unrunnable_actions(sen
     )
     spoken = threading.Event()
     with (
-        patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()),
-        patch("sentry_node.sentry.engine.play_tune"),
+        patch("sentry_mode.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()),
+        patch("sentry_mode.sentry.engine.play_tune"),
     ):
         assert "Running the actions" in sentry.test(draft)["message"]
         assert spoken.wait(5)
@@ -412,7 +412,7 @@ def test_a_group_runs_its_steps_at_once_and_a_failed_step_does_not_stop_the_sequ
         running.set()
 
     sentry.cancelled.clear()
-    with patch("sentry_node.sentry.engine.speak", side_effect=speak):
+    with patch("sentry_mode.sentry.engine.speak", side_effect=speak):
         for job in Sentry._groups(sentry.config.rules[0], time.monotonic()):
             sentry._run(job)
     assert running.is_set()
@@ -495,7 +495,7 @@ def test_telegram_child_token_on_stdin_only(sentry):
     process.communicate.return_value = (b"", None)
     process.returncode = 0
     process.poll.return_value = 0
-    with patch("sentry_node.sentry.engine.subprocess.Popen", return_value=process) as popen:
+    with patch("sentry_mode.sentry.engine.subprocess.Popen", return_value=process) as popen:
         sentry._telegram(TelegramAction(text="Hello", silent=True))
     assert TOKEN not in repr(popen.call_args)
     payload = json.loads(process.communicate.call_args.kwargs["input"])
@@ -518,7 +518,7 @@ def test_telegram_child_is_reaped_on_disarm_or_absolute_timeout(sentry, cancel):
         processes.append(process)
         return process
 
-    with patch("sentry_node.sentry.engine.subprocess.Popen", side_effect=sleeping_child):
+    with patch("sentry_mode.sentry.engine.subprocess.Popen", side_effect=sleeping_child):
         if cancel:
             timer = threading.Timer(0.2, sentry.cancelled.set)
             timer.start()
@@ -528,7 +528,7 @@ def test_telegram_child_is_reaped_on_disarm_or_absolute_timeout(sentry, cancel):
             finally:
                 timer.join()
         else:
-            with patch("sentry_node.sentry.engine.time.monotonic", side_effect=[0, 6]):
+            with patch("sentry_mode.sentry.engine.time.monotonic", side_effect=[0, 6]):
                 with pytest.raises(HardwareError, match="timed out"):
                     sentry._telegram(TelegramAction(text="hello"))
     assert processes[0].poll() is not None
@@ -603,7 +603,7 @@ def test_photo_is_saved_and_video_records_beside_the_announcement(sentry):
     with (
         patch.object(sentry.captures, "record_video", side_effect=record),
         patch.object(Sentry, "_microphone", return_value=["-f", "pulse", "-i", "default"]),
-        patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()),
+        patch("sentry_mode.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()),
     ):
         sentry.arm()
         for _ in range(3):
@@ -630,7 +630,7 @@ def test_photo_series_is_spaced_in_the_background_and_stops_on_disarm(sentry):
     ]
     sentry.video.latest_frame.return_value = np.zeros((72, 128, 3), np.uint8)
     spoken = threading.Event()
-    with patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()):
+    with patch("sentry_mode.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()):
         sentry.arm()
         started = time.monotonic()
         for _ in range(3):
@@ -645,7 +645,7 @@ def test_photo_series_is_spaced_in_the_background_and_stops_on_disarm(sentry):
     assert len([e for e in events(sentry, "action_finished") if "Photo saved" in e["message"]]) == 3
 
     sentry.config.rules[0].actions = [PhotoAction(count=5, interval_seconds=60)]
-    with patch("sentry_node.sentry.engine.speak"):
+    with patch("sentry_mode.sentry.engine.speak"):
         sentry.arm()
         for _ in range(3):
             sentry.observe([PERSON], time.monotonic())
@@ -679,7 +679,7 @@ def test_tune_action_validates_logs_in_test_mode_and_plays_on_the_speaker(sentry
         assert sentry.audio_lock.locked() and timeout > 10
         played.set()
 
-    with patch("sentry_node.hardware.speaker.Speaker.play_file", play):
+    with patch("sentry_mode.hardware.speaker.Speaker.play_file", play):
         sentry.arm()
         sentry.jobs.put(Job("tune", [TuneAction(tune="chime")], time.monotonic()))
         assert played.wait(2)
@@ -696,7 +696,7 @@ def test_every_tune_renders_and_the_editor_offers_each_one(tmp_path):
     import wave
     from importlib.resources import files
 
-    from sentry_node.audio.tunes import TUNES, generate_tune, tune_seconds
+    from sentry_mode.audio.tunes import TUNES, generate_tune, tune_seconds
 
     for name in TUNES:
         path = tmp_path / f"{name}.wav"
@@ -704,7 +704,7 @@ def test_every_tune_renders_and_the_editor_offers_each_one(tmp_path):
         assert abs(seconds - tune_seconds(name, 2)) < 0.01
         with wave.open(str(path)) as stream:
             assert stream.getnframes() > 0
-    page = files("sentry_node").joinpath("sentry.html").read_text()
+    page = files("sentry_mode").joinpath("sentry.html").read_text()
     offered = re.search(r'<select id="rule-tune" data-f="tune">(.*?)</select>', page).group(1)
     assert re.findall(r'value="([a-z]+)"', offered) == list(TUNES)
 
@@ -712,7 +712,7 @@ def test_every_tune_renders_and_the_editor_offers_each_one(tmp_path):
 def test_tune_pitch_shifts_every_note_without_changing_the_tune(sentry, tmp_path):
     import wave
 
-    from sentry_node.audio.tunes import generate_tune
+    from sentry_mode.audio.tunes import generate_tune
 
     with pytest.raises(ValueError):
         TuneAction(pitch=25)
@@ -746,7 +746,7 @@ def test_tune_pitch_shifts_every_note_without_changing_the_tune(sentry, tmp_path
 
 
 def test_sound_action_needs_its_file_and_plays_it_under_the_audio_lock(sentry):
-    from sentry_node.sentry.config import SoundAction
+    from sentry_mode.sentry.config import SoundAction
 
     missing = SoundAction(sound="door-bell-0123abcd")
     sentry.config.rules[0].actions = [missing]
@@ -754,7 +754,7 @@ def test_sound_action_needs_its_file_and_plays_it_under_the_audio_lock(sentry):
         sentry.arm()
     path = sentry.settings.sounds_directory / "door-bell-0123abcd.wav"
     path.parent.mkdir(parents=True)
-    from sentry_node.audio.tunes import generate_tune
+    from sentry_mode.audio.tunes import generate_tune
 
     generate_tune(path, "chime")
     sentry.config.test_mode = True
@@ -798,7 +798,7 @@ def test_audio_action_records_from_the_microphone_in_the_background(sentry):
     with (
         patch.object(sentry.captures, "record_audio", side_effect=record),
         patch.object(Sentry, "_microphone", return_value=["-f", "pulse", "-i", "mic"]),
-        patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()),
+        patch("sentry_mode.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()),
     ):
         sentry.arm()
         for _ in range(3):

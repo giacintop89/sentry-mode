@@ -4,7 +4,7 @@ Every endpoint is served by the dashboard process. Responses are JSON unless sta
 
 ## Rules for POST
 
-Every POST requires the same-origin header `X-Sentry-Node-Control: 1`. These also require
+Every POST requires the same-origin header `X-Sentry-Mode-Control: 1`. These also require
 `Content-Type: application/json`: `/api/speech`, `/api/video/detection`,
 `/api/sentry/config`, `/api/sentry/rules/test`, `/api/soundboard`, `/api/soundboard/delete`,
 `/api/soundboard/play`, `/api/captures/delete`, `/api/hardware`, `/api/sounds/delete`,
@@ -45,7 +45,7 @@ local network.
 | GET/POST `/api/soundboard`, POST `/api/soundboard/play`, `/api/soundboard/delete` | Saved messages. |
 | GET `/api/talk/config` | HTTPS setup link settings. |
 | POST `/api/talk/start` | Session token, sample rate, duration limit; optional effects body. |
-| POST `/api/talk/chunk`, `/api/talk/stop`, `/api/talk/cancel` | Need `X-Sentry-Node-Talk`; chunks need consecutive `X-Audio-Sequence` from zero, ≤ 9600 bytes. |
+| POST `/api/talk/chunk`, `/api/talk/stop`, `/api/talk/cancel` | Need `X-Sentry-Mode-Talk`; chunks need consecutive `X-Audio-Sequence` from zero, ≤ 9600 bytes. |
 
 Presets are `natural`, `demon`, `chipmunk` and `custom` (with `pitch` in semitones).
 
