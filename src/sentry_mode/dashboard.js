@@ -84,6 +84,17 @@
       node.classList.toggle('streaming', online && streaming);
     }
   }
+  // A rotated copy of the mark closes the frame on the left of a narrow navigation. It is
+  // decorative, so it is cloned here instead of being repeated in every page's markup.
+  const status = document.querySelector('.connection-status');
+  if (status) {
+    const frame = document.createElement('span');
+    frame.className = 'connection-frame';
+    status.replaceWith(frame);
+    const mirror = status.querySelector('.connection-mark').cloneNode(true);
+    mirror.classList.add('connection-mirror');
+    frame.append(mirror, status);
+  }
   async function get(path) {
     const response = await fetch(path, {signal: AbortSignal.timeout(5000)});
     if (!response.ok) throw Error('Node unavailable');

@@ -353,3 +353,14 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
   .app-views a{flex-direction:column;gap:4px;padding:8px 6px;line-height:1.2}
   .app-views a svg{display:block;width:20px;height:20px}
 }
+
+/* The mark belongs to the HUD frame, not to a row under the buttons: on a narrow screen
+   it moves above them, with a rotated copy closing the frame on the left. */
+.connection-frame{display:flex;align-items:center;margin-left:auto}
+.connection-frame .connection-status{margin-left:0}
+.app-views .connection-mirror{display:none;transform:rotate(180deg)}
+@media(max-width:700px){
+  .app-views .connection-frame{order:-1;width:100%;margin:0 0 4px;justify-content:space-between}
+  .app-views .connection-frame .connection-status{width:auto;margin-top:0}
+  .app-views .connection-mirror{display:block}
+}
