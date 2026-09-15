@@ -726,7 +726,7 @@ def test_rule_test_button_runs_the_editor_draft_without_saving_it(web):
     }
     with patch("sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()):
         status, data, _ = request(base, "/api/sentry/rules/test", "POST", body=draft)
-        assert status == 200 and "Draft" in data["message"]
+        assert status == 200 and data["message"] == "Running the actions on the node."
         assert spoken.wait(5)
         controls.sentry.thread.join(5)
     assert [rule.name for rule in controls.sentry.config.rules] == ["Person at entrance"]
@@ -755,7 +755,7 @@ def test_per_action_test_buttons_run_one_action_through_the_rule_test_endpoint(w
     }
     with patch.object(controls.sentry, "_ssh", side_effect=lambda command: ran.set()) as ssh:
         status, data, _ = request(base, "/api/sentry/rules/test", "POST", body=draft)
-        assert status == 200 and "Draft" in data["message"]
+        assert status == 200 and data["message"] == "Running the actions on the node."
         assert ran.wait(5)
         controls.sentry.thread.join(5)
     assert ssh.call_args.args[0].host == "gate.local"

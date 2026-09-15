@@ -3,9 +3,9 @@
   let config, revision, status, video, editing = -1, busy = false, eventId = -1;
   const dirty = new Set();
   const num = id => Number($(id).value);
-  function message(text, kind = '') { $('sentry-result').textContent = text; $('sentry-result').className = 'result ' + kind; }
+  function message(text, kind = '') { $('sentry-result').textContent = text; $('sentry-result').title = text; $('sentry-result').className = 'result ' + kind; }
   // Rule editor notices sit beside its buttons, where the user is looking.
-  function ruleMessage(text, kind = '') { $('rule-result').textContent = text; $('rule-result').className = 'result ' + kind; }
+  function ruleMessage(text, kind = '') { $('rule-result').textContent = text; $('rule-result').title = text; $('rule-result').className = 'result ' + kind; }
   // A cross-origin frame ignores window.confirm and answers it "no" without asking, and the
   // dashboard embeds this app, so buttons that act for real confirm in the page: the first
   // click arms the button, the second one runs it, and it disarms itself after a few seconds.

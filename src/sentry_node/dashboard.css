@@ -242,9 +242,11 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .sentry-control .sentry-settings button{min-height:38px;padding:8px 14px}
 .sentry-control .sentry-arm{grid-area:arm;margin:0;flex-wrap:nowrap}
 .sentry-control .sentry-arm button{padding:10px 16px;white-space:nowrap}
-.sentry-control .sentry-messages{grid-area:messages}
-.sentry-control .sentry-messages:not(:has(.result:not(:empty))){display:none}
-.sentry-control .sentry-messages .result{margin:4px 0 0}
+/* The notice line is reserved and never wraps: a message that appears out of nothing, or
+   runs onto a second line, moves every control under it while the user is reading them. */
+.sentry-control .sentry-messages{grid-area:messages;min-height:22px}
+.sentry-control .sentry-messages .result{margin:0}
+#sentry-result,.rule-save #rule-result{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sentry-control .sentry-messages small{display:block;font-size:14.667px}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(max-width:1100px){.sentry-control{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"status arm" "settings settings" "messages messages"}

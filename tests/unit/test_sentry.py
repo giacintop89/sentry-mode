@@ -303,7 +303,8 @@ def test_rule_test_runs_the_editor_draft_once_without_arming_or_saving(sentry):
     with patch(
         "sentry_node.sentry.engine.speak", side_effect=lambda *a, **k: spoken.set()
     ) as speech:
-        assert "Draft" in sentry.test(draft)["message"]
+        # The notice is short on purpose: the toolbar keeps it to one line.
+        assert sentry.test(draft)["message"] == "Running the actions on the node."
         assert spoken.wait(2)
         sentry.thread.join(2)
     speech.assert_called_once()

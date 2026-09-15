@@ -313,7 +313,7 @@ class Sentry:
                     target=self._test, args=(jobs,), name="sentry-node-test"
                 )
                 self.thread.start()
-            return {"message": f"Running the actions of {rule.name} on the node."}
+            return {"message": "Running the actions on the node."}
 
     def _test(self, jobs: list[Job]):
         for job in jobs:
