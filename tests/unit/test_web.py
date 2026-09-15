@@ -677,7 +677,7 @@ def test_tune_test_button_plays_the_editor_settings_and_shares_the_speaker(web):
             {"tune": "nope"},
             {"tune": "chime", "repeat": 9},
             {"tune": "chime", "x": 1},
-            {"tune": "chime", "pitch": 13},
+            {"tune": "chime", "pitch": 25},
         ):
             assert request(base, "/api/tunes/play", "POST", body=body)[0] == 400
         with controls.audio_lock:

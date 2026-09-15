@@ -24,6 +24,29 @@ TUNES: dict[str, tuple[str, list[tuple[float, float, float]]]] = {
         "Fanfare",
         [(523.25, 0.14, 1), (659.25, 0.14, 1), (783.99, 0.14, 1), (1046.5, 0.6, 2)],
     ),
+    # The rest lean on the intervals a doorbell avoids -- tritones, minor seconds and a
+    # minor arpeggio -- plus blips too short to sing, for a node that sounds like a machine.
+    "glitch": (
+        "Glitch",
+        [(1479.98, 0.05, 0), (0, 0.03, 0), (1046.5, 0.05, 0), (0, 0.03, 0)] * 2
+        + [(1479.98, 0.05, 0), (523.25, 0.45, 5)],
+    ),
+    "neon": (
+        "Neon drift",
+        [(880, 0.18, 2), (659.25, 0.18, 2), (523.25, 0.18, 2), (440, 1.1, 1.2)],
+    ),
+    "uplink": (
+        "Uplink",
+        [(440, 0.07, 1), (587.33, 0.07, 1), (830.61, 0.07, 1), (1174.66, 0.5, 2.5)],
+    ),
+    "sentinel": (
+        "Sentinel",
+        [(622.25, 0.22, 0), (659.25, 0.22, 0)] * 3 + [(311.13, 0.6, 3)],
+    ),
+    "blackout": (
+        "Blackout",
+        [(196, 0.5, 0.6), (185, 0.5, 0.6), (174.61, 1.2, 1.2)],
+    ),
 }
 
 

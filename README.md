@@ -195,7 +195,7 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
 2. Select a photo, an audio recording, a video, an announcement, a built-in tune, a saved
    audio file, a saved SSH command, and/or a Telegram message.
    Announcements support language, speed, Demon/Chipmunk/custom pitch, and volume. Tunes
-   support repeats (1-5), volume, and **Pitch (semitones)** from -12 to +12, which moves every
+   support repeats (1-5), volume, and **Pitch (semitones)** from -24 to +24, which moves every
    note by the same interval and leaves the tune's length alone; **Test tune** plays the
    editor's settings on the node speaker. Each rule supports one action of each type.
 3. To rehearse first, check **Test mode**, save settings and start Sentry. Confirm `triggered` and `would_run` events in the event log.

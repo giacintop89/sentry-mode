@@ -640,7 +640,7 @@ def test_tune_pitch_shifts_every_note_without_changing_the_tune(sentry, tmp_path
     from sentry_node.audio.tunes import generate_tune
 
     with pytest.raises(ValueError):
-        TuneAction(pitch=13)
+        TuneAction(pitch=25)
 
     def crossings(pitch):
         path = tmp_path / f"pitch{pitch}.wav"

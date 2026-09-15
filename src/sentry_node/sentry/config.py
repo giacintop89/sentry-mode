@@ -42,7 +42,7 @@ class TuneAction(Model):
     tune: str = "chime"
     repeat: int = Field(default=1, ge=1, le=5)
     volume: int = Field(default=60, ge=0, le=100)
-    pitch: float = Field(default=0, ge=-12, le=12)
+    pitch: float = Field(default=0, ge=-24, le=24)
 
     @field_validator("tune")
     @classmethod
