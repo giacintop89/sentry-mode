@@ -192,10 +192,12 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
 1. Edit/save a rule: object category, confidence, count, confirmation count, cooldown, and
    optional rectangular region. Region coordinates are percentages of the image; an object's
    bounding-box center must be inside it.
-2. Select a photo, an audio recording, a video, an announcement, a saved SSH command, and/or a
-   Telegram message.
-   Announcements support language, speed, Demon/Chipmunk/custom pitch, and volume. Each rule
-   supports one action of each type.
+2. Select a photo, an audio recording, a video, an announcement, a built-in tune, a saved
+   audio file, a saved SSH command, and/or a Telegram message.
+   Announcements support language, speed, Demon/Chipmunk/custom pitch, and volume. Tunes
+   support repeats (1-5), volume, and **Pitch (semitones)** from -12 to +12, which moves every
+   note by the same interval and leaves the tune's length alone; **Test tune** plays the
+   editor's settings on the node speaker. Each rule supports one action of each type.
 3. To rehearse first, check **Test mode**, save settings and start Sentry. Confirm `triggered` and `would_run` events in the event log.
 4. Disarm, uncheck **Test mode**, save settings, and start again to execute actions.
 5. Pause live video on the Video view to save work while monitoring continues. Disarm Sentry to stop rules;

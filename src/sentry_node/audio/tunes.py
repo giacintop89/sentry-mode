@@ -31,13 +31,19 @@ def tune_seconds(name: str, repeat: int = 1) -> float:
     return sum(seconds for _, seconds, _ in TUNES[name][1]) * repeat
 
 
-def generate_tune(path: Path, name: str, repeat: int = 1, volume: int = 60) -> float:
+def generate_tune(
+    path: Path, name: str, repeat: int = 1, volume: int = 60, pitch: float = 0
+) -> float:
     """Write the tune as 16-bit mono WAV and return its duration in seconds."""
     notes = TUNES[name][1] * repeat
     amplitude = 32767 * 0.5 * volume / 100
+    # Pitch is in semitones, so every note moves by the same ratio and the tune keeps
+    # its intervals; the note lengths are untouched, and so is the duration.
+    shift = 2 ** (pitch / 12)
     ramp = int(RATE * 0.005)
     frames = bytearray()
     for frequency, seconds, decay in notes:
+        frequency *= shift
         count = int(RATE * seconds)
         for index in range(count):
             if not frequency:
@@ -62,6 +68,7 @@ def play_tune(
     name: str,
     repeat: int = 1,
     volume: int = 60,
+    pitch: float = 0,
     stop_event: threading.Event | None = None,
 ) -> float:
     """Render the tune to a temporary WAV, play it on the node speaker, and delete it."""
@@ -70,6 +77,6 @@ def play_tune(
 
     with tempfile.TemporaryDirectory(prefix="sentry-node-tune-") as directory:
         path = Path(directory) / "tune.wav"
-        seconds = generate_tune(path, name, repeat, volume)
+        seconds = generate_tune(path, name, repeat, volume, pitch)
         Speaker(speaker).play_file(path, timeout=seconds + 10, stop_event=stop_event)
     return seconds

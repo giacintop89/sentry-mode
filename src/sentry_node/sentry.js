@@ -62,7 +62,7 @@
   $('rule-photo-count').addEventListener('input',showActionOptions);
   $('test-tune').addEventListener('click',async()=>{
     const button=$('test-tune');button.disabled=true;button.textContent='Playing…';message('');
-    try{const data=await api('tunes/play',{tune:$('rule-tune').value,repeat:num('rule-tune-repeat'),volume:num('rule-tune-volume')},true);message(data.message,'success');}
+    try{const data=await api('tunes/play',{tune:$('rule-tune').value,repeat:num('rule-tune-repeat'),volume:num('rule-tune-volume'),pitch:num('rule-tune-pitch')},true);message(data.message,'success');}
     catch(error){message(error.message,'error');}
     finally{button.disabled=false;button.textContent='Test tune';}
   });
@@ -83,7 +83,7 @@
     voiceOption(t?.voice);$('rule-text').value=t?.text||'';$('rule-voice').value=t?.voice||'en';$('rule-rate').value=t?.rate||175;
     $('rule-preset').value=t?.effects?.preset||'natural';$('rule-pitch').value=t?.effects?.pitch||0;$('rule-volume').value=t?.effects?.volume??60;
     const tune=r.actions.find(a=>a.type==='tune');
-    $('use-tune').checked=!!tune;$('rule-tune').value=tune?.tune||'chime';$('rule-tune-repeat').value=tune?.repeat||1;$('rule-tune-volume').value=tune?.volume??60;
+    $('use-tune').checked=!!tune;$('rule-tune').value=tune?.tune||'chime';$('rule-tune-repeat').value=tune?.repeat||1;$('rule-tune-volume').value=tune?.volume??60;$('rule-tune-pitch').value=tune?.pitch??0;
     const sound=r.actions.find(a=>a.type==='sound');
     $('use-sound').checked=!!sound;renderSounds(sound?.sound||'');$('rule-sound-repeat').value=sound?.repeat||1;$('rule-sound-volume').value=sound?.volume??80;
     if(ssh)$('rule-command').value=ssh.command_id;
@@ -168,7 +168,7 @@
     if($('use-audio').checked)actions.push({type:'audio',duration_seconds:num('rule-audio-duration')});
     if($('use-video').checked)actions.push({type:'video',duration_seconds:num('rule-video-duration'),audio:$('rule-video-audio').checked});
     if($('use-tts').checked)actions.push({type:'tts',text:$('rule-text').value,voice:$('rule-voice').value,rate:num('rule-rate'),effects:{preset:$('rule-preset').value,pitch:num('rule-pitch'),volume:num('rule-volume')}});
-    if($('use-tune').checked)actions.push({type:'tune',tune:$('rule-tune').value,repeat:num('rule-tune-repeat'),volume:num('rule-tune-volume')});
+    if($('use-tune').checked)actions.push({type:'tune',tune:$('rule-tune').value,repeat:num('rule-tune-repeat'),volume:num('rule-tune-volume'),pitch:num('rule-tune-pitch')});
     if($('use-sound').checked)actions.push({type:'sound',sound:$('rule-sound').value,repeat:num('rule-sound-repeat'),volume:num('rule-sound-volume')});
     if($('use-ssh').checked)actions.push({type:'ssh',command_id:$('rule-command').value});
     if($('use-telegram').checked)actions.push({type:'telegram',text:$('rule-telegram-text').value,silent:$('rule-telegram-silent').checked});

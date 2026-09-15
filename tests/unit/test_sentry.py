@@ -1,4 +1,5 @@
 import json
+import struct
 import subprocess
 import sys
 import threading
@@ -631,6 +632,42 @@ def test_every_tune_renders_and_the_editor_offers_each_one(tmp_path):
     page = files("sentry_node").joinpath("sentry.html").read_text()
     offered = re.search(r'<select id="rule-tune">(.*?)</select>', page).group(1)
     assert re.findall(r'value="([a-z]+)"', offered) == list(TUNES)
+
+
+def test_tune_pitch_shifts_every_note_without_changing_the_tune(sentry, tmp_path):
+    import wave
+
+    from sentry_node.audio.tunes import generate_tune
+
+    with pytest.raises(ValueError):
+        TuneAction(pitch=13)
+
+    def crossings(pitch):
+        path = tmp_path / f"pitch{pitch}.wav"
+        seconds = generate_tune(path, "siren", pitch=pitch)
+        with wave.open(str(path)) as stream:
+            samples = struct.unpack(
+                f"<{stream.getnframes()}h", stream.readframes(stream.getnframes())
+            )
+        changes = sum(1 for a, b in zip(samples, samples[1:], strict=False) if (a < 0) != (b < 0))
+        return seconds, changes
+
+    plain_seconds, plain = crossings(0)
+    octave_seconds, octave = crossings(12)
+    down_seconds, down = crossings(-12)
+    # An octave up is twice the frequency and an octave down half it; the tune keeps
+    # its own length either way, so a rule's timing does not change with its pitch.
+    assert 1.9 < octave / plain < 2.1
+    assert 0.45 < down / plain < 0.55
+    assert plain_seconds == octave_seconds == down_seconds
+
+    sentry.config.test_mode = True
+    sentry.config.rules[0].actions = [TuneAction(tune="doorbell", repeat=2, pitch=-5)]
+    direct_arm(sentry)
+    for timestamp in [100, 100.5, 101]:
+        sample(sentry, timestamp)
+    assert [e["message"] for e in events(sentry, "would_run")] == ["Tune: Doorbell x2 at -5 st"]
+    sentry.disarm()
 
 
 def test_sound_action_needs_its_file_and_plays_it_under_the_audio_lock(sentry):

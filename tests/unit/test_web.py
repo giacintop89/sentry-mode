@@ -668,12 +668,23 @@ def test_tune_test_button_plays_the_editor_settings_and_shares_the_speaker(web):
         )
         assert status == 200 and data["message"] == "Played Doorbell on the node speaker."
         assert len(played) == 1 and played[0][0] > 44 and not controls.audio_lock.locked()
-        for body in ({"tune": "nope"}, {"tune": "chime", "repeat": 9}, {"tune": "chime", "x": 1}):
+        # The pitch of the editor's field is played too, and it is bounded like the model.
+        assert (
+            request(base, "/api/tunes/play", "POST", body={"tune": "chime", "pitch": -5})[0] == 200
+        )
+        assert len(played) == 2
+        for body in (
+            {"tune": "nope"},
+            {"tune": "chime", "repeat": 9},
+            {"tune": "chime", "x": 1},
+            {"tune": "chime", "pitch": 13},
+        ):
             assert request(base, "/api/tunes/play", "POST", body=body)[0] == 400
         with controls.audio_lock:
             assert request(base, "/api/tunes/play", "POST", body={"tune": "chime"})[0] == 409
-    assert len(played) == 1
-    assert b'id="test-tune"' in request(base, "/sentry")[1]
+    assert len(played) == 2
+    page = request(base, "/sentry")[1]
+    assert b'id="test-tune"' in page and b'id="rule-tune-pitch"' in page
 
 
 def test_rule_test_button_runs_the_editor_draft_without_saving_it(web):

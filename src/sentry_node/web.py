@@ -417,7 +417,8 @@ class NodeControls:
                     tune.tune,
                     tune.repeat,
                     tune.volume,
-                    self.shutdown_requested,
+                    tune.pitch,
+                    stop_event=self.shutdown_requested,
                 )
             finally:
                 self.audio_lock.release()

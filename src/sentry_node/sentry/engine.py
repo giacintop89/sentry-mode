@@ -205,6 +205,7 @@ class Sentry:
                 "Tune: "
                 + TUNES[action.tune][0]
                 + (f" x{action.repeat}" if action.repeat > 1 else "")
+                + (f" at {action.pitch:+g} st" if action.pitch else "")
             )
         if isinstance(action, SoundAction):
             return (
@@ -537,7 +538,14 @@ class Sentry:
             self.active_action = None
 
     def _play_tune(self, action: TuneAction):
-        play_tune(self.settings.speaker, action.tune, action.repeat, action.volume, self.cancelled)
+        play_tune(
+            self.settings.speaker,
+            action.tune,
+            action.repeat,
+            action.volume,
+            action.pitch,
+            stop_event=self.cancelled,
+        )
 
     def _save_photo(self, rule: str) -> str:
         frame = self.video.latest_frame()
