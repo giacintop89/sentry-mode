@@ -5,25 +5,42 @@ service is used.
 
 ## Voices
 
-Local [Piper](https://github.com/rhasspy/piper) neural voices are used when installed, with
-eSpeak NG as a basic fallback (`sudo apt-get install -y espeak-ng`, included by the Pi
-bootstrap helper). Install the natural female voices — Lessac, Amy and Kristin in US
-English; Alba, Cori and Jenny in British English; Paola and Serena in Italian, the two
-female Italian Piper voices — with:
+Three local engines, in falling order of quality:
+
+| Marked | Engine | Voices |
+|---|---|---|
+| **Studio** | [Kokoro-82M](https://github.com/thewh1teagle/kokoro-onnx) | Heart, Bella, Nicole, Aoede, Kore, Sarah, Nova (American), Emma, Isabella (British), Sara (Italian) |
+| **Natural** | [Piper](https://github.com/rhasspy/piper) | Lessac, Amy, Kristin (US), Alba, Cori, Jenny (GB), Paola, Serena (Italian) |
+| **Basic** | eSpeak NG | Female 1, 2 and 3 in every language |
+
+Install them with:
 
 ```bash
 ./scripts/setup_speech.sh
 ```
 
-It installs the optional `speech` Python extra and downloads models into ignored
-`models/piper/`. Restart the server and reload the page afterwards.
+It installs the optional `speech` Python extra, downloads the Piper models into ignored
+`models/piper/`, and the single Kokoro model and its voice pack (about 350 MB together)
+into ignored `models/kokoro/`. eSpeak NG comes from the system
+(`sudo apt-get install -y espeak-ng`, included by the Pi bootstrap helper). Restart the
+server and reload the page afterwards.
 
-Choose a **Language**, then a **Voice** for it. Every Piper model in `models/piper/` named
-like `en_GB-alba-medium` whose speaker is a known female voice appears as a speaker of its
-language, marked **Natural**; other models are ignored. A language with no neural voice
-offers eSpeak NG's Female 1, 2 and 3, marked **Basic**. Voice ids are the language (`it`),
-`<language>-<speaker>` (`en-alba`) or `<language>+<variant>` (`it+f2`), and any of them works
-as `speech.voice`. Other languages and male eSpeak variants are rejected.
+Choose a **Language**, then a **Voice** for it. One Kokoro model holds every Studio
+speaker; each Piper model in `models/piper/` named like `en_GB-alba-medium` whose speaker
+is a known female voice is a Natural speaker of its language, and other models are ignored.
+A language with neither offers eSpeak NG's Female 1, 2 and 3. Voice ids are the language
+(`it`), `<language>-<speaker>` (`en-alba`, `it-if_sara`) or `<language>+<variant>`
+(`it+f2`), and any of them works as `speech.voice`. The id decides which engine speaks:
+`speech.engine` is `auto` by default and pins one engine when set to `kokoro`, `piper` or
+`espeak`. Other languages and male voices are rejected.
+
+Kokoro is worth its cost only where it is heard, not where it is timed: the model is loaded
+by a short-lived subprocess for each utterance, so a sentence takes roughly its own length
+again in synthesis plus about a second and a half of loading — around four seconds for a
+two-second announcement on a Pi 5, against well under a second for Piper. Rules that must
+speak the instant something is detected are better off with a Natural voice until the
+prepared-phrase cache in the [low-latency plan](sentry-mode-low-latency-implementation-plan.md)
+exists.
 
 ## Speaking
 

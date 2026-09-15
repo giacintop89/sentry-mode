@@ -57,8 +57,9 @@ class SpeakerConfig(AudioConfig):
 
 class SpeechConfig(Section):
     enabled: bool = True
-    engine: Literal["auto", "piper", "espeak"] = "auto"
+    engine: Literal["auto", "kokoro", "piper", "espeak"] = "auto"
     model_directory: Path = Path("models/piper")
+    kokoro_directory: Path = Path("models/kokoro")
     models: dict[str, str] = Field(
         default_factory=lambda: {"en": "en_US-lessac-medium", "it": "it_IT-paola-medium"}
     )

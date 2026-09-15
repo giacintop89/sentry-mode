@@ -31,6 +31,48 @@ PIPER_SPEAKERS = {
 ESPEAK_VARIANTS = {"f3": "Female 1", "f2": "Female 2", "f4": "Female 3"}
 ESPEAK_DEFAULT_VARIANT = "f3"
 PIPER_MODEL = re.compile(r"([a-z]{2,3})_[A-Z]{2}-([a-z0-9_]+)-(x_low|low|medium|high)")
+# One Kokoro model holds every speaker, so its voices are a list, not installed files.
+# A speaker's name carries language and gender: a American, b British, i Italian, f female.
+KOKORO_MODEL = "kokoro-v1.0.onnx"
+KOKORO_VOICE_PACK = "voices-v1.0.bin"
+KOKORO_LANGUAGES = {"a": ("en", "en-us"), "b": ("en", "en-gb"), "i": ("it", "it")}
+KOKORO_SPEAKERS = {
+    "af_heart": "Heart",
+    "af_bella": "Bella",
+    "af_nicole": "Nicole",
+    "af_aoede": "Aoede",
+    "af_kore": "Kore",
+    "af_sarah": "Sarah",
+    "af_nova": "Nova",
+    "bf_emma": "Emma",
+    "bf_isabella": "Isabella",
+    "if_sara": "Sara",
+}
+QUALITY = {"kokoro": "Studio", "piper": "Natural", "espeak": "Basic"}
+
+
+def kokoro_files(config: Settings) -> tuple[Path, Path]:
+    directory = config.speech.kokoro_directory
+    return directory / KOKORO_MODEL, directory / KOKORO_VOICE_PACK
+
+
+def kokoro_installed(config: Settings) -> bool:
+    model, pack = kokoro_files(config)
+    return (
+        model.is_file() and pack.is_file() and importlib.util.find_spec("kokoro_onnx") is not None
+    )
+
+
+def kokoro_voices(config: Settings) -> dict[str, tuple[str, str, str]]:
+    """Offered Kokoro voices by id: speaker name, Kokoro's own name, Kokoro's language."""
+    if not kokoro_installed(config) or config.speech.engine == "espeak":
+        return {}
+    voices = {}
+    for speaker, name in KOKORO_SPEAKERS.items():
+        language, spoken = KOKORO_LANGUAGES[speaker[0]]
+        if language in LANGUAGES:
+            voices[f"{language}-{speaker}"] = (name, speaker, spoken)
+    return voices
 
 
 def piper_models(config: Settings) -> dict[str, Path]:
@@ -58,6 +100,15 @@ def voice_language(voice: str) -> str:
 
 
 def speech_engine(config: Settings, voice: str) -> tuple[str, Path | None]:
+    # A voice id names its own engine, so a rule that speaks with Heart keeps speaking
+    # with Heart; only a missing model or an engine pinned in the configuration changes it.
+    if voice in kokoro_voices(config):
+        return "kokoro", kokoro_files(config)[0]
+    if config.speech.engine == "kokoro":
+        raise HardwareError(
+            f"{voice!r} is not an installed Kokoro voice. Run scripts/setup_speech.sh, "
+            "or set speech.engine to auto to use the other voices."
+        )
     model = None if "+" in voice else piper_models(config).get(voice)
     available = (
         model is not None
@@ -73,10 +124,16 @@ def speech_engine(config: Settings, voice: str) -> tuple[str, Path | None]:
 
 
 def available_voices(config: Settings) -> dict:
-    """Voices grouped by language: natural Piper speakers, or eSpeak voice types."""
+    """Voices grouped by language: Kokoro and Piper speakers, or eSpeak voice types."""
     models = piper_models(config)
+    kokoro = kokoro_voices(config)
     voices = []
     for language in LANGUAGES:
+        studio = [
+            (voice, name)
+            for voice, (name, _, _) in kokoro.items()
+            if voice_language(voice) == language
+        ]
         natural = []
         for voice, model in models.items():
             if voice_language(voice) != language:
@@ -88,9 +145,10 @@ def available_voices(config: Settings) -> dict:
             if engine == "piper":
                 match = PIPER_MODEL.fullmatch(model.stem)
                 natural.append((voice, PIPER_SPEAKERS[match[2]]))
-        if natural:
-            choices = [(*choice, "piper") for choice in natural]
-        elif config.speech.engine == "piper":
+        if studio or natural:
+            choices = [(*choice, "kokoro") for choice in studio]
+            choices += [(*choice, "piper") for choice in natural]
+        elif config.speech.engine in ("kokoro", "piper"):
             continue
         else:
             # The plain language id already speaks with the default female variant.
@@ -112,7 +170,7 @@ def available_voices(config: Settings) -> dict:
                     "gender": "female",
                     "label": f"{LANGUAGES[language]} · {name}",
                     "engine": engine,
-                    "quality": "Natural" if engine == "piper" else "Basic",
+                    "quality": QUALITY[engine],
                 }
             )
     return {"voices": voices, "default": config.speech.voice}
@@ -202,7 +260,29 @@ def speak(
         # Flatten lines into a single utterance so stdin readers cannot overwrite
         # earlier lines. Text goes through stdin, never shell/command options.
         utterance = " ".join(text.splitlines()).strip()
-        if engine == "piper":
+        if engine == "kokoro":
+            _, kokoro_speaker, spoken = kokoro_voices(config)[voice]
+            args = [
+                sys.executable,
+                "-m",
+                "sentry_mode.audio.kokoro",
+                "--model",
+                str(model),
+                "--voices",
+                str(kokoro_files(config)[1]),
+                "--voice",
+                kokoro_speaker,
+                "--language",
+                spoken,
+                # Kokoro speaks at its own pace; the editor's words per minute scale it.
+                "--speed",
+                f"{min(max(rate / 175, 0.5), 2):.3f}",
+                "--volume",
+                f"{config.speaker.volume / 100:g}",
+                "--output",
+                str(output),
+            ]
+        elif engine == "piper":
             args = [
                 sys.executable,
                 "-m",
@@ -231,7 +311,7 @@ def speak(
             ]
         command(
             args,
-            timeout=120 if engine == "piper" else 15,
+            timeout=15 if engine == "espeak" else 180,
             input_text=utterance,
             stop_event=stop_event,
         )
@@ -241,7 +321,7 @@ def speak(
         speaker.play_file(
             playback, timeout=playback_seconds + 10, device=device, stop_event=stop_event
         )
-    quality = "Natural" if engine == "piper" else "Basic"
+    quality = QUALITY[engine]
     return {
         "message": f"Speech played through the node speaker ({quality} voice).",
         "seconds": seconds,

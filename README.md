@@ -321,31 +321,34 @@ GET `/api/sentry/status` returns armed/test state, action status, and recent eve
 `X-Sentry-Mode-Control: 1` header; configuration saves also require JSON content type.
 `/api/video/status` distinguishes preview `running` from `capture_running` and `monitoring`.
 
-Text-to-speech speaks English and Italian with female voices only. It uses local Piper neural
-voices when installed, with eSpeak NG as a basic fallback (`sudo apt-get install -y espeak-ng`,
-included by the Pi bootstrap helper). Install the natural female voices (Lessac, Amy and
-Kristin in US English; Alba, Cori and Jenny in British English; Paola and Serena in Italian,
-the two female Italian Piper voices) with:
+Text-to-speech speaks English and Italian with female voices only, through three local
+engines: Kokoro-82M (**Studio** — Heart, Bella, Nicole, Aoede, Kore, Sarah, Nova in American
+English, Emma and Isabella in British English, Sara in Italian), Piper (**Natural** — Lessac,
+Amy, Kristin, Alba, Cori, Jenny, Paola, Serena) and eSpeak NG as a basic fallback
+(`sudo apt-get install -y espeak-ng`, included by the Pi bootstrap helper). Install them with:
 
 ```bash
 ./scripts/setup_speech.sh
 ```
 
-This installs the optional `speech` Python extra and downloads models into ignored
-`models/piper/`. Runtime synthesis stays offline. Restart the server and reload the page.
-Choose a **Language**, then a **Voice** for it: every Piper model in `models/piper/` named like
-`en_GB-alba-medium` whose speaker is a known female voice appears as a speaker of its
-language, marked **Natural**; other models are ignored. A language with no neural voice offers
-eSpeak NG's Female 1, 2 and 3 types, marked **Basic**. Voice ids are the language (`it`, its
-configured model), `<language>-<speaker>` (`en-alba`) or `<language>+<variant>` (`it+f2`),
-and any of them works as `speech.voice`. Other languages and male eSpeak variants are
-rejected. Enter up to 1000 characters, choose a voice and speech rate, and click
+This installs the optional `speech` Python extra, the Piper models into ignored
+`models/piper/`, and the one Kokoro model with its voice pack (about 350 MB) into ignored
+`models/kokoro/`. Runtime synthesis stays offline. Restart the server and reload the page.
+Choose a **Language**, then a **Voice** for it: one Kokoro model speaks every Studio voice,
+while each Piper model in `models/piper/` named like `en_GB-alba-medium` whose speaker is a
+known female voice is a Natural speaker of its language; other models are ignored. A language
+with neither offers eSpeak NG's Female 1, 2 and 3 types, marked **Basic**. Voice ids are the
+language (`it`, its configured model), `<language>-<speaker>` (`en-alba`, `it-if_sara`) or
+`<language>+<variant>` (`it+f2`), and any of them works as `speech.voice`. Other languages and
+male voices are rejected. Enter up to 1000 characters, choose a voice and speech rate, and click
 **Speak on node**. Speech uses the same configured speaker/backend as the tone test. Temporary
 WAV files are deleted after playback. Default voice/rate are configured through YAML `speech`
-or `SENTRY_MODE_SPEECH__VOICE=it` / `SENTRY_MODE_SPEECH__RATE=175`. Set `speech.engine` to `piper` to require installed neural voices, `espeak` to force basic
-synthesis, or `auto` (default) to choose installed Piper models per language. Choose each
-language's default model through `speech.models` and set `speech.model_directory` as needed.
-No cloud service is used.
+or `SENTRY_MODE_SPEECH__VOICE=it` / `SENTRY_MODE_SPEECH__RATE=175`. The voice id picks the
+engine; `speech.engine` is `auto` by default and pins one when set to `kokoro`, `piper` or
+`espeak`. Choose each language's default Piper model through `speech.models`, and set
+`speech.model_directory` or `speech.kokoro_directory` as needed. A Studio voice is loaded per
+utterance, so it costs a few seconds before it speaks — worth it where the voice is heard, not
+where a rule must answer instantly. No cloud service is used.
 
 **Save message** keeps the text with its voice, rate and voice modification on the
 **Soundboard**, where each saved message is a card: press it to speak it on the node again,

@@ -32,8 +32,9 @@ SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
 - `microphone`, `speaker` — device names or descriptions from `sentry-mode audio list`;
   runtime numeric Pulse IDs are never stored. `speaker.volume` is the test tone amplitude
   and does not touch the OS sink. `speaker.pipewire_latency_ms` defaults to 250.
-- `speech` — `voice`, `rate`, `engine` (`auto`, `piper`, `espeak`), `models`,
-  `model_directory`, `lead_in_ms`, `tail_ms`.
+- `speech` — `voice`, `rate`, `engine` (`auto`, `kokoro`, `piper`, `espeak`), `models`,
+  `model_directory`, `kokoro_directory`, `lead_in_ms`, `tail_ms`. `auto` lets each voice id
+  pick its own engine; the others pin one.
 - `detection` — startup enablement, model path, confidence threshold (0.45), maximum
   inference rate.
 - `sentry` — initial rules, `detection_fps`, `test_mode`, `action_ttl_seconds`, SSH commands
