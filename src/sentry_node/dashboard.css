@@ -312,8 +312,14 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
    that starts with the one above it is tied to it by a coloured edge. */
 #steps{list-style:none;margin:0;padding:0;counter-reset:step}
 .step{margin:0 0 14px}
-.step-head strong{flex:1;min-width:0;font-size:16.667px}
-.step-head strong:before{counter-increment:step;content:counter(step) '. ';color:var(--muted);font-family:var(--mono)}
+.step-head strong{font-size:16.667px;white-space:nowrap}
+/* The header is the control that opens and closes the step, so it looks like text, not a button. */
+.step-toggle{flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:0;min-height:0;border:0;border-radius:0;background:none;color:inherit;font:inherit;font-weight:600;text-align:left}
+.step-toggle:hover{background:none;border:0;color:var(--green)}
+.step-toggle:before{counter-increment:step;content:counter(step) '.';color:var(--muted);font-family:var(--mono);font-weight:400}
+.step-caret{color:var(--muted);font-size:13.667px}
+.step-summary{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:14.667px var(--mono);font-weight:400;color:var(--muted)}
+.step-body[hidden]+.step-head,.step:has(.step-body[hidden]) .step-head{margin-bottom:0}
 .step-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
 .step-tools button{min-height:34px;padding:5px 11px}
 .step-with{margin:0;font-weight:400;font-size:14.667px;color:var(--muted);white-space:nowrap}
@@ -328,4 +334,7 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
   .step-head{gap:8px}
   /* The checkbox label is longer than the buttons, so it takes its own line first. */
   .step-with{order:3;flex:1 1 100%;white-space:normal}
+  /* Too little room for both: the header keeps the name and drops the summary. */
+  .step-summary{display:none}
+  .step-head strong{white-space:normal}
 }

@@ -751,9 +751,14 @@ def test_the_actions_tab_is_an_ordered_list_of_steps_the_editor_can_rearrange(we
     assert 'data-move="-1"' in page and 'data-move="1"' in page
     assert 'class="danger step-remove"' in page
     assert '<template id="step-wait">' in page and 'data-f="wait-seconds"' in page
+    # A step closes into its header, which then says what the step does.
+    assert 'class="step-toggle" aria-expanded="true"' in page
+    assert 'class="step-summary"' in page
     script = request(base, "/sentry.js")[1].decode()
     # Steps are copies of the templates, so no field id is shared between two steps.
     assert "makeStep(" in script and "$('use-tts')" not in script and "$('rule-text')" not in script
+    # A closed step hides fields the browser cannot focus, so an invalid one opens itself.
+    assert "openStep(" in script and "'invalid'" in script
 
 
 def test_editor_confirms_in_the_page_because_a_framed_dashboard_ignores_dialogs(web):

@@ -131,6 +131,29 @@
     if(type==='ssh')return {...a,command_id:f(step,'command').value};
     return {...a,seconds:val(step,'wait-seconds')};
   }
+  // A step can be closed to keep a long sequence readable; its header then says what it
+  // does, so the order stays legible without opening anything.
+  function openStep(step,open) {
+    step.querySelector('.step-body').hidden=!open;
+    step.querySelector('.step-toggle').setAttribute('aria-expanded',String(open));
+    step.querySelector('.step-caret').textContent=open?'▾':'▸';
+    if(!open)stepSummary(step);
+  }
+  const shorten=text=>text.trim().length>48?text.trim().slice(0,47)+'…':text.trim();
+  const label=(step,name)=>f(step,name).selectedOptions[0]?.textContent||'';
+  function stepSummary(step) {
+    const type=step.dataset.type,say=text=>{step.querySelector('.step-summary').textContent=text;};
+    if(type==='photo')return say(val(step,'photo-count')>1?val(step,'photo-count')+' pictures, every '+val(step,'photo-interval')+' s':'one picture');
+    if(type==='audio')return say(val(step,'audio-duration')+' s of sound');
+    if(type==='video')return say(val(step,'video-duration')+' s'+(f(step,'video-audio').checked?' with sound':', silent'));
+    if(type==='tts')return say(shorten(f(step,'text').value));
+    if(type==='tune')return say(label(step,'tune')+(val(step,'tune-repeat')>1?' ×'+val(step,'tune-repeat'):'')
+      +(val(step,'tune-pitch')?' at '+(val(step,'tune-pitch')>0?'+':'')+val(step,'tune-pitch')+' st':''));
+    if(type==='sound')return say(shorten(label(step,'sound')));
+    if(type==='telegram')return say(shorten(f(step,'telegram-text').value));
+    if(type==='ssh')return say(shorten(label(step,'command')));
+    say(val(step,'wait-seconds')+' s');
+  }
   // Nothing runs alongside the first step, and a rule always keeps at least one step.
   function renderSteps() {
     const all=steps();
@@ -149,13 +172,15 @@
     $('steps').replaceChildren();
     for(const action of actions){const step=makeStep(action.type);$('steps').append(step);fillStep(step,action);}
     for(const step of ttsSteps())syncSoundboard(step);
+    // One step is the whole rule, so it opens; a sequence opens closed and is read as a list.
+    for(const step of steps()){stepSummary(step);openStep(step,actions.length<2);}
     renderSteps();
   }
   $('add-step').addEventListener('click',()=>{
     if(steps().length>=MAX_STEPS)return;
     const step=makeStep($('new-step').value);
     $('steps').append(step);fillStep(step,{type:$('new-step').value});
-    renderSteps();touched();ruleMessage('');
+    stepSummary(step);renderSteps();touched();ruleMessage('');
     step.scrollIntoView({block:'nearest'});
   });
   $('steps').addEventListener('click',event=>{
@@ -166,6 +191,9 @@
       if(!other)return;
       if(other===step.previousElementSibling)other.before(step);else other.after(step);
       renderSteps();touched();return;
+    }
+    if(button.classList.contains('step-toggle')) {
+      openStep(step,step.querySelector('.step-body').hidden);return;
     }
     if(button.classList.contains('step-remove')) {
       if(steps().length<2)return;
@@ -185,12 +213,18 @@
     if(name==='soundboard')useSoundboard(step,event.target.value);
     else if(name==='sound')renderSounds(step);
     else if(name==='sound-file')uploadSound(step);
+    stepSummary(step);
   });
   $('steps').addEventListener('input',event=>{
     const step=event.target.closest('.step');if(!step)return;
+    stepSummary(step);
     if(step.dataset.type==='tts')syncSoundboard(step);
     if(event.target.dataset.f==='photo-count')f(step,'photo-interval').disabled=val(step,'photo-count')<=1;
   });
+  $('rule-form').addEventListener('invalid',event=>{
+    const step=event.target.closest?.('.step');
+    if(step)openStep(step,true);
+  },true);
   function showRegion(){$('region-fields').hidden=!$('use-region').checked;}
   $('use-region').addEventListener('change',showRegion);
   // Speaking the draft announcement uses the same speaker endpoint as the Voice view,

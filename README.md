@@ -196,7 +196,9 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
    an audio recording, a video, an announcement, a built-in tune, a saved audio file, a
    saved SSH command, a Telegram message, or a **Wait** — and ↑ ↓ ✕ reorder or remove one.
    A rule holds up to 16 steps and the same kind may appear as often as needed, so a rule
-   can speak, wait four seconds and speak again.
+   can speak, wait four seconds and speak again. Clicking a step's header closes it to a
+   single line that says what it does; a rule of several steps opens closed, and a step
+   with something missing opens itself when you save.
    Steps run from top to bottom. Tick **Together with the step above** to start a step at
    the same moment as the one before it; consecutive ticked steps form one group, and the
    sequence waits for the whole group before moving on. Only one step can use the speaker
