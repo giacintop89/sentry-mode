@@ -130,6 +130,8 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
   .rule-workbench{padding:12px 14px}
   #rule-editor{display:grid;grid-template-columns:minmax(0,1fr) minmax(200px,45%);grid-template-rows:auto minmax(0,1fr) auto;column-gap:12px}
   #rule-heading{grid-column:1;grid-row:1;align-self:center}
+  /* With no heading beside them the tabs take the whole row rather than half of it. */
+  #rule-editor:has(#rule-heading[hidden]) .editor-tabs{grid-column:1/-1}
   .rule-workbench .editor-tabs{grid-column:2;grid-row:1;margin:0 0 10px}
   .editor-tabs button{padding:10px 12px}
   #panel-conditions,#panel-actions{grid-column:1/-1;grid-row:2;scrollbar-gutter:stable}

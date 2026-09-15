@@ -200,7 +200,9 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
    test button: **Test message** and **Test tune** play the editor's settings on the node
    speaker right away, while **Test send** and **Test command** run that single action
    through Sentry, so they are refused while armed, log to the event log, and only log when
-   test mode is on. None of them saves the rule. Each rule supports one action of each type.
+   test mode is on. They act on the first click, since each names what it does; **Test rule**,
+   which can fire several actions at once, asks first: it says what will run and acts on a
+   second click. None of them saves the rule. Each rule supports one action of each type.
 3. To rehearse first, check **Test mode**, save settings and start Sentry. Confirm `triggered` and `would_run` events in the event log.
 4. Disarm, uncheck **Test mode**, save settings, and start again to execute actions.
 5. Pause live video on the Video view to save work while monitoring continues. Disarm Sentry to stop rules;

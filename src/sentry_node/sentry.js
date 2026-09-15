@@ -93,9 +93,10 @@
   // Telegram and SSH have nothing local to rehearse with, so their test runs through the
   // Sentry executor as a rule of one action: the draft is validated, refused while armed,
   // logged in the event log, and logged only when test mode is on, exactly like a trigger.
-  async function testAction(action, id, warning) {
+  // The button says what it does, so it acts on the first click; Test rule, which can fire
+  // several of these at once without saying so, is the one that still asks.
+  async function testAction(action, id) {
     if(!$('rule-form').reportValidity())return;
-    if(!$('test-mode').checked&&!armButton($(id))){message(warning,'error');return;}
     $(id).disabled=true;message('Testing this action on the node…');
     try{message((await api('sentry/rules/test',{...collectRule(),actions:[action]},true)).message,'success');}
     catch(error){message(error.message,'error');}
@@ -103,13 +104,14 @@
   }
   $('test-telegram').addEventListener('click',()=>testAction(
     {type:'telegram',text:$('rule-telegram-text').value,silent:$('rule-telegram-silent').checked},
-    'test-telegram','This sends the message to the saved Telegram chat for real. Click again to send.'));
+    'test-telegram'));
   $('test-ssh').addEventListener('click',()=>testAction(
-    {type:'ssh',command_id:$('rule-command').value},
-    'test-ssh','This runs the saved command on the remote machine for real. Click again to run.'));
+    {type:'ssh',command_id:$('rule-command').value},'test-ssh'));
   function loadRule(index) {
     editing=index;const r=config.rules[index]||{name:'',enabled:true,object:'person',min_confidence:.7,min_count:1,consecutive_detections:3,rearm_after_absence_seconds:10,cooldown_seconds:60,region:null,actions:[{type:'tts',text:'Hello. Please wait here.',voice:'en',rate:175,effects:{preset:'natural',pitch:0,volume:60}}]};
-    $('rule-heading').textContent=index<0?'New rule':'Edit rule · '+r.name;
+    // The rule library already highlights the rule being edited, so the heading only
+    // appears for a new rule, which is highlighted nowhere.
+    $('rule-heading').textContent=index<0?'New rule':'Edit rule · '+r.name;$('rule-heading').hidden=index>=0;
     for(const [id,value] of Object.entries({'rule-name':r.name,'rule-object':r.object,'rule-confidence':r.min_confidence*100,'rule-count':r.min_count,'rule-hits':r.consecutive_detections,'rule-absence':r.rearm_after_absence_seconds,'rule-cooldown':r.cooldown_seconds}))$(id).value=value;
     $('rule-enabled').checked=r.enabled;$('use-region').checked=!!r.region;
     ['left','top','right','bottom'].forEach((side,i)=>$('region-'+side).value=(r.region||[0,0,1,1])[i]*100);
