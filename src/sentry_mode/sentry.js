@@ -461,7 +461,10 @@
       if(capture.kind==='video'){media.controls=true;media.preload='metadata';media.playsInline=true;}
       else if(capture.kind==='audio'){media.controls=true;media.preload='metadata';}
       else{media.loading='lazy';media.alt='Photo from rule '+capture.rule;}
-      if(capture.kind!=='photo')card.append(media);
+      // The player keeps a box of its own: padding on a media element is not where every
+      // browser draws its controls.
+      if(capture.kind==='audio'){const frame=document.createElement('div');frame.className='capture-audio';frame.append(media);card.append(frame);}
+      else if(capture.kind!=='photo')card.append(media);
       else{const open=document.createElement('a');open.href=url;open.target='_blank';open.rel='noopener';open.append(media);card.append(open);}
       const meta=document.createElement('div');meta.className='capture-meta';
       const title=document.createElement('strong');title.textContent={photo:'Photo · ',video:'Video · ',audio:'Audio · '}[capture.kind]+capture.rule.replaceAll('-',' ');
