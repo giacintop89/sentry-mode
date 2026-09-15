@@ -192,8 +192,19 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
 1. Edit/save a rule: object category, confidence, count, confirmation count, cooldown, and
    optional rectangular region. Region coordinates are percentages of the image; an object's
    bounding-box center must be inside it.
-2. Select a photo, an audio recording, a video, an announcement, a built-in tune, a saved
-   audio file, a saved SSH command, and/or a Telegram message.
+2. Build the action sequence on the **Actions** tab. **Add step** appends a step — a photo,
+   an audio recording, a video, an announcement, a built-in tune, a saved audio file, a
+   saved SSH command, a Telegram message, or a **Wait** — and ↑ ↓ ✕ reorder or remove one.
+   A rule holds up to 16 steps and the same kind may appear as often as needed, so a rule
+   can speak, wait four seconds and speak again.
+   Steps run from top to bottom. Tick **Together with the step above** to start a step at
+   the same moment as the one before it; consecutive ticked steps form one group, and the
+   sequence waits for the whole group before moving on. Only one step can use the speaker
+   at a time, so grouped announcements, tunes and audio files still take turns. A step that
+   fails is logged as `action_failed` and the sequence carries on with the next one.
+   A **Wait** step (0.1–60 seconds) holds the sequence where it stands; the steps after it
+   get that much longer before they expire, and photo, audio and video keep recording in
+   the background while it waits.
    Announcements support language, speed, Demon/Chipmunk/custom pitch, and volume. Tunes
    support repeats (1-5), volume, and **Pitch (semitones)** from -24 to +24, which moves every
    note by the same interval and leaves the tune's length alone. Each action carries its own
@@ -204,7 +215,7 @@ Sentry starts **disarmed**, with **test mode off**, so actions run as soon as it
    not what you asked for by pressing a button, so a Telegram test needs the credentials a
    logged-only rule can go without. They act on the first click, since each names what it
    does; **Test rule**, which can fire several actions at once, says what will run and acts
-   on a second click. None of them saves the rule. Each rule supports one action of each type.
+   on a second click. None of them saves the rule.
 3. To rehearse first, check **Test mode**, save settings and start Sentry. Confirm `triggered` and `would_run` events in the event log.
 4. Disarm, uncheck **Test mode**, save settings, and start again to execute actions.
 5. Pause live video on the Video view to save work while monitoring continues. Disarm Sentry to stop rules;
@@ -218,9 +229,9 @@ MP4 of the chosen duration (1–60 seconds) at up to 1280 pixels wide and 10 fra
 while it records, the camera temporarily switches to that size and rate. **Record sound with
 the video** (on by default) muxes microphone audio into the MP4; when the microphone is
 unavailable the video is still saved, silent, and the event log says why. Photo, audio and
-video run before the other actions, and audio and video record in the background, so an
-announcement starts without waiting for them. Disarming stops a recording early and keeps
-what was captured.
+video steps record in the background, so the next step starts without waiting for them; put
+a **Wait** after one to hold the sequence for as long as it records. Disarming stops a
+recording early and keeps what was captured.
 Encoding needs `ffmpeg` with libx264 (installed by the Pi bootstrap helper). Files are saved
 in `.local/captures/` (override with `captures_directory` or
 `SENTRY_NODE_CAPTURES_DIRECTORY`); only the newest 200 are kept. The **Captures** tab lists
@@ -241,7 +252,8 @@ the next trigger. Missing/stale frames do not count as confirmation or absence. 
 people of the same category are treated as scene occupancy, not tracked identities.
 Rules are evaluated locally; recordings and snapshots are not saved automatically.
 
-Actions use a separate queue capped at 16 entries. Old actions expire after 15 seconds by
+Actions use a separate queue capped at 16 entries, one entry per step (a group of steps
+that start together counts as one). Old actions expire after 15 seconds by
 default, including announcements waiting for a busy PTT/speech operation. Failed actions
 are logged without automatic retries. Disarming discards queued work and cancels local
 playback/SSH/Telegram requests. Camera or detector failure disarms Sentry. An SSH command already executing

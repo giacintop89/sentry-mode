@@ -22,6 +22,7 @@ from sentry_node.sentry.config import (
     TTSAction,
     TuneAction,
     VideoAction,
+    WaitAction,
 )
 from sentry_node.sentry.engine import Job, RuleState, Sentry
 from sentry_node.vision.detection import Detection
@@ -174,9 +175,9 @@ def test_disarm_cancels_running_tts_discards_queue_and_releases_audio(sentry):
 
     with patch("sentry_node.sentry.engine.speak", side_effect=speak):
         sentry.arm()
-        sentry.jobs.put(Job("first", TTSAction(text="hello"), time.monotonic()))
+        sentry.jobs.put(Job("first", [TTSAction(text="hello")], time.monotonic()))
         assert started.wait(2)
-        sentry.jobs.put(Job("pending", TTSAction(text="must not run"), time.monotonic()))
+        sentry.jobs.put(Job("pending", [TTSAction(text="must not run")], time.monotonic()))
         sentry.disarm()
     assert not sentry.thread.is_alive()
     assert not sentry.audio_lock.locked()
@@ -198,7 +199,7 @@ def test_expired_jobs_do_not_speak_and_backlog_is_bounded(sentry):
     sentry.config.test_mode = False
     with patch("sentry_node.sentry.engine.speak") as speech:
         sentry.arm()
-        sentry.jobs.put(Job("old", TTSAction(text="old"), time.monotonic() - 100))
+        sentry.jobs.put(Job("old", [TTSAction(text="old")], time.monotonic() - 100))
         deadline = time.monotonic() + 2
         while not events(sentry, "expired") and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -358,9 +359,67 @@ def test_rule_test_runs_for_real_in_test_mode_and_refuses_unrunnable_actions(sen
         sentry.test(draft)
 
 
-def test_duplicate_action_type_cannot_be_silently_lost_by_editor():
-    with pytest.raises(ValueError, match="one action of each type"):
-        Rule(name="test", object="person", actions=[TTSAction(text="one"), TTSAction(text="two")])
+def test_a_rule_repeats_action_types_and_refuses_a_sequence_that_only_waits():
+    rule = Rule(
+        name="test",
+        object="person",
+        actions=[TTSAction(text="one"), WaitAction(seconds=3), TTSAction(text="two")],
+    )
+    assert [action.type for action in rule.actions] == ["tts", "wait", "tts"]
+    with pytest.raises(ValueError, match="besides wait"):
+        Rule(name="idle", object="person", actions=[WaitAction()])
+    with pytest.raises(ValueError):
+        Rule(name="long", object="person", actions=[TTSAction(text="x")] * 17)
+    for seconds in (0, 61):
+        with pytest.raises(ValueError):
+            WaitAction(seconds=seconds)
+
+
+def test_steps_marked_together_share_a_group_and_a_wait_defers_later_deadlines():
+    rule = Rule(
+        name="seq",
+        object="person",
+        actions=[
+            TuneAction(),
+            TTSAction(text="hello", with_previous=True),
+            WaitAction(seconds=5),
+            TelegramAction(text="done"),
+        ],
+    )
+    jobs = Sentry._groups(rule, 100.0)
+    assert [[step.type for step in job.steps] for job in jobs] == [
+        ["tune", "tts"],
+        ["wait"],
+        ["telegram"],
+    ]
+    # Only the group after the wait is given the extra five seconds before it goes stale.
+    assert [job.delay for job in jobs] == [0, 0, 5]
+    assert all(job.rule == "seq" and job.created == 100.0 for job in jobs)
+
+
+def test_a_group_runs_its_steps_at_once_and_a_failed_step_does_not_stop_the_sequence(sentry):
+    sentry.config.test_mode = False
+    sentry.config.rules[0].actions = [
+        SSHAction(command_id="missing"),
+        TTSAction(text="hello", with_previous=True),
+        WaitAction(seconds=0.2),
+        TTSAction(text="goodbye"),
+    ]
+    spoken, running = [], threading.Event()
+
+    def speak(_settings, text, *args, **kwargs):
+        spoken.append(text)
+        running.set()
+
+    sentry.cancelled.clear()
+    with patch("sentry_node.sentry.engine.speak", side_effect=speak):
+        for job in Sentry._groups(sentry.config.rules[0], time.monotonic()):
+            sentry._run(job)
+    assert running.is_set()
+    # The SSH step has no saved command, so it fails; the rest of the sequence still runs.
+    assert [e["message"] for e in events(sentry, "action_failed")] == ["'missing'"]
+    assert spoken == ["hello", "goodbye"]
+    assert [e["message"] for e in events(sentry, "waiting")] == ["Waiting 0.2 s."]
 
 
 TOKEN = "123456:" + "a" * 35  # Deliberately fake; tests never contact Telegram.
@@ -496,8 +555,10 @@ def test_rule_accepts_one_of_every_action_and_bounds_video_duration():
     ):
         with pytest.raises(ValueError):
             PhotoAction(**invalid)
-    with pytest.raises(ValueError, match="one action of each type"):
-        Rule(name="twice", object="person", actions=[PhotoAction(), PhotoAction()])
+    assert (
+        len(Rule(name="twice", object="person", actions=[PhotoAction(), PhotoAction()]).actions)
+        == 2
+    )
 
 
 def test_test_mode_logs_photo_and_video_without_touching_the_camera(sentry):
@@ -620,7 +681,7 @@ def test_tune_action_validates_logs_in_test_mode_and_plays_on_the_speaker(sentry
 
     with patch("sentry_node.hardware.speaker.Speaker.play_file", play):
         sentry.arm()
-        sentry.jobs.put(Job("tune", TuneAction(tune="chime"), time.monotonic()))
+        sentry.jobs.put(Job("tune", [TuneAction(tune="chime")], time.monotonic()))
         assert played.wait(2)
         deadline = time.monotonic() + 2
         while not events(sentry, "action_finished") and time.monotonic() < deadline:
@@ -644,7 +705,7 @@ def test_every_tune_renders_and_the_editor_offers_each_one(tmp_path):
         with wave.open(str(path)) as stream:
             assert stream.getnframes() > 0
     page = files("sentry_node").joinpath("sentry.html").read_text()
-    offered = re.search(r'<select id="rule-tune">(.*?)</select>', page).group(1)
+    offered = re.search(r'<select id="rule-tune" data-f="tune">(.*?)</select>', page).group(1)
     assert re.findall(r'value="([a-z]+)"', offered) == list(TUNES)
 
 
@@ -711,7 +772,7 @@ def test_sound_action_needs_its_file_and_plays_it_under_the_audio_lock(sentry):
 
     with patch.object(sentry.sounds, "play", side_effect=play):
         sentry.arm()
-        sentry.jobs.put(Job("r", SoundAction(sound=missing.sound, repeat=3), time.monotonic()))
+        sentry.jobs.put(Job("r", [SoundAction(sound=missing.sound, repeat=3)], time.monotonic()))
         deadline = time.monotonic() + 2
         while not events(sentry, "action_finished") and time.monotonic() < deadline:
             time.sleep(0.01)

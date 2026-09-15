@@ -39,7 +39,7 @@
     $('save-help').textContent = armed ? 'Disarm before changing saved rules or actions.' : dirty.size ? 'Unsaved changes: '+[...dirty].join(', ')+'. Save them before starting Sentry.' : '';
   }
   for (const [id, section] of [['settings','settings'],['rule-editor','rule'],['ssh-editor','command'],['telegram-editor','Telegram']]) {
-    $(id).addEventListener('input', event => { if (event.target.id==='command-select'||event.target.id==='sound-file') return; dirty.add(section); locks(); });
+    $(id).addEventListener('input', event => { if (event.target.id==='command-select'||event.target.dataset.f==='sound-file') return; dirty.add(section); locks(); });
   }
   function options(select, entries, selected) {
     select.replaceChildren();
@@ -47,9 +47,25 @@
     if (selected !== undefined) select.value = selected;
   }
   function refreshCommands() {
-    const current = $('rule-command').value;
-    options($('rule-command'), Object.keys(config.ssh_commands).map(id=>[id,id]), current);
+    for (const step of steps()) if (step.dataset.type === 'ssh') fillCommands(step, f(step,'command').value);
     options($('command-select'), [['','New command'],...Object.keys(config.ssh_commands).map(id=>[id,id])]);
+  }
+  // A rule keeps the command id, so a command deleted from Integrations stays visible here
+  // as a missing entry instead of silently becoming another command.
+  function fillCommands(step, selected) {
+    const entries = Object.keys(config.ssh_commands).map(id=>[id,id]);
+    if (selected && !config.ssh_commands[selected]) entries.unshift([selected, 'Missing command: ' + selected]);
+    if (!entries.length) entries.push(['', 'No saved commands yet — add one in Integrations']);
+    options(f(step,'command'), entries, selected || entries[0][0]);
+  }
+  // One line for the sequence: steps that start together are joined with +, the rest with an arrow.
+  function sequence(actions) {
+    const groups=[];
+    for(const action of actions){
+      if(groups.length&&action.with_previous)groups[groups.length-1].push(action.type.toUpperCase());
+      else groups.push([action.type.toUpperCase()]);
+    }
+    return groups.map(group=>group.join('+')).join(' → ');
   }
   function renderRules() {
     $('rules').replaceChildren();
@@ -57,56 +73,154 @@
       const row=document.createElement('button');row.type='button';row.className='rule'+(index===editing?' editing':'');const text=document.createElement('span');
       if(index===editing)row.setAttribute('aria-current','true');
       const title=document.createElement('strong');title.textContent=rule.name;
-      const detail=document.createElement('small');detail.textContent=(rule.enabled?'Enabled':'Disabled')+' · '+rule.object+' · '+rule.actions.map(a=>a.type.toUpperCase()).join(' + ');
+      const detail=document.createElement('small');detail.textContent=(rule.enabled?'Enabled':'Disabled')+' · '+rule.object+' · '+sequence(rule.actions);
       text.append(title,detail);row.append(text);
       row.addEventListener('click',()=>{if(index===editing)return;if(dirty.has('rule'))return ruleMessage('Save the current rule or reset the editor first.','error');loadRule(index);});$('rules').append(row);
     });locks();
   }
-  function showActionOptions() {
-    $('photo-options').hidden=!$('use-photo').checked;$('rule-photo-interval').disabled=num('rule-photo-count')<=1;
-    $('video-options').hidden=!$('use-video').checked;$('rule-video-duration').required=$('use-video').checked;
-    $('audio-options').hidden=!$('use-audio').checked;$('rule-audio-duration').required=$('use-audio').checked;
-    $('tts-options').hidden=!$('use-tts').checked;$('tune-options').hidden=!$('use-tune').checked;$('sound-options').hidden=!$('use-sound').checked;$('rule-sound').required=$('use-sound').checked;$('ssh-options').hidden=!$('use-ssh').checked;
-    $('telegram-options').hidden=!$('use-telegram').checked;
-    $('rule-telegram-text').required=$('use-telegram').checked;
-    $('region-fields').hidden=!$('use-region').checked;
-    $('rule-text').required=$('use-tts').checked;
-    $('rule-command').required=$('use-ssh').checked;
+  // A rule's actions are an ordered list of steps: each one is a copy of its type's
+  // template, so the same kind of action can appear as often as the sequence needs it.
+  // Ids inside a copy are suffixed to stay unique for their labels; the code reaches a
+  // step's own fields through data-f instead.
+  const STEP_LABELS={photo:'Take a picture',audio:'Record audio',video:'Record a video',tts:'Speak a message',tune:'Play a tune',sound:'Play an audio file',telegram:'Send a Telegram message',ssh:'Run a saved SSH command',wait:'Wait'};
+  const MAX_STEPS=16;
+  let stepSeq=0;
+  const f=(step,name)=>step.querySelector('[data-f="'+name+'"]');
+  const val=(step,name)=>Number(f(step,name).value);
+  const steps=()=>[...$('steps').children];
+  const ttsSteps=()=>steps().filter(step=>step.dataset.type==='tts');
+  function touched(){dirty.add('rule');locks();}
+  function makeStep(type) {
+    const n=++stepSeq;
+    const step=$('step-frame').content.firstElementChild.cloneNode(true);
+    const body=$('step-'+type).content.cloneNode(true);
+    for(const el of body.querySelectorAll('[id]'))el.id+='-'+n;
+    for(const el of body.querySelectorAll('label[for]'))el.htmlFor+='-'+n;
+    step.dataset.type=type;
+    step.querySelector('.step-title').textContent=STEP_LABELS[type];
+    step.querySelector('.step-body').append(body);
+    return step;
   }
-  for(const id of ['use-photo','use-audio','use-video','use-tts','use-tune','use-sound','use-ssh','use-telegram','use-region'])$(id).addEventListener('change',showActionOptions);
-  $('rule-photo-count').addEventListener('input',showActionOptions);
+  function fillStep(step,a) {
+    step.querySelector('.step-together').checked=!!a.with_previous;
+    const set=(name,value)=>{f(step,name).value=value;};
+    if(a.type==='photo'){set('photo-count',a.count??1);set('photo-interval',a.interval_seconds??2);f(step,'photo-interval').disabled=(a.count??1)<=1;}
+    else if(a.type==='audio')set('audio-duration',a.duration_seconds??10);
+    else if(a.type==='video'){set('video-duration',a.duration_seconds??10);f(step,'video-audio').checked=a.audio!==false;}
+    else if(a.type==='tts'){
+      voiceOption(step,a.voice);set('text',a.text??'Hello. Please wait here.');set('voice',a.voice||'en');set('rate',a.rate||175);
+      set('preset',a.effects?.preset||'natural');set('pitch',a.effects?.pitch||0);set('volume',a.effects?.volume??60);
+      fillSoundboard(step);
+    }
+    else if(a.type==='tune'){set('tune',a.tune||'chime');set('tune-repeat',a.repeat||1);set('tune-volume',a.volume??60);set('tune-pitch',a.pitch??0);}
+    else if(a.type==='sound'){renderSounds(step,a.sound||'');set('sound-repeat',a.repeat||1);set('sound-volume',a.volume??80);}
+    else if(a.type==='telegram'){set('telegram-text',a.text??'Sentry detected a person at the entrance.');f(step,'telegram-silent').checked=!!a.silent;}
+    else if(a.type==='ssh')fillCommands(step,a.command_id||'');
+    else if(a.type==='wait')set('wait-seconds',a.seconds??2);
+  }
+  function readStep(step) {
+    const type=step.dataset.type,a={type,with_previous:step.querySelector('.step-together').checked};
+    if(type==='photo')return {...a,count:val(step,'photo-count'),interval_seconds:val(step,'photo-interval')};
+    if(type==='audio')return {...a,duration_seconds:val(step,'audio-duration')};
+    if(type==='video')return {...a,duration_seconds:val(step,'video-duration'),audio:f(step,'video-audio').checked};
+    if(type==='tts')return {...a,text:f(step,'text').value,voice:f(step,'voice').value,rate:val(step,'rate'),
+      effects:{preset:f(step,'preset').value,pitch:val(step,'pitch'),volume:val(step,'volume')}};
+    if(type==='tune')return {...a,tune:f(step,'tune').value,repeat:val(step,'tune-repeat'),volume:val(step,'tune-volume'),pitch:val(step,'tune-pitch')};
+    if(type==='sound')return {...a,sound:f(step,'sound').value,repeat:val(step,'sound-repeat'),volume:val(step,'sound-volume')};
+    if(type==='telegram')return {...a,text:f(step,'telegram-text').value,silent:f(step,'telegram-silent').checked};
+    if(type==='ssh')return {...a,command_id:f(step,'command').value};
+    return {...a,seconds:val(step,'wait-seconds')};
+  }
+  // Nothing runs alongside the first step, and a rule always keeps at least one step.
+  function renderSteps() {
+    const all=steps();
+    all.forEach((step,index)=>{
+      step.querySelector('.step-with').hidden=index===0;
+      if(index===0)step.querySelector('.step-together').checked=false;
+      const [up,down]=step.querySelectorAll('.step-move');
+      up.disabled=index===0;down.disabled=index===all.length-1;
+      step.querySelector('.step-remove').disabled=all.length<2;
+    });
+    $('add-step').disabled=all.length>=MAX_STEPS;
+    $('steps-help').textContent=all.length>=MAX_STEPS?'A rule runs at most '+MAX_STEPS+' steps. Remove one to add another.'
+      :'A rule runs up to '+MAX_STEPS+' steps. A step that fails is logged and the sequence carries on.';
+  }
+  function setSteps(actions) {
+    $('steps').replaceChildren();
+    for(const action of actions){const step=makeStep(action.type);$('steps').append(step);fillStep(step,action);}
+    for(const step of ttsSteps())syncSoundboard(step);
+    renderSteps();
+  }
+  $('add-step').addEventListener('click',()=>{
+    if(steps().length>=MAX_STEPS)return;
+    const step=makeStep($('new-step').value);
+    $('steps').append(step);fillStep(step,{type:$('new-step').value});
+    renderSteps();touched();ruleMessage('');
+    step.scrollIntoView({block:'nearest'});
+  });
+  $('steps').addEventListener('click',event=>{
+    const button=event.target.closest('button');if(!button)return;
+    const step=button.closest('.step');
+    if(button.classList.contains('step-move')) {
+      const other=Number(button.dataset.move)<0?step.previousElementSibling:step.nextElementSibling;
+      if(!other)return;
+      if(other===step.previousElementSibling)other.before(step);else other.after(step);
+      renderSteps();touched();return;
+    }
+    if(button.classList.contains('step-remove')) {
+      if(steps().length<2)return;
+      step.remove();renderSteps();touched();return;
+    }
+    const test=button.dataset.test;
+    if(test==='message')testMessage(step,button);
+    else if(test==='tune')testTune(step,button);
+    else if(test==='telegram'||test==='ssh')testAction(readStep(step),button);
+    else if(test==='sound-upload')f(step,'sound-file').click();
+    else if(test==='sound-preview')previewSound(step);
+    else if(test==='sound-delete')deleteSound(step,button);
+  });
+  $('steps').addEventListener('change',event=>{
+    const step=event.target.closest('.step');if(!step)return;
+    const name=event.target.dataset.f;
+    if(name==='soundboard')useSoundboard(step,event.target.value);
+    else if(name==='sound')renderSounds(step);
+    else if(name==='sound-file')uploadSound(step);
+  });
+  $('steps').addEventListener('input',event=>{
+    const step=event.target.closest('.step');if(!step)return;
+    if(step.dataset.type==='tts')syncSoundboard(step);
+    if(event.target.dataset.f==='photo-count')f(step,'photo-interval').disabled=val(step,'photo-count')<=1;
+  });
+  function showRegion(){$('region-fields').hidden=!$('use-region').checked;}
+  $('use-region').addEventListener('change',showRegion);
   // Speaking the draft announcement uses the same speaker endpoint as the Voice view,
   // so it is heard exactly as a trigger would say it, without saving or arming the rule.
-  $('test-message').addEventListener('click',async()=>{
-    if(!$('rule-text').reportValidity())return;
-    const button=$('test-message');button.disabled=true;button.textContent='Speaking…';message('');
-    try{const data=await api('speech',{text:$('rule-text').value,voice:$('rule-voice').value,rate:num('rule-rate'),effects:{preset:$('rule-preset').value,pitch:num('rule-pitch'),volume:num('rule-volume')}},true);message(data.message,'success');}
+  async function testMessage(step,button) {
+    if(!f(step,'text').reportValidity())return;
+    button.disabled=true;button.textContent='Speaking…';message('');
+    try{const data=await api('speech',{text:f(step,'text').value,voice:f(step,'voice').value,rate:val(step,'rate'),
+      effects:{preset:f(step,'preset').value,pitch:val(step,'pitch'),volume:val(step,'volume')}},true);message(data.message,'success');}
     catch(error){message(error.message,'error');}
     finally{button.disabled=false;button.textContent='Test message';}
-  });
-  $('test-tune').addEventListener('click',async()=>{
-    const button=$('test-tune');button.disabled=true;button.textContent='Playing…';message('');
-    try{const data=await api('tunes/play',{tune:$('rule-tune').value,repeat:num('rule-tune-repeat'),volume:num('rule-tune-volume'),pitch:num('rule-tune-pitch')},true);message(data.message,'success');}
+  }
+  async function testTune(step,button) {
+    button.disabled=true;button.textContent='Playing…';message('');
+    try{const data=await api('tunes/play',{tune:f(step,'tune').value,repeat:val(step,'tune-repeat'),volume:val(step,'tune-volume'),pitch:val(step,'tune-pitch')},true);message(data.message,'success');}
     catch(error){message(error.message,'error');}
     finally{button.disabled=false;button.textContent='Test tune';}
-  });
+  }
   // Telegram and SSH have nothing local to rehearse with, so their test runs through the
   // Sentry executor as a rule of one action: the draft is validated, refused while armed,
   // logged in the event log, and logged only when test mode is on, exactly like a trigger.
   // The button says what it does, so it acts on the first click; Test rule, which can fire
   // several of these at once without saying so, is the one that still asks.
-  async function testAction(action, id) {
+  async function testAction(action,button) {
     if(!$('rule-form').reportValidity())return;
-    $(id).disabled=true;message('Testing this action on the node…');
-    try{message((await api('sentry/rules/test',{...collectRule(),actions:[action]},true)).message,'success');}
+    button.disabled=true;message('Testing this step on the node…');
+    try{message((await api('sentry/rules/test',{...collectRule(),actions:[{...action,with_previous:false}]},true)).message,'success');}
     catch(error){message(error.message,'error');}
-    finally{$(id).disabled=false;}
+    finally{button.disabled=false;}
   }
-  $('test-telegram').addEventListener('click',()=>testAction(
-    {type:'telegram',text:$('rule-telegram-text').value,silent:$('rule-telegram-silent').checked},
-    'test-telegram'));
-  $('test-ssh').addEventListener('click',()=>testAction(
-    {type:'ssh',command_id:$('rule-command').value},'test-ssh'));
   function loadRule(index) {
     editing=index;const r=config.rules[index]||{name:'',enabled:true,object:'person',min_confidence:.7,min_count:1,consecutive_detections:3,rearm_after_absence_seconds:10,cooldown_seconds:60,region:null,actions:[{type:'tts',text:'Hello. Please wait here.',voice:'en',rate:175,effects:{preset:'natural',pitch:0,volume:60}}]};
     // The rule library already highlights the rule being edited, so the heading only
@@ -115,107 +229,85 @@
     for(const [id,value] of Object.entries({'rule-name':r.name,'rule-object':r.object,'rule-confidence':r.min_confidence*100,'rule-count':r.min_count,'rule-hits':r.consecutive_detections,'rule-absence':r.rearm_after_absence_seconds,'rule-cooldown':r.cooldown_seconds}))$(id).value=value;
     $('rule-enabled').checked=r.enabled;$('use-region').checked=!!r.region;
     ['left','top','right','bottom'].forEach((side,i)=>$('region-'+side).value=(r.region||[0,0,1,1])[i]*100);
-    const t=r.actions.find(a=>a.type==='tts'),ssh=r.actions.find(a=>a.type==='ssh');
-    $('use-tts').checked=!!t;$('use-ssh').checked=!!ssh;
-    const recording=r.actions.find(a=>a.type==='video');
-    const photo=r.actions.find(a=>a.type==='photo');
-    const audio=r.actions.find(a=>a.type==='audio');
-    $('use-audio').checked=!!audio;$('rule-audio-duration').value=audio?.duration_seconds||10;
-    $('rule-video-audio').checked=recording?recording.audio!==false:true;
-    $('use-photo').checked=!!photo;$('rule-photo-count').value=photo?.count||1;$('rule-photo-interval').value=photo?.interval_seconds||2;$('use-video').checked=!!recording;$('rule-video-duration').value=recording?.duration_seconds||10;
-    voiceOption(t?.voice);$('rule-text').value=t?.text||'';$('rule-voice').value=t?.voice||'en';$('rule-rate').value=t?.rate||175;
-    $('rule-preset').value=t?.effects?.preset||'natural';$('rule-pitch').value=t?.effects?.pitch||0;$('rule-volume').value=t?.effects?.volume??60;
-    const tune=r.actions.find(a=>a.type==='tune');
-    $('use-tune').checked=!!tune;$('rule-tune').value=tune?.tune||'chime';$('rule-tune-repeat').value=tune?.repeat||1;$('rule-tune-volume').value=tune?.volume??60;$('rule-tune-pitch').value=tune?.pitch??0;
-    const sound=r.actions.find(a=>a.type==='sound');
-    $('use-sound').checked=!!sound;renderSounds(sound?.sound||'');$('rule-sound-repeat').value=sound?.repeat||1;$('rule-sound-volume').value=sound?.volume??80;
-    if(ssh)$('rule-command').value=ssh.command_id;
-    const telegram=r.actions.find(a=>a.type==='telegram');
-    $('use-telegram').checked=!!telegram;
-    $('rule-telegram-text').value=telegram?.text||'Sentry detected a person at the entrance.';
-    $('rule-telegram-silent').checked=telegram?.silent||false;
-    syncSoundboard();ruleMessage('');dirty.delete('rule');showActionOptions();renderRules();
+    setSteps(r.actions);
+    ruleMessage('');dirty.delete('rule');showRegion();renderRules();
   }
   // Saved messages are copied into the rule, so deleting one from the soundboard never breaks a rule.
   let soundboard=[];
-  const ttsFields=['rule-text','rule-voice','rule-rate','rule-preset','rule-pitch','rule-volume'];
-  function voiceOption(id) {
-    if(id&&![...$('rule-voice').options].some(o=>o.value===id))$('rule-voice').add(new Option(id,id));
+  function voiceOption(step,id) {
+    if(id&&![...f(step,'voice').options].some(o=>o.value===id))f(step,'voice').add(new Option(id,id));
   }
-  function syncSoundboard() {
-    const match=soundboard.find(m=>m.text===$('rule-text').value&&(m.voice==null||m.voice===$('rule-voice').value)
-      &&(m.rate==null||m.rate===num('rule-rate'))&&(m.effects?.preset||'natural')===$('rule-preset').value
-      &&(m.effects?.preset!=='custom'||Number(m.effects.pitch)===num('rule-pitch'))&&(m.effects?.volume==null||m.effects.volume===num('rule-volume')));
-    $('rule-soundboard').value=match?match.id:'';
+  function syncSoundboard(step) {
+    const match=soundboard.find(m=>m.text===f(step,'text').value&&(m.voice==null||m.voice===f(step,'voice').value)
+      &&(m.rate==null||m.rate===val(step,'rate'))&&(m.effects?.preset||'natural')===f(step,'preset').value
+      &&(m.effects?.preset!=='custom'||Number(m.effects.pitch)===val(step,'pitch'))&&(m.effects?.volume==null||m.effects.volume===val(step,'volume')));
+    f(step,'soundboard').value=match?match.id:'';
   }
-  function useSoundboard(id) {
+  function useSoundboard(step,id) {
     const m=soundboard.find(item=>item.id===id);if(!m)return;
-    voiceOption(m.voice);$('rule-text').value=m.text;
-    if(m.voice!=null)$('rule-voice').value=m.voice;
-    if(m.rate!=null)$('rule-rate').value=m.rate;
-    $('rule-preset').value=m.effects?.preset||'natural';$('rule-pitch').value=m.effects?.pitch||0;
-    if(m.effects?.volume!=null)$('rule-volume').value=m.effects.volume;
+    voiceOption(step,m.voice);f(step,'text').value=m.text;
+    if(m.voice!=null)f(step,'voice').value=m.voice;
+    if(m.rate!=null)f(step,'rate').value=m.rate;
+    f(step,'preset').value=m.effects?.preset||'natural';f(step,'pitch').value=m.effects?.pitch||0;
+    if(m.effects?.volume!=null)f(step,'volume').value=m.effects.volume;
+  }
+  function fillSoundboard(step) {
+    options(f(step,'soundboard'),[['','Custom message'],...soundboard.map(m=>[m.id,m.text.length>60?m.text.slice(0,59)+'…':m.text])],'');
+    f(step,'soundboard-help').textContent=soundboard.length?'Pick a saved message to copy its text, voice, speed and modification into this rule.':'No saved messages yet. Save one from the soundboard on the Voice page.';
   }
   async function loadSoundboard() {
     try{soundboard=(await api('soundboard')).messages;}catch{soundboard=[];}
-    options($('rule-soundboard'),[['','Custom message'],...soundboard.map(m=>[m.id,m.text.length>60?m.text.slice(0,59)+'…':m.text])]);
-    $('rule-soundboard-help').textContent=soundboard.length?'Pick a saved message to copy its text, voice, speed and modification into this rule.':'No saved messages yet. Save one from the soundboard on the Voice page.';
-    syncSoundboard();
+    for(const step of ttsSteps()){fillSoundboard(step);syncSoundboard(step);}
   }
-  $('rule-soundboard').addEventListener('change',()=>useSoundboard($('rule-soundboard').value));
-  for(const id of ttsFields)$(id).addEventListener('input',syncSoundboard);
   // Audio files live on the node and are shared by every rule; a rule stores only the file id.
   let sounds=[];
-  function renderSounds(selected=$('rule-sound').value) {
+  function renderSounds(step,selected=f(step,'sound').value) {
     const entries=sounds.map(s=>[s.id,s.name+' · '+s.seconds+' s']);
     if(!entries.length)entries.push(['','No audio files yet — upload one']);
     if(selected&&!sounds.some(s=>s.id===selected))entries.unshift([selected,'Missing file: '+selected]);
-    options($('rule-sound'),entries,selected||entries[0][0]);
-    $('sound-preview').disabled=$('sound-delete').disabled=!sounds.some(s=>s.id===$('rule-sound').value);
+    options(f(step,'sound'),entries,selected||entries[0][0]);
+    const known=sounds.some(s=>s.id===f(step,'sound').value);
+    step.querySelector('[data-test=sound-preview]').disabled=step.querySelector('[data-test=sound-delete]').disabled=!known;
   }
   async function loadSounds() {
-    try{sounds=(await api('sounds')).sounds;renderSounds();}catch(error){ruleMessage(error.message,'error');}
+    try{sounds=(await api('sounds')).sounds;for(const step of steps())if(step.dataset.type==='sound')renderSounds(step);}
+    catch(error){ruleMessage(error.message,'error');}
   }
-  $('rule-sound').addEventListener('change',()=>renderSounds());
-  $('sound-upload').addEventListener('click',()=>$('sound-file').click());
-  $('sound-file').addEventListener('change',async()=>{
-    const file=$('sound-file').files[0];$('sound-file').value='';if(!file)return;
+  async function uploadSound(step) {
+    const input=f(step,'sound-file'),file=input.files[0];input.value='';if(!file)return;
     if(file.size>10*1024*1024)return ruleMessage('Audio files are limited to 10 MB.','error');
-    ruleMessage('Uploading and converting '+file.name+'…');$('sound-upload').disabled=true;
+    const upload=step.querySelector('[data-test=sound-upload]');
+    ruleMessage('Uploading and converting '+file.name+'…');upload.disabled=true;
     try{
       const r=await fetch('/api/sounds/upload',{method:'POST',headers:{'X-Sentry-Node-Control':'1','Content-Type':'application/octet-stream','X-Sound-Name':encodeURIComponent(file.name)},body:file});
       const data=await r.json();if(!r.ok)throw Error(data.error||'Upload failed.');
-      sounds=data.sounds;renderSounds(data.saved);dirty.add('rule');locks();ruleMessage('Uploaded. Save the rule to use it.','success');
+      sounds=data.sounds;renderSounds(step,data.saved);touched();ruleMessage('Uploaded. Save the rule to use it.','success');
     }catch(error){ruleMessage(error.message,'error');}
-    finally{$('sound-upload').disabled=false;}
-  });
-  $('sound-preview').addEventListener('click',async()=>{
-    $('sound-preview').disabled=true;ruleMessage('Playing on the node…');
-    try{ruleMessage((await api('sounds/play',{id:$('rule-sound').value},true)).message,'success');}
+    finally{upload.disabled=false;}
+  }
+  async function previewSound(step) {
+    const button=step.querySelector('[data-test=sound-preview]');
+    button.disabled=true;ruleMessage('Playing on the node…');
+    try{ruleMessage((await api('sounds/play',{id:f(step,'sound').value},true)).message,'success');}
     catch(error){ruleMessage(error.message,'error');}
-    finally{renderSounds();}
-  });
-  $('sound-delete').addEventListener('click',async()=>{
-    const id=$('rule-sound').value;if(!id)return;
-    if(!armButton($('sound-delete'))){ruleMessage('This deletes the audio file from the node. Click again to delete.','error');return;}
-    try{sounds=(await api('sounds/delete',{id},true)).sounds;renderSounds('');ruleMessage('Audio file deleted.','success');}
-    catch(error){ruleMessage(error.message,'error');}
-  });
+    finally{renderSounds(step);}
+  }
+  async function deleteSound(step,button) {
+    const id=f(step,'sound').value;if(!id)return;
+    if(!armButton(button)){ruleMessage('This deletes the audio file from the node. Click again to delete.','error');return;}
+    try{
+      sounds=(await api('sounds/delete',{id},true)).sounds;
+      for(const other of steps())if(other.dataset.type==='sound')renderSounds(other,other===step?'':undefined);
+      ruleMessage('Audio file deleted.','success');
+    }catch(error){ruleMessage(error.message,'error');}
+  }
   // Free-text object type, checked against the detector's categories before saving.
   let objects=[];
   $('rule-object').addEventListener('input',()=>{const value=$('rule-object').value.trim().toLowerCase();
     $('rule-object').setCustomValidity(!value||objects.includes(value)?'':'Unknown object type. Start typing to see supported categories.');});
   function collectRule() {
-    // Photo and video come first so the camera catches the moment before an announcement.
-    const actions=[];
-    if($('use-photo').checked)actions.push({type:'photo',count:num('rule-photo-count'),interval_seconds:num('rule-photo-interval')});
-    if($('use-audio').checked)actions.push({type:'audio',duration_seconds:num('rule-audio-duration')});
-    if($('use-video').checked)actions.push({type:'video',duration_seconds:num('rule-video-duration'),audio:$('rule-video-audio').checked});
-    if($('use-tts').checked)actions.push({type:'tts',text:$('rule-text').value,voice:$('rule-voice').value,rate:num('rule-rate'),effects:{preset:$('rule-preset').value,pitch:num('rule-pitch'),volume:num('rule-volume')}});
-    if($('use-tune').checked)actions.push({type:'tune',tune:$('rule-tune').value,repeat:num('rule-tune-repeat'),volume:num('rule-tune-volume'),pitch:num('rule-tune-pitch')});
-    if($('use-sound').checked)actions.push({type:'sound',sound:$('rule-sound').value,repeat:num('rule-sound-repeat'),volume:num('rule-sound-volume')});
-    if($('use-ssh').checked)actions.push({type:'ssh',command_id:$('rule-command').value});
-    if($('use-telegram').checked)actions.push({type:'telegram',text:$('rule-telegram-text').value,silent:$('rule-telegram-silent').checked});
+    const actions=steps().map(readStep);
+    if(actions.length)actions[0].with_previous=false;
     return {name:$('rule-name').value.trim(),enabled:$('rule-enabled').checked,object:$('rule-object').value.trim().toLowerCase(),min_confidence:num('rule-confidence')/100,min_count:num('rule-count'),consecutive_detections:num('rule-hits'),rearm_after_absence_seconds:num('rule-absence'),cooldown_seconds:num('rule-cooldown'),region:$('use-region').checked?['left','top','right','bottom'].map(s=>num('region-'+s)/100):null,actions};
   }
   async function save(next, section, clearTelegramToken = false) {

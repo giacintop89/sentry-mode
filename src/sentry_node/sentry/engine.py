@@ -32,6 +32,7 @@ from sentry_node.sentry.config import (
     TTSAction,
     TuneAction,
     VideoAction,
+    WaitAction,
 )
 from sentry_node.vision.detection import Detection
 from sentry_node.vision.labels import CLASSES
@@ -49,20 +50,28 @@ class RuleState:
     last_trigger: float = float("-inf")
 
 
+Action = (
+    WaitAction
+    | PhotoAction
+    | AudioAction
+    | VideoAction
+    | TTSAction
+    | TuneAction
+    | SoundAction
+    | SSHAction
+    | TelegramAction
+)
+
+
 @dataclass
 class Job:
+    """One group of a rule's sequence: its steps start together, and the queue keeps the
+    groups in order, so the next group only starts once this one has finished."""
+
     rule: str
-    action: (
-        PhotoAction
-        | AudioAction
-        | VideoAction
-        | TTSAction
-        | TuneAction
-        | SoundAction
-        | SSHAction
-        | TelegramAction
-    )
+    steps: list[Action]
     created: float
+    delay: float = 0.0
 
 
 class Sentry:
@@ -84,7 +93,7 @@ class Sentry:
         self.event_id = 0
         self.states: dict[str, RuleState] = {}
         self.last_sample = 0.0
-        self.active_action: str | None = None
+        self.active_labels: dict[int, str] = {}
         self.captures = Captures(settings.captures_directory)
         self.sounds = SoundLibrary(settings.sounds_directory)
         self.recorders: list[threading.Thread] = []
@@ -192,6 +201,8 @@ class Sentry:
     @staticmethod
     def _describe(action) -> str:
         """What test mode logs instead of running an action."""
+        if isinstance(action, WaitAction):
+            return f"Wait: {action.seconds:g} s"
         if isinstance(action, PhotoAction):
             return (
                 f"Photos: {action.count} every {action.interval_seconds:g} s"
@@ -219,6 +230,14 @@ class Sentry:
             return "SSH: " + action.command_id
         return "Telegram: " + action.text
 
+    def _label(self, label: str | None):
+        """Name what this thread is doing now, so a group of steps shows all of them."""
+        with self.guard:
+            if label is None:
+                self.active_labels.pop(threading.get_ident(), None)
+            else:
+                self.active_labels[threading.get_ident()] = label
+
     def _event(self, kind: str, message: str, rule: str | None = None):
         with self.guard:
             self.event_id += 1
@@ -239,7 +258,7 @@ class Sentry:
                 "test_mode": self.config.test_mode,
                 "error": self.error or self.config_error,
                 "pending_actions": self.jobs.qsize(),
-                "active_action": self.active_action,
+                "active_action": "; ".join(self.active_labels.values()) or None,
                 "rules": [
                     {
                         "name": rule.name,
@@ -289,6 +308,27 @@ class Sentry:
                 )
                 return self.status()
 
+    @staticmethod
+    def _groups(rule: Rule, created: float) -> list[Job]:
+        """Split a rule's steps into the groups the queue runs one after another.
+
+        A step marked with_previous joins the group before it instead of opening a new one.
+        Each group's clock starts after the waits that precede it, so a step late in a long
+        sequence is not thrown away as stale just because the sequence asked for a pause.
+        """
+        jobs: list[Job] = []
+        delay = 0.0
+        for action in rule.actions:
+            if jobs and action.with_previous:
+                jobs[-1].steps.append(action)
+                continue
+            if jobs:
+                delay += max(
+                    (s.seconds for s in jobs[-1].steps if isinstance(s, WaitAction)), default=0.0
+                )
+            jobs.append(Job(rule.name, [action], created, delay))
+        return jobs
+
     def test(self, rule: Rule) -> dict:
         """Run one rule's actions now, because somebody asked for them by pressing a button.
 
@@ -306,8 +346,7 @@ class Sentry:
                     raise BlockingIOError("A rule test is still running; try again shortly.")
             with self.guard:
                 self.cancelled = threading.Event()
-                created = time.monotonic()
-                jobs = [Job(rule.name, action, created) for action in rule.actions]
+                jobs = self._groups(rule, time.monotonic())
                 self._event("tested", f"Test run of {rule.name}; running its actions.", rule.name)
                 self.thread = threading.Thread(
                     target=self._test, args=(jobs,), name="sentry-node-test"
@@ -396,12 +435,14 @@ class Sentry:
                     continue
                 state.latched, state.last_trigger = True, captured
                 self._event("triggered", f"Confirmed {rule.object} appearance.", rule.name)
-                for action in rule.actions:
-                    if self.config.test_mode:
-                        self._event("would_run", self._describe(action), rule.name)
-                        continue
+                if self.config.test_mode:
+                    for action in rule.actions:
+                        together = "+ " if action.with_previous else ""
+                        self._event("would_run", together + self._describe(action), rule.name)
+                    continue
+                for job in self._groups(rule, captured):
                     try:
-                        self.jobs.put_nowait(Job(rule.name, action, captured))
+                        self.jobs.put_nowait(job)
                     except queue.Full:
                         self._event("skipped", "Action queue is full.", rule.name)
 
@@ -442,36 +483,64 @@ class Sentry:
             self.video.set_sentry(False)
 
     def _run(self, job: Job):
-        """Execute one action, the same way whether an appearance or a test queued it."""
-        deadline = job.created + self.config.action_ttl_seconds
+        """Execute one group of a rule's sequence, whether an appearance or a test queued it.
+
+        The steps of a group start together and the group is only done when all of them
+        are; a step that fails says so in the log and the sequence carries on.
+        """
+        deadline = job.created + job.delay + self.config.action_ttl_seconds
+        if self.cancelled.is_set():
+            return
+        if len(job.steps) == 1:
+            self._step(job.rule, job.steps[0], deadline)
+            return
+        threads = [
+            threading.Thread(
+                target=self._step, args=(job.rule, action, deadline), name="sentry-node-step"
+            )
+            for action in job.steps
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    def _step(self, rule: str, action: Action, deadline: float):
+        """Execute one action of the sequence."""
         try:
             if self.cancelled.is_set():
                 return
+            if isinstance(action, WaitAction):
+                # The deadlines of later groups already allow for this pause, so a wait is
+                # never dropped as stale; it only ends early when Sentry is disarmed.
+                self._event("waiting", f"Waiting {action.seconds:g} s.", rule)
+                self.cancelled.wait(action.seconds)
+                return
             if time.monotonic() > deadline:
-                self._event("expired", "Action became stale before it could start.", job.rule)
+                self._event("expired", "Action became stale before it could start.", rule)
                 return
             finished = "Action completed."
-            if isinstance(job.action, PhotoAction) and job.action.count > 1:
-                self._start_photo_series(job.rule, job.action)
+            if isinstance(action, PhotoAction) and action.count > 1:
+                self._start_photo_series(rule, action)
                 return
-            if isinstance(job.action, PhotoAction):
-                self.active_action = "Photo: " + job.rule
-                finished = "Photo saved: " + self._save_photo(job.rule)
-            elif isinstance(job.action, VideoAction):
-                self._start_recording(job.rule, job.action)
+            if isinstance(action, PhotoAction):
+                self._label("Photo: " + rule)
+                finished = "Photo saved: " + self._save_photo(rule)
+            elif isinstance(action, VideoAction):
+                self._start_recording(rule, action)
                 return
-            elif isinstance(job.action, AudioAction):
-                self._start_audio(job.rule, job.action.duration_seconds)
+            elif isinstance(action, AudioAction):
+                self._start_audio(rule, action.duration_seconds)
                 return
-            elif isinstance(job.action, (TTSAction, TuneAction, SoundAction)):
+            elif isinstance(action, (TTSAction, TuneAction, SoundAction)):
                 kind = {TTSAction: "announcement", TuneAction: "tune"}.get(
-                    type(job.action), "audio file"
+                    type(action), "audio file"
                 )
                 while not self.cancelled.is_set() and time.monotonic() < deadline:
                     if self.audio_lock.acquire(timeout=0.1):
                         break
                 else:
-                    self._event("expired", f"Speaker stayed busy; {kind} skipped.", job.rule)
+                    self._event("expired", f"Speaker stayed busy; {kind} skipped.", rule)
                     return
                 try:
                     if self.cancelled.is_set():
@@ -480,63 +549,61 @@ class Sentry:
                         self._event(
                             "expired",
                             f"{kind.capitalize()} became stale while waiting for the speaker.",
-                            job.rule,
+                            rule,
                         )
                         return
-                    if isinstance(job.action, TTSAction):
-                        self.active_action = "TTS: " + job.rule
-                        self._event("action_started", "Playing announcement.", job.rule)
+                    if isinstance(action, TTSAction):
+                        self._label("TTS: " + rule)
+                        self._event("action_started", "Playing announcement.", rule)
                         speak(
                             self.settings,
-                            job.action.text,
-                            job.action.voice,
-                            job.action.rate,
-                            effects=job.action.effects,
+                            action.text,
+                            action.voice,
+                            action.rate,
+                            effects=action.effects,
                             stop_event=self.cancelled,
                         )
-                    elif isinstance(job.action, SoundAction):
-                        self.active_action = "Audio file: " + job.rule
+                    elif isinstance(action, SoundAction):
+                        self._label("Audio file: " + rule)
                         self._event(
                             "action_started",
-                            "Playing audio file: " + job.action.sound,
-                            job.rule,
+                            "Playing audio file: " + action.sound,
+                            rule,
                         )
                         self.sounds.play(
                             self.settings,
-                            job.action.sound,
-                            repeat=job.action.repeat,
-                            volume=job.action.volume,
+                            action.sound,
+                            repeat=action.repeat,
+                            volume=action.volume,
                             stop_event=self.cancelled,
                         )
                     else:
-                        self.active_action = "Tune: " + job.rule
+                        self._label("Tune: " + rule)
                         self._event(
                             "action_started",
-                            "Playing tune: " + TUNES[job.action.tune][0],
-                            job.rule,
+                            "Playing tune: " + TUNES[action.tune][0],
+                            rule,
                         )
-                        self._play_tune(job.action)
+                        self._play_tune(action)
                 finally:
                     self.audio_lock.release()
-            elif isinstance(job.action, SSHAction):
-                self.active_action = "SSH: " + job.action.command_id
+            elif isinstance(action, SSHAction):
+                self._label("SSH: " + action.command_id)
                 self._event(
                     "action_started",
-                    "Running saved SSH command: " + job.action.command_id,
-                    job.rule,
+                    "Running saved SSH command: " + action.command_id,
+                    rule,
                 )
-                self._ssh(self.config.ssh_commands[job.action.command_id])
+                self._ssh(self.config.ssh_commands[action.command_id])
             else:
-                self.active_action = "Telegram: " + job.rule
-                self._event("action_started", "Sending Telegram message.", job.rule)
-                self._telegram(job.action)
-            self._event("action_finished", finished, job.rule)
+                self._label("Telegram: " + rule)
+                self._event("action_started", "Sending Telegram message.", rule)
+                self._telegram(action)
+            self._event("action_finished", finished, rule)
         except Exception as exc:
-            self._event(
-                "cancelled" if self.cancelled.is_set() else "action_failed", str(exc), job.rule
-            )
+            self._event("cancelled" if self.cancelled.is_set() else "action_failed", str(exc), rule)
         finally:
-            self.active_action = None
+            self._label(None)
 
     def _play_tune(self, action: TuneAction):
         play_tune(

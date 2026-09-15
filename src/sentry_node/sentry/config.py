@@ -22,7 +22,23 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, hide_input_in_errors=True)
 
 
-class TTSAction(Model):
+class Step(Model):
+    """A rule's actions are a sequence of steps.
+
+    Steps run one after another in the order the editor lists them; a step marked
+    with_previous starts at the same moment as the step before it instead of waiting
+    for it, so consecutive marked steps form one group that runs together.
+    """
+
+    with_previous: StrictBool = False
+
+
+class WaitAction(Step):
+    type: Literal["wait"] = "wait"
+    seconds: float = Field(default=2, ge=0.1, le=60)
+
+
+class TTSAction(Step):
     type: Literal["tts"] = "tts"
     text: str = Field(min_length=1, max_length=1000)
     voice: str = Field(default="en", pattern=r"^[A-Za-z0-9][A-Za-z0-9_+\-]{0,63}$")
@@ -37,7 +53,7 @@ class TTSAction(Model):
         return value
 
 
-class TuneAction(Model):
+class TuneAction(Step):
     type: Literal["tune"] = "tune"
     tune: str = "chime"
     repeat: int = Field(default=1, ge=1, le=5)
@@ -52,36 +68,36 @@ class TuneAction(Model):
         return value
 
 
-class SoundAction(Model):
+class SoundAction(Step):
     type: Literal["sound"] = "sound"
     sound: str = Field(pattern=r"^[a-z0-9-]{1,40}-[0-9a-f]{8}$")
     repeat: int = Field(default=1, ge=1, le=5)
     volume: int = Field(default=80, ge=0, le=100)
 
 
-class PhotoAction(Model):
+class PhotoAction(Step):
     type: Literal["photo"] = "photo"
     count: int = Field(default=1, ge=1, le=20)
     interval_seconds: float = Field(default=2, ge=0.5, le=60)
 
 
-class VideoAction(Model):
+class VideoAction(Step):
     type: Literal["video"] = "video"
     duration_seconds: int = Field(default=10, ge=1, le=60)
     audio: StrictBool = True
 
 
-class AudioAction(Model):
+class AudioAction(Step):
     type: Literal["audio"] = "audio"
     duration_seconds: int = Field(default=10, ge=1, le=60)
 
 
-class SSHAction(Model):
+class SSHAction(Step):
     type: Literal["ssh"] = "ssh"
     command_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
-class TelegramAction(Model):
+class TelegramAction(Step):
     type: Literal["telegram"] = "telegram"
     text: str = Field(min_length=1, max_length=4096)
     silent: StrictBool = False
@@ -142,7 +158,8 @@ class Rule(Model):
     region: tuple[float, float, float, float] | None = None
     actions: list[
         Annotated[
-            PhotoAction
+            WaitAction
+            | PhotoAction
             | AudioAction
             | VideoAction
             | TTSAction
@@ -152,15 +169,12 @@ class Rule(Model):
             | TelegramAction,
             Field(discriminator="type"),
         ]
-    ] = Field(min_length=1, max_length=8)
+    ] = Field(min_length=1, max_length=16)
 
     @model_validator(mode="after")
-    def distinct_actions(self):
-        if len({action.type for action in self.actions}) != len(self.actions):
-            raise ValueError(
-                "A rule supports one action of each type: "
-                "photo, audio recording, video, TTS, tune, audio file, SSH, and Telegram."
-            )
+    def runnable_sequence(self):
+        if all(isinstance(action, WaitAction) for action in self.actions):
+            raise ValueError("A rule needs at least one step that does something besides wait.")
         return self
 
     @field_validator("object")

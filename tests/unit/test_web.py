@@ -593,13 +593,20 @@ def test_captures_are_listed_served_in_ranges_and_deleted(web, tmp_path):
     remaining = request(base, "/api/captures/delete", "POST", body={"name": video.name})[1]
     assert [c["kind"] for c in remaining["captures"]] == ["photo"] and not video.exists()
     page = request(base, "/sentry")[1]
-    assert (
-        page.index(b'id="use-photo"')
-        < page.index(b'id="use-audio"')
-        < page.index(b'id="use-video"')
-        < page.index(b'id="use-tts"')
-    )
-    assert b'id="rule-video-audio" type="checkbox" checked' in page
+    # The step menu offers every action the engine runs, plus the wait the sequence needs.
+    menu = re.search(rb'<select id="new-step".*?</select>', page).group()
+    assert re.findall(rb'value="([a-z]+)"', menu) == [
+        b"photo",
+        b"audio",
+        b"video",
+        b"tts",
+        b"tune",
+        b"sound",
+        b"telegram",
+        b"ssh",
+        b"wait",
+    ]
+    assert b'id="rule-video-audio" data-f="video-audio" type="checkbox" checked' in page
 
 
 def upload(base, data, name="Door Bell.wav", content_type="application/octet-stream"):
@@ -629,7 +636,7 @@ def test_audio_files_upload_convert_play_and_stay_while_rules_use_them(web, tmp_
     from sentry_node.audio.tunes import generate_tune
 
     controls, base = web
-    assert b'id="use-sound"' in request(base, "/sentry")[1]
+    assert b'<template id="step-sound">' in request(base, "/sentry")[1]
     assert request(base, "/api/sounds")[1]["sounds"] == []
     source = tmp_path / "chime.wav"
     generate_tune(source, "chime")
@@ -733,6 +740,20 @@ def test_rule_test_button_runs_the_editor_draft_without_saving_it(web):
     assert not controls.sentry.armed
     assert request(base, "/api/sentry/rules/test", "POST", body={"name": "Draft"})[0] == 400
     assert b'id="test-rule"' in request(base, "/sentry")[1]
+
+
+def test_the_actions_tab_is_an_ordered_list_of_steps_the_editor_can_rearrange(web):
+    _, base = web
+    page = request(base, "/sentry")[1].decode()
+    assert '<ol id="steps">' in page and 'id="add-step"' in page
+    # Each step carries its own order controls and the flag that starts it with the one above.
+    assert 'class="step-together"' in page
+    assert 'data-move="-1"' in page and 'data-move="1"' in page
+    assert 'class="danger step-remove"' in page
+    assert '<template id="step-wait">' in page and 'data-f="wait-seconds"' in page
+    script = request(base, "/sentry.js")[1].decode()
+    # Steps are copies of the templates, so no field id is shared between two steps.
+    assert "makeStep(" in script and "$('use-tts')" not in script and "$('rule-text')" not in script
 
 
 def test_editor_confirms_in_the_page_because_a_framed_dashboard_ignores_dialogs(web):
