@@ -336,3 +336,12 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
   .step-summary{display:none}
   .step-head strong{white-space:normal}
 }
+
+/* The desktop scale is drawn for a monitor: on a phone at 100% every control is
+   oversized and the navigation wraps. Shrink the whole layout rather than the type
+   alone, so padding, icons and hit areas keep their proportions. Text fields stay
+   above 16px once scaled, or a phone browser zooms in when they take focus. */
+@media(max-width:700px){body{zoom:.92}}
+@media(max-width:540px){body{zoom:.84}}
+@media(max-width:400px){body{zoom:.78}
+ input:not([type=range]):not([type=checkbox]),select,textarea{font-size:20.667px}}
