@@ -597,8 +597,12 @@ def test_a_browser_previews_the_sample_of_a_saved_message(web, tmp_path):
     body = {"text": "Hello", "voice": "en", "rate": 200, "effects": {"preset": "natural"}}
     with patch("sentry_mode.web.render_sample", side_effect=fake_sample):
         message = request(base, "/api/soundboard", "POST", body=body)[1]["saved"]
-    status, data, headers = request(base, f"/soundboard/{message}.mp3")
-    assert status == 200 and data == b"ID3 sample"
+    with patch("sentry_mode.web.sample_audio", return_value=b"levelled") as audio:
+        status, data, headers = request(base, f"/soundboard/{message}.mp3")
+        audio.assert_called_once_with(
+            tmp_path / "soundboard" / f"{message}.mp3", VoiceEffects(preset="natural")
+        )
+    assert status == 200 and data == b"levelled"
     assert headers["Content-Type"] == "audio/mpeg"
     # The browser plays the file as it arrives, so a modified card is pitched first.
     pitched = {"text": "Hello", "voice": "en", "rate": 200, "effects": {"preset": "demon"}}
@@ -614,7 +618,10 @@ def test_a_browser_previews_the_sample_of_a_saved_message(web, tmp_path):
     assert request(base, "/soundboard/..%2Fsoundboard.json")[0] == 404
     # A sample that was lost is rendered the first time a browser asks for it.
     (tmp_path / "soundboard" / f"{message}.mp3").unlink()
-    with patch("sentry_mode.web.render_sample", side_effect=fake_sample) as render:
+    with (
+        patch("sentry_mode.web.render_sample", side_effect=fake_sample) as render,
+        patch("sentry_mode.web.sample_audio", return_value=b"levelled"),
+    ):
         assert request(base, f"/soundboard/{message}.mp3")[0] == 200
         render.assert_called_once()
     assert not controls.audio_lock.locked()

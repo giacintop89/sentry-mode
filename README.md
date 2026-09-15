@@ -364,8 +364,8 @@ Studio voice answers instantly instead of spending a few seconds synthesizing th
 words again. The sample is stored at full volume: pitch and volume are applied as it plays.
 A card saved before this, or whose sample was lost, is rendered the first time it plays;
 deleting a card deletes its sample. Preview serves that sample over
-`GET /soundboard/<id>.mp3`, with the card's pitch applied first, since the browser plays
-the file as it is.
+`GET /soundboard/<id>.mp3`, with the card's pitch applied first and the level brought up to
+−16 LUFS, since the browser plays the file as it is and a phone has no amplifier behind it.
 
 Speech WAVs are checked for complete sample data, converted before playback to 48 kHz stereo,
 and padded with 1000 ms of leading silence and 750 ms of trailing silence to protect speech

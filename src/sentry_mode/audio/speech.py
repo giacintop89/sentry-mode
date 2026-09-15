@@ -39,6 +39,9 @@ KOKORO_SPEAKERS = {
 QUALITY = {"kokoro": "Studio", "espeak": "Basic"}
 # Samples are stored unattenuated; the level of the moment is a playback filter.
 SAMPLE_VOLUME = 100
+# Speech at broadcast loudness: a synthesized sample peaks low, and a phone playing it
+# has no amplifier to make up the difference the node's speaker does.
+PREVIEW_LOUDNESS = "loudnorm=I=-16:TP=-1.5:LRA=11"
 
 
 def kokoro_files(config: Settings) -> tuple[Path, Path]:
@@ -375,16 +378,16 @@ def render_sample(
 
 
 def sample_audio(sample: Path, effects: VoiceEffects | None = None) -> bytes:
-    """The stored sample as mp3 bytes, modified the way the node would play it.
+    """The stored sample as mp3 bytes, ready for a browser to play by itself.
 
-    A browser plays the file itself, so a pitch modification has to be baked in here:
-    what is kept on disk is always the plain synthesis.
+    A browser plays the file as it arrives, so what the node does on playback is done
+    here instead: the pitch of the card is applied, and the level is brought up to
+    broadcast loudness, because a phone has none of the gain the node's speaker has.
     """
     pitch = effects.pitch_filter() if effects else None
-    if not pitch:
-        return sample.read_bytes()
+    filters = ",".join(item for item in (pitch, PREVIEW_LOUDNESS) if item)
     with tempfile.TemporaryDirectory(prefix="sentry-mode-preview-") as directory:
-        pitched = Path(directory) / "preview.mp3"
+        preview = Path(directory) / "preview.mp3"
         command(
             [
                 "ffmpeg",
@@ -395,18 +398,18 @@ def sample_audio(sample: Path, effects: VoiceEffects | None = None) -> bytes:
                 "-i",
                 str(sample),
                 "-af",
-                pitch,
+                filters,
                 "-c:a",
                 "libmp3lame",
                 "-q:a",
                 "2",
                 "-f",
                 "mp3",
-                str(pitched),
+                str(preview),
             ],
             timeout=30,
         )
-        return pitched.read_bytes()
+        return preview.read_bytes()
 
 
 def play_sample(

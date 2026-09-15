@@ -329,6 +329,30 @@ def test_a_saved_message_is_rendered_once_into_an_mp3(tmp_path):
     assert [item.name for item in sample.parent.iterdir()] == [sample.name]
 
 
+def test_a_preview_is_levelled_and_pitched_the_way_the_node_would_play_it(tmp_path):
+    from sentry_mode.audio.effects import VoiceEffects
+    from sentry_mode.audio.speech import PREVIEW_LOUDNESS, sample_audio
+
+    sample = tmp_path / "message.mp3"
+    sample.write_bytes(b"ID3 stored")
+
+    def encode(args, **kwargs):
+        Path(args[-1]).write_bytes(b"ID3 preview")
+        return ""
+
+    def filters(call):
+        return call.args[0][call.args[0].index("-af") + 1]
+
+    with patch("sentry_mode.audio.speech.command", side_effect=encode) as command:
+        # A phone has no amplifier, so every preview is levelled before it is sent.
+        assert sample_audio(sample) == b"ID3 preview"
+        assert filters(command.call_args) == PREVIEW_LOUDNESS
+        # A card with a modification is pitched first, as it would be on the node.
+        sample_audio(sample, VoiceEffects(preset="demon"))
+        assert filters(command.call_args).startswith("rubberband=")
+        assert filters(command.call_args).endswith("," + PREVIEW_LOUDNESS)
+
+
 def test_playing_a_sample_never_synthesizes_and_sets_the_level(tmp_path):
     from sentry_mode.audio.effects import VoiceEffects
     from sentry_mode.audio.speech import play_sample

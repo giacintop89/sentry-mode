@@ -76,7 +76,9 @@ seconds a Kokoro voice needs. Samples are rendered at full scale and the card's 
 volume are applied on playback, so changing `speaker.volume` still changes how loud a card
 sounds. A card whose sample is missing — saved before samples existed, or deleted by hand —
 is rendered the first time it plays, and deleting a card deletes its sample. Preview fetches the sample from `GET /soundboard/<id>.mp3`, pitched first when the card
-carries a modification, since the browser plays the file as it arrives. A message
+carries a modification and levelled to broadcast loudness (`loudnorm`, −16 LUFS), since
+the browser plays the file as it arrives and a phone has none of the gain the node's
+speaker has. A message
 saved without an explicit voice or rate is rendered with the defaults of the moment, so its
 sample keeps the voice it was saved with even if the defaults change later.
 

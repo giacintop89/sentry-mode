@@ -44,7 +44,7 @@ local network.
 | POST `/api/speech` | `text`, optional `voice`, `rate`, `effects` (`preset`, `pitch`, `volume`). |
 | GET `/api/speech/voices` | Voices available on this node. |
 | GET/POST `/api/soundboard`, POST `/api/soundboard/play`, `/api/soundboard/delete` | Saved messages. POST renders the mp3 sample and answers `sample`; play plays that sample instead of synthesizing. |
-| GET `/soundboard/<id>.mp3` | The sample of a saved message, pitched as the node would play it, for a browser to play itself. Unknown ids answer 404. |
+| GET `/soundboard/<id>.mp3` | The sample of a saved message, pitched as the node would play it and levelled for a phone speaker. Unknown ids answer 404. |
 | GET `/api/talk/config` | HTTPS setup link settings. |
 | POST `/api/talk/start` | Session token, sample rate, duration limit; optional effects body. |
 | POST `/api/talk/chunk`, `/api/talk/stop`, `/api/talk/cancel` | Need `X-Sentry-Mode-Talk`; chunks need consecutive `X-Audio-Sequence` from zero, ≤ 9600 bytes. |
