@@ -51,6 +51,7 @@ These are written by the app, not by hand, with private file permissions:
 |---|---|---|
 | `.local/sentry.json` | Saved rules, SSH commands, Telegram settings | `sentry_state_file` |
 | `.local/soundboard.json` | Up to 48 saved messages | `soundboard_file` |
+| `.local/soundboard/` | One mp3 sample per saved message | `soundboard_directory` |
 | `.local/captures/` | Photos, videos, recordings (newest 200) | `captures_directory` |
 | `.local/sounds/` | The shared audio-file library | `sounds_directory` |
 | `.local/tls/` | Local CA and server certificate for phone HTTPS | TLS CLI options |

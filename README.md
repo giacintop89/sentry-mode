@@ -355,6 +355,13 @@ or × to delete it. Up to 48 messages are saved atomically to `.local/soundboard
 `SENTRY_MODE_SOUNDBOARD_FILE`). Saving the same message twice keeps one card, and a card
 cannot play while other audio is using the speaker.
 
+A message is synthesized once, when it is saved, and kept as an mp3 sample in
+`.local/soundboard/` (`soundboard_directory`). Pressing a card plays that sample, so a
+Studio voice answers instantly instead of spending a few seconds synthesizing the same
+words again. The sample is stored at full volume: pitch and volume are applied as it plays.
+A card saved before this, or whose sample was lost, is rendered the first time it plays;
+deleting a card deletes its sample.
+
 Speech WAVs are checked for complete sample data, converted before playback to 48 kHz stereo,
 and padded with 1000 ms of leading silence and 750 ms of trailing silence to protect speech
 when a Bluetooth sink starts/stops. Adjust `speech.lead_in_ms`, `speech.tail_ms`, and

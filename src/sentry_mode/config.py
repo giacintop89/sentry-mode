@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     sentry: SentryConfig = Field(default_factory=SentryConfig)
     sentry_state_file: Path = Path(".local/sentry.json")
     soundboard_file: Path = Path(".local/soundboard.json")
+    soundboard_directory: Path = Path(".local/soundboard")
     captures_directory: Path = Path(".local/captures")
     sounds_directory: Path = Path(".local/sounds")
     web_frame_origins: list[str] = Field(default_factory=list, max_length=16)

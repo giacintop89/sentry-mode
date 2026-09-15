@@ -34,8 +34,10 @@ class SavedMessage(SoundboardMessage):
 class Soundboard:
     """A small JSON file of saved messages, written atomically."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, directory: Path | None = None):
         self.path = path
+        # One mp3 per message: saying a saved message again is playback, not synthesis.
+        self.directory = directory if directory is not None else path.with_suffix("")
         self.guard = threading.Lock()
         self.messages: list[SavedMessage] = []
         self.error: str | None = None
@@ -70,10 +72,16 @@ class Soundboard:
             if name is not None:
                 name.unlink(missing_ok=True)
 
+    def sample_path(self, message_id: str) -> Path:
+        return self.directory / f"{message_id}.mp3"
+
     def listing(self) -> dict:
         with self.guard:
             return {
-                "messages": [m.model_dump(mode="json") for m in self.messages],
+                "messages": [
+                    {**m.model_dump(mode="json"), "sample": self.sample_path(m.id).is_file()}
+                    for m in self.messages
+                ],
                 "limit": MAX_MESSAGES,
                 "error": self.error,
             }
@@ -109,6 +117,7 @@ class Soundboard:
             except OSError:
                 self.messages = previous
                 raise
+            self.sample_path(message_id).unlink(missing_ok=True)
             return {"deleted": message_id}
 
     def get(self, message_id: str) -> SavedMessage:

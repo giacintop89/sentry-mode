@@ -29,6 +29,7 @@ def web(tmp_path):
         Settings(
             sentry_state_file=tmp_path / "sentry.json",
             soundboard_file=tmp_path / "soundboard.json",
+            soundboard_directory=tmp_path / "soundboard",
             captures_directory=tmp_path / "captures",
             sounds_directory=tmp_path / "sounds",
         )
@@ -476,6 +477,13 @@ def test_https_bind_address_requires_an_https_port(tmp_path):
         serve(config, "127.0.0.1", 0, https_host="0.0.0.0")
 
 
+def fake_sample(config, message, sample, **kwargs):
+    """Stand in for synthesis: write the mp3 the real renderer would have written."""
+    sample.parent.mkdir(parents=True, exist_ok=True)
+    sample.write_bytes(b"ID3 sample")
+    return {"engine": "espeak", "voice": message.voice or "en", "rate": 175, "seconds": 1.0}
+
+
 def test_soundboard_saves_lists_and_deletes_messages(web, tmp_path):
     controls, base = web
     page = request(base, "/")[1]
@@ -492,19 +500,26 @@ def test_soundboard_saves_lists_and_deletes_messages(web, tmp_path):
         "effects": {"preset": "demon", "pitch": -7, "volume": 80},
     }
     assert request(base, "/api/soundboard", "POST", {}, body)[0] == 403
-    status, saved, _ = request(base, "/api/soundboard", "POST", body=body)
-    assert status == 200 and saved["created"]
-    # Saving the same message twice keeps one card.
-    again = request(base, "/api/soundboard", "POST", body=body)[1]
-    assert again == {"saved": saved["saved"], "created": False}
+    with patch("sentry_mode.web.render_sample", side_effect=fake_sample) as render:
+        status, saved, _ = request(base, "/api/soundboard", "POST", body=body)
+        assert status == 200 and saved["created"] and saved["sample"]
+        # Saving the same message twice keeps one card and renders one sample.
+        again = request(base, "/api/soundboard", "POST", body=body)[1]
+        assert again == {"saved": saved["saved"], "created": False, "sample": True}
+        render.assert_called_once()
+    sample = tmp_path / "soundboard" / f"{saved['saved']}.mp3"
+    assert sample.is_file()
     listing = request(base, "/api/soundboard")[1]["messages"]
-    assert listing == [{"id": saved["saved"], **body}]
+    assert listing == [{"id": saved["saved"], "sample": True, **body}]
     # It survives a restart of the dashboard.
     assert NodeControls(controls.config).soundboard.listing()["messages"] == listing
-    assert json.loads((tmp_path / "soundboard.json").read_text())["messages"] == listing
+    stored = [{key: value for key, value in listing[0].items() if key != "sample"}]
+    assert json.loads((tmp_path / "soundboard.json").read_text())["messages"] == stored
     status, result, _ = request(base, "/api/soundboard/delete", "POST", body={"id": saved["saved"]})
     assert status == 200 and result == {"deleted": saved["saved"]}
     assert request(base, "/api/soundboard")[1]["messages"] == []
+    # The sample goes with the card it belonged to.
+    assert not sample.exists()
     assert request(base, "/api/soundboard/delete", "POST", body={"id": saved["saved"]})[0] == 404
 
 
@@ -526,18 +541,23 @@ def test_invalid_soundboard_requests_are_rejected(web, path, body):
     assert not controls.config.soundboard_file.exists()
 
 
-def test_soundboard_plays_saved_settings_and_shares_the_speaker(web):
+def test_soundboard_plays_the_stored_sample_and_shares_the_speaker(web, tmp_path):
     controls, base = web
     body = {"text": "Hello", "voice": "en", "rate": 200, "effects": {"preset": "chipmunk"}}
-    message = request(base, "/api/soundboard", "POST", body=body)[1]["saved"]
-    with patch("sentry_mode.web.speak", return_value={"message": "played"}) as speech:
+    with patch("sentry_mode.web.render_sample", side_effect=fake_sample):
+        message = request(base, "/api/soundboard", "POST", body=body)[1]["saved"]
+    sample = tmp_path / "soundboard" / f"{message}.mp3"
+    with (
+        patch("sentry_mode.web.play_sample", return_value={"message": "played"}) as playback,
+        patch("sentry_mode.web.render_sample", side_effect=fake_sample) as render,
+    ):
         status, result, _ = request(base, "/api/soundboard/play", "POST", body={"id": message})
         assert status == 200 and result["message"] == "played"
-        speech.assert_called_once_with(
+        # The saved sample is played as it is; nothing is synthesized again.
+        render.assert_not_called()
+        playback.assert_called_once_with(
             controls.config,
-            "Hello",
-            "en",
-            200,
+            sample,
             stop_event=controls.shutdown_requested,
             effects=VoiceEffects(preset="chipmunk"),
         )
@@ -545,6 +565,10 @@ def test_soundboard_plays_saved_settings_and_shares_the_speaker(web):
             assert request(base, "/api/soundboard/play", "POST", body={"id": message})[0] == 409
         missing = request(base, "/api/soundboard/play", "POST", body={"id": "0" * 16})
         assert missing[0] == 404 and "no longer" in missing[1]["error"]
+        # A message saved before samples existed is rendered the first time it plays.
+        sample.unlink()
+        assert request(base, "/api/soundboard/play", "POST", body={"id": message})[0] == 200
+        render.assert_called_once()
     assert not controls.audio_lock.locked()
 
 

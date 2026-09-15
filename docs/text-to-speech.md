@@ -67,6 +67,17 @@ permissions (override with `soundboard_file` or `SENTRY_MODE_SOUNDBOARD_FILE`). 
 same message twice keeps one card, and a card cannot play while other audio holds the
 speaker.
 
+Saving a message synthesizes it once and keeps the result as an mp3 sample in
+`.local/soundboard/` (override with `soundboard_directory` or
+`SENTRY_MODE_SOUNDBOARD_DIRECTORY`). Playing a card plays that sample: no text is
+synthesized, so a Studio card answers as fast as a sound file instead of costing the few
+seconds a Kokoro voice needs. Samples are rendered at full scale and the card's pitch and
+volume are applied on playback, so changing `speaker.volume` still changes how loud a card
+sounds. A card whose sample is missing — saved before samples existed, or deleted by hand —
+is rendered the first time it plays, and deleting a card deletes its sample. A message
+saved without an explicit voice or rate is rendered with the defaults of the moment, so its
+sample keeps the voice it was saved with even if the defaults change later.
+
 A rule's announcement step lists every voice installed on this node, the same list the
 Voice page offers, so two steps of one rule can answer in different voices. The rule keeps
 the voice id: a voice that is no longer installed stays in the step as a missing entry

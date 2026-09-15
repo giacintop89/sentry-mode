@@ -23,7 +23,7 @@ from sentry_mode.audio.monitor import RATE as AUDIO_RATE
 from sentry_mode.audio.monitor import AudioMonitor
 from sentry_mode.audio.soundboard import Soundboard, SoundboardMessage
 from sentry_mode.audio.sounds import MAX_UPLOAD_BYTES
-from sentry_mode.audio.speech import available_voices, speak
+from sentry_mode.audio.speech import available_voices, play_sample, render_sample, speak
 from sentry_mode.audio.talk import MAX_CHUNK, TalkStream
 from sentry_mode.audio.tunes import TUNES, play_tune
 from sentry_mode.config import (
@@ -103,7 +103,7 @@ class NodeControls:
         self.tls_ca: Path | None = None
         self.video = VideoStream(config.camera, self.hardware_lock, config.detection)
         self.sentry = Sentry(config, self.video, self.audio_lock)
-        self.soundboard = Soundboard(config.soundboard_file)
+        self.soundboard = Soundboard(config.soundboard_file, config.soundboard_directory)
         self.runtime_lock = threading.Lock()
         self.stopped = threading.Event()
         self.shutdown_requested = threading.Event()
@@ -235,6 +235,38 @@ class NodeControls:
                 payload.rate,
                 stop_event=self.shutdown_requested,
                 effects=payload.effects,
+            )
+        finally:
+            self.audio_lock.release()
+
+    def save_to_soundboard(self, payload: SoundboardMessage) -> dict:
+        saved = self.soundboard.save(payload)
+        message = self.soundboard.get(saved["saved"])
+        sample = self.soundboard.sample_path(message.id)
+        if sample.is_file():
+            return {**saved, "sample": True}
+        try:
+            render_sample(self.config, message, sample, stop_event=self.shutdown_requested)
+        except (HardwareError, OSError, ValueError) as exc:
+            # The message is saved either way; playing it will synthesize the sample.
+            logger.warning("Could not render the sample of %s: %s", message.id, exc)
+            return {**saved, "sample": False}
+        return {**saved, "sample": True}
+
+    def play_from_soundboard(self, message_id: str) -> dict:
+        message = self.soundboard.get(message_id)
+        sample = self.soundboard.sample_path(message.id)
+        if not sample.is_file():
+            # A message saved before samples existed, or one whose sample was lost.
+            render_sample(self.config, message, sample, stop_event=self.shutdown_requested)
+        if not self.audio_lock.acquire(blocking=False):
+            raise BlockingIOError("Speaker is busy; wait for the current audio operation.")
+        try:
+            return play_sample(
+                self.config,
+                sample,
+                stop_event=self.shutdown_requested,
+                effects=message.effects,
             )
         finally:
             self.audio_lock.release()
@@ -379,7 +411,7 @@ class NodeControls:
         if path == "/api/speech":
             return self.speak(SpeechRequest.model_validate(body))
         if path == "/api/soundboard":
-            return self.soundboard.save(SoundboardMessage.model_validate(body))
+            return self.save_to_soundboard(SoundboardMessage.model_validate(body))
         if path == "/api/soundboard/delete":
             return self.soundboard.delete(SoundboardReference.model_validate(body).id)
         if path == "/api/hardware":
@@ -426,7 +458,7 @@ class NodeControls:
         if path == "/api/captures/delete":
             return self.sentry.captures.delete(CaptureReference.model_validate(body).name)
         if path == "/api/soundboard/play":
-            return self.speak(self.soundboard.get(SoundboardReference.model_validate(body).id))
+            return self.play_from_soundboard(SoundboardReference.model_validate(body).id)
         if path == "/api/camera/capture" and self.video.status()["capture_running"]:
             return self.video.snapshot()
         if path == "/api/config/validate":

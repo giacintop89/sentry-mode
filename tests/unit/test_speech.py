@@ -291,3 +291,73 @@ def test_a_speaker_this_node_does_not_have_falls_back_to_its_language(tmp_path):
         # Asking for an eSpeak variant by name still gets that engine.
         assert resolve_voice(config, "it+f2") == "it+f2"
         assert speech_engine(config, "it+f2") == ("espeak", None)
+
+
+def test_a_saved_message_is_rendered_once_into_an_mp3(tmp_path):
+    from sentry_mode.audio.soundboard import SoundboardMessage
+    from sentry_mode.audio.speech import render_sample
+
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        output = Path(args[-1])
+        if args[0] == "espeak-ng":
+            with wave.open(str(output), "wb") as stream:
+                stream.setnchannels(1)
+                stream.setsampwidth(2)
+                stream.setframerate(16000)
+                stream.writeframes(bytes(32000))
+        else:
+            output.write_bytes(b"ID3 sample")
+        return ""
+
+    sample = tmp_path / "samples" / "0123456789abcdef.mp3"
+    message = SoundboardMessage(text="Intruder alert", voice="en", rate=200)
+    with patch("sentry_mode.audio.speech.command", side_effect=run):
+        rendered = render_sample(
+            Settings(speech=SpeechConfig(engine="espeak")), message, sample, stop_event=None
+        )
+    speech, encode = calls
+    # The sample is stored at full scale so the volume of the moment stays a playback filter.
+    assert speech[speech.index("-a") + 1] == "100"
+    assert speech[speech.index("-s") + 1] == "200"
+    assert encode[encode.index("-c:a") + 1] == "libmp3lame"
+    assert rendered["seconds"] == 1 and rendered["engine"] == "espeak"
+    assert sample.read_bytes() == b"ID3 sample"
+    # Only the finished sample is left behind, never a half-written one.
+    assert [item.name for item in sample.parent.iterdir()] == [sample.name]
+
+
+def test_playing_a_sample_never_synthesizes_and_sets_the_level(tmp_path):
+    from sentry_mode.audio.effects import VoiceEffects
+    from sentry_mode.audio.speech import play_sample
+
+    sample = tmp_path / "sample.mp3"
+    sample.write_bytes(b"ID3 sample")
+
+    def encode(args, **kwargs):
+        output = Path(args[-1])
+        with wave.open(str(output), "wb") as stream:
+            stream.setnchannels(2)
+            stream.setsampwidth(2)
+            stream.setframerate(48000)
+            stream.writeframes(bytes(48000 * 4))
+        return ""
+
+    with (
+        patch("sentry_mode.audio.speech.command", side_effect=encode) as command,
+        patch("sentry_mode.audio.speech.Speaker") as speaker,
+    ):
+        result = play_sample(
+            Settings(), sample, effects=VoiceEffects(preset="demon", volume=40), stop_event=None
+        )
+    args = command.call_args.args[0]
+    assert command.call_count == 1 and args[0] == "ffmpeg"
+    assert args[args.index("-i") + 1] == str(sample)
+    filters = args[args.index("-af") + 1].split(",")
+    assert filters[:2] == ["aresample=48000:osf=s16", "volume=0.4"]
+    assert filters[2].startswith("rubberband") and filters[3] == "adelay=1000:all=1"
+    speaker.return_value.play_file.assert_called_once()
+    assert result["sample"] and result["playback_seconds"] == 1
+    assert result["effects"] == {"preset": "demon", "pitch": -7, "volume": 40}

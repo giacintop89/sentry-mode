@@ -42,7 +42,7 @@ local network.
 |---|---|
 | POST `/api/speech` | `text`, optional `voice`, `rate`, `effects` (`preset`, `pitch`, `volume`). |
 | GET `/api/speech/voices` | Voices available on this node. |
-| GET/POST `/api/soundboard`, POST `/api/soundboard/play`, `/api/soundboard/delete` | Saved messages. |
+| GET/POST `/api/soundboard`, POST `/api/soundboard/play`, `/api/soundboard/delete` | Saved messages. POST renders the mp3 sample and answers `sample`; play plays that sample instead of synthesizing. |
 | GET `/api/talk/config` | HTTPS setup link settings. |
 | POST `/api/talk/start` | Session token, sample rate, duration limit; optional effects body. |
 | POST `/api/talk/chunk`, `/api/talk/stop`, `/api/talk/cancel` | Need `X-Sentry-Mode-Talk`; chunks need consecutive `X-Audio-Sequence` from zero, ≤ 9600 bytes. |
