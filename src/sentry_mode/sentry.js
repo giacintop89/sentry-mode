@@ -472,7 +472,7 @@
         catch(error){remove.disabled=false;$('captures-result').className='result error';$('captures-result').textContent=error.message;}});
       meta.append(title,when,remove);card.append(meta);return card;
     });
-    $('captures').replaceChildren(...cards);$('captures-result').textContent='';
+    $('captures-list').replaceChildren(...cards);$('captures-result').textContent='';
   }
   document.querySelector('.app-views a[href="/sentry#captures"]').addEventListener('click',loadCaptures);
   async function init(){try{const data=await api('sentry/config');config=data.config;revision=data.revision;

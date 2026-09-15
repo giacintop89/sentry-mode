@@ -35,6 +35,7 @@
       // Captures is a view of the navigation, not a tab of the workspace below it.
       const captures = key === 'captures';
       if (captures) for (const panel of document.querySelectorAll('main>[role=tabpanel]')) panel.hidden = true;
+      document.querySelector('.sentry-control').hidden = captures;
       document.querySelector('main>.workspace-tabs').hidden = captures;
       document.getElementById('panel-captures').hidden = !captures;
       for (const link of document.querySelectorAll('.app-views a[href^="/sentry"]')) {
