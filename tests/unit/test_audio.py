@@ -103,6 +103,81 @@ def test_native_pipewire_discovery_without_pactl():
     assert devices == [AudioDevice("bluez_output.current", "Bluetooth speaker", "pipewire")]
 
 
+SINKS = json.dumps(
+    [
+        {
+            "type": "PipeWire:Interface:Metadata",
+            "metadata": [{"key": "default.audio.sink", "value": {"name": "bluez_output.current"}}],
+        },
+        {
+            "id": 56,
+            "type": "PipeWire:Interface:Node",
+            "info": {
+                "props": {"media.class": "Audio/Sink", "node.name": "hdmi"},
+                "params": {"Props": [{"channelVolumes": [0.063997, 0.063997]}, None]},
+            },
+        },
+        {
+            "id": 93,
+            "type": "PipeWire:Interface:Node",
+            "info": {
+                "props": {"media.class": "Audio/Sink", "node.name": "bluez_output.current"},
+                "params": {"Props": [{"channelVolumes": [0.10163]}]},
+            },
+        },
+    ]
+)
+
+
+def test_sink_level_is_read_as_the_gain_applied_not_the_cubic_number():
+    """A sink a control panel shows at 0.47 is applying a tenth of the signal."""
+    devices = [AudioDevice("bluez_output.current", "Bluetooth speaker", "pipewire")]
+    with (
+        patch("sentry_mode.hardware.speaker.discover_devices", return_value=devices),
+        patch("sentry_mode.hardware.speaker.command", return_value=SINKS),
+    ):
+        level = Speaker(SpeakerConfig(device="Bluetooth speaker")).output_level()
+    assert level == {"supported": True, "level": 10, "reason": None}
+
+
+def test_session_default_speaker_follows_the_sink_pipewire_calls_default():
+    devices = [
+        AudioDevice("hdmi", "HDMI", "pipewire"),
+        AudioDevice("bluez_output.current", "Bluetooth speaker", "pipewire"),
+    ]
+    with (
+        patch("sentry_mode.hardware.speaker.discover_devices", return_value=devices),
+        patch("sentry_mode.hardware.speaker.command", return_value=SINKS),
+    ):
+        assert Speaker(SpeakerConfig()).output_level()["level"] == 10
+
+
+def test_setting_the_level_asks_for_its_cube_root_against_the_sink_id():
+    devices = [AudioDevice("bluez_output.current", "Bluetooth speaker", "pipewire")]
+    with (
+        patch("sentry_mode.hardware.speaker.discover_devices", return_value=devices),
+        patch("sentry_mode.hardware.speaker.command", return_value=SINKS) as call,
+    ):
+        Speaker(SpeakerConfig(device="Bluetooth speaker")).set_output_level(50)
+    assert call.call_args_list[1].args[0] == ["wpctl", "set-volume", "93", "0.793701"]
+
+
+@pytest.mark.parametrize(
+    "backend,devices",
+    [
+        ("alsa", [AudioDevice("default", "Card", "alsa")]),
+        ("pipewire", [AudioDevice("elsewhere", "Another sink", "pipewire")]),
+    ],
+)
+def test_a_speaker_without_a_level_of_its_own_offers_no_control(backend, devices):
+    with (
+        patch("sentry_mode.hardware.speaker.discover_devices", return_value=devices),
+        patch("sentry_mode.hardware.speaker.command", return_value=SINKS),
+    ):
+        level = Speaker(SpeakerConfig(device=devices[0].description)).output_level()
+    assert level["supported"] is False and level["level"] is None and level["reason"]
+
+
 @pytest.mark.parametrize(
     "backend,name", [("pipewire", "auto"), ("pulse", "auto"), ("alsa", "default")]
 )

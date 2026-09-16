@@ -27,14 +27,22 @@ SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
 ## Sections
 
 - `node` — `name`, reported in status output.
-- `camera` — `enabled`, `device`, `width`, `height`, `fps`. Prefer a stable
-  `/dev/v4l/by-id/...` device path.
+- `camera` — `enabled`, `device`, `width`, `height`, `fps`, `fourcc`. Prefer a stable
+  `/dev/v4l/by-id/...` device path. `fourcc` is the pixel format asked of the device,
+  `MJPG` by default because the uncompressed alternative caps 1080p at a few frames per
+  second over USB 2; empty keeps whatever the device offers first. `exposure` is the value
+  to hold the device at, in V4L2's 100 microsecond unit, or `0` to leave the exposure
+  automatic. All of these are editable from
+  [`/hardware`](hardware-and-devices.md); see [camera and video](camera-and-video.md) for
+  what they cost and [USB devices](usb-devices.md) for what the link allows.
 - `microphone`, `speaker` — device names or descriptions from `sentry-mode audio list`;
   runtime numeric Pulse IDs are never stored. `speaker.volume` is the test tone amplitude
   and does not touch the OS sink. `speaker.pipewire_latency_ms` defaults to 250.
 - `speech` — `voice`, `rate`, `engine` (`auto`, `kokoro`, `espeak`), `speakers`,
-  `kokoro_directory`, `lead_in_ms`, `tail_ms`. `auto` speaks with Kokoro when it is
-  installed and falls back to eSpeak NG when it is not.
+  `kokoro_directory`, `lead_in_ms`, `tail_ms`, `talk_gain_db`. `auto` speaks with Kokoro when
+  it is installed and falls back to eSpeak NG when it is not. `talk_gain_db` (15 by default,
+  0 to 30) is how much quieter-than-full-scale phone audio may be lifted before it is played
+  ([push-to-talk](push-to-talk.md)); `0` plays the phone's own level.
 - `detection` — startup enablement, model path, confidence threshold (0.45), maximum
   inference rate.
 - `sentry` — initial rules, `detection_fps`, `test_mode`, `action_ttl_seconds`, SSH commands

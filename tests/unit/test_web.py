@@ -139,15 +139,19 @@ def test_device_lists_use_adapters(web):
         assert devices["speakers"] == []
 
 
-def test_camera_test_releases_camera(web):
+def test_camera_test_reports_latency_and_releases_camera(web):
     _, base = web
+    latency = {"open_ms": 96.4, "first_frame_ms": 310.2, "effective_fps": 24.9, "frames": 20}
     with patch("sentry_mode.web.Camera") as adapter:
-        camera = adapter.return_value.__enter__.return_value
+        camera = adapter.return_value
         camera.info.return_value = {"width": 640, "height": 480, "fps": 30}
+        camera.measure_latency.return_value = latency
         status, result, _ = request(base, "/api/camera/test", "POST")
         assert status == 200 and result["width"] == 640
-        assert camera.capture_frame.call_count == 5
-        adapter.return_value.__exit__.assert_called_once()
+        assert result["latency"] == latency
+        assert "24.9 frames/second delivered" in result["message"]
+        camera.measure_latency.assert_called_once()
+        camera.close.assert_called_once()
 
 
 def test_capture_download_cleans_temporary_file(web):
@@ -419,6 +423,20 @@ def test_detection_toggle_validates_boolean_and_preserves_camera(web):
         assert request(base, "/api/video/detection", "POST", body={"enabled": False})[0] == 200
     for body in [{"enabled": "false"}, {"enabled": 1}, {}, {"enabled": True, "model": "/tmp"}]:
         assert request(base, "/api/video/detection", "POST", body=body)[0] == 400
+
+
+def test_speaker_output_level_is_set_live_and_never_saved(web, tmp_path, monkeypatch):
+    controls, base = web
+    monkeypatch.setenv("SENTRY_MODE_CONFIG", str(tmp_path / "config.yaml"))
+    with patch("sentry_mode.web.Speaker.set_output_level") as level:
+        level.return_value = {"supported": True, "level": 80, "reason": None}
+        status, result, _ = request(base, "/api/audio/level", "POST", body={"level": 80})
+    assert status == 200 and result["level"] == 80 and "80%" in result["message"]
+    level.assert_called_once_with(80)
+    assert not (tmp_path / "config.yaml").exists()
+    assert not controls.audio_lock.locked()
+    for body in [{"level": 101}, {"level": -1}, {"level": 1.5}, {}, {"volume": 80}]:
+        assert request(base, "/api/audio/level", "POST", body=body)[0] == 400
 
 
 @pytest.mark.parametrize(
@@ -990,6 +1008,11 @@ def test_hardware_page_lists_devices_and_saves_the_choice(web, tmp_path, monkeyp
     monkeypatch.setenv("SENTRY_MODE_CONFIG", str(config_file))
     choice = {
         "camera": "/dev/video0",
+        "camera_width": 1280,
+        "camera_height": 720,
+        "camera_fps": 60,
+        "camera_fourcc": "MJPG",
+        "camera_exposure": 0,
         "microphone": microphone.name,
         "speaker": speaker.name,
         "speaker_volume": 45,
@@ -999,11 +1022,20 @@ def test_hardware_page_lists_devices_and_saves_the_choice(web, tmp_path, monkeyp
     written = yaml.safe_load(config_file.read_text())
     assert written["node"] == {"name": "doorstep"}
     assert written["speaker"] == {"volume": 45, "device": speaker.name}
-    assert written["camera"] == {"device": "/dev/video0"}
-    # The running dashboard uses the new devices without a restart.
+    assert written["camera"] == {
+        "device": "/dev/video0",
+        "width": 1280,
+        "height": 720,
+        "fps": 60,
+        "fourcc": "MJPG",
+        "exposure": 0,
+    }
+    # The running dashboard uses the new devices and capture settings without a restart.
     assert controls.config.speaker.volume == 45
     assert controls.config.camera.device == "/dev/video0"
-    assert request(base, "/api/hardware", "POST", body={**choice, "speaker_volume": 120})[0] == 400
+    assert (controls.config.camera.width, controls.config.camera.fps) == (1280, 60)
+    for invalid in [{"speaker_volume": 120}, {"camera_fps": 0}, {"camera_fourcc": "MJP"}]:
+        assert request(base, "/api/hardware", "POST", body={**choice, **invalid})[0] == 400
     with patch.object(controls.video, "status", return_value={"capture_running": True}):
         busy = request(base, "/api/hardware", "POST", body={**choice, "camera": "1"})
     assert busy[0] == 409 and "Stop video" in busy[1]["error"]

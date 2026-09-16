@@ -1,11 +1,12 @@
 import threading
+import time
 from unittest.mock import patch
 
 import pytest
 
 from sentry_mode.config import CameraConfig
 from sentry_mode.core.errors import HardwareError
-from sentry_mode.vision.stream import VideoStream
+from sentry_mode.vision.stream import RECONNECT_ATTEMPTS, VideoStream
 
 
 def test_disabled_camera_fails_cleanly():
@@ -24,13 +25,39 @@ def test_worker_read_failure_releases_camera():
     with patch("sentry_mode.vision.stream.Camera") as adapter:
         camera = adapter.return_value.__enter__.return_value
         camera.encode_jpeg.return_value = b"jpeg"
-        camera.capture_frame.side_effect = [object()] * 5 + [HardwareError("camera disconnected")]
+        # Every reopen fails too, so the worker gives up instead of retrying forever.
+        camera.capture_frame.side_effect = [object()] * 5 + [
+            HardwareError("camera disconnected")
+        ] * RECONNECT_ATTEMPTS
         stream.start()
-        stream.thread.join(timeout=2)
+        stream.thread.join(timeout=10)
         assert stream.status()["error"] == "camera disconnected"
+        assert stream.status()["reconnects"] == RECONNECT_ATTEMPTS - 1
         assert stream.next_frame(-1) is None
         assert not lock.locked()
         adapter.return_value.__exit__.assert_called_once()
+
+
+def test_worker_reopens_a_camera_that_dropped_out():
+    lock = threading.Lock()
+    stream = VideoStream(CameraConfig(), lock)
+    with patch("sentry_mode.vision.stream.Camera") as adapter:
+        camera = adapter.return_value.__enter__.return_value
+        camera.encode_jpeg.return_value = b"jpeg"
+        camera.capture_frame.side_effect = (
+            [object()] * 5 + [HardwareError("no frame")] + [object()] * 200
+        )
+        stream.start()
+        deadline = time.monotonic() + 10
+        while not camera.open.called and time.monotonic() < deadline:
+            time.sleep(0.05)
+        status = stream.status()
+        assert camera.open.called and camera.close.called
+        assert status["reconnects"] == 1
+        assert status["error"] is None
+        assert status["capture_running"]
+        stream.stop()
+    assert not lock.locked()
 
 
 def test_busy_camera_does_not_create_worker():

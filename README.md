@@ -70,8 +70,22 @@ service's EnvironmentFile. `sentry-mode config show` prints the effective config
 Run `./scripts/detect_camera.sh` to inspect V4L2 paths and supported modes. Prefer a stable
 `/dev/v4l/by-id/...` path in YAML; the StreamCam is not necessarily `/dev/video0`. Choose a
 supported resolution/FPS, check USB power/bandwidth and account access to the `video` group,
-and stop other processes using the camera. OpenCV-reported FPS may differ from measured FPS.
-Capture output directories must already exist.
+and stop other processes using the camera. OpenCV-reported FPS may differ from measured FPS
+— `sentry-mode camera test` measures what actually arrives. Capture output directories must
+already exist.
+
+`camera.fourcc` decides the pixel format asked of the device and defaults to `MJPG`. The
+uncompressed alternative is what caps a 1080p camera at a few frames per second, since one
+frame is over four megabytes. `camera.exposure` holds the device at a fixed exposure, in V4L2's
+100 microsecond unit, or `0` to leave the exposure automatic. Size, rate,
+format and exposure are also editable from `/hardware` and apply to a running capture.
+
+A camera that disconnects, refuses to stream, or advertises fewer modes than expected is
+usually a USB problem: link power management on USB 3, an uncompressed format the link
+cannot carry, or another device resetting the shared controller. The capture survives brief
+drops by reopening the device, counted as `reconnects` in `/api/video/status`.
+[docs/usb-devices.md](docs/usb-devices.md) has the symptoms, the diagnosis commands and the
+kernel quirks that fix them.
 
 ## Bluetooth and audio troubleshooting
 
@@ -374,6 +388,25 @@ when a Bluetooth sink starts/stops. Adjust `speech.lead_in_ms`, `speech.tail_ms`
 `speaker.pipewire_latency_ms` (250 ms by default) if the speaker needs different buffering.
 Long speech synthesis and playback are cancelled and reaped on server shutdown.
 
+A Bluetooth speaker that is quiet at every setting is usually in the wrong profile rather
+than at the wrong volume. Selecting its own microphone forces the device into HSP/HFP — the
+16 kHz mono telephone profile — because Bluetooth cannot carry A2DP playback and a headset
+microphone at the same time. Give the node a different microphone, put the device back on
+`a2dp-sink` with `wpctl set-profile`, and it plays 48 kHz stereo again.
+
+Nothing the node plays can be louder than the sink it plays into, and a sink arrives at
+whatever gain the session gave it — WirePlumber hands a newly seen device 0.064, and a
+Bluetooth speaker reports its own knob when it connects. The **Output level** slider in the
+Audio panel of `/hardware` is that gain, as a percentage of unity: it appears for a PipeWire
+sink, applies at once, and is session state rather than configuration. `wpctl` shows the same
+setting in a cubic scale, so its `0.47` is a tenth of the signal, not half of it.
+
+Phone audio arrives well below full scale, because the handset's own automatic gain aims at
+a safe level rather than a loud one. It is lifted by up to `speech.talk_gain_db` decibels
+(15 by default, `0` to disable) before it reaches the speaker; the lift is a ceiling that
+stops at the peak, so a loud phone is barely touched and near-silence is not raised with the
+voice.
+
 Both TTS and phone push-to-talk have independent **Voice modification** controls:
 **Natural**, **Demon** (−7 semitones), **Chipmunk** (+7 semitones), and **Custom pitch**
 (−12 to +12 semitones), plus volume from 0–100%. Presets preserve speaking speed; the
@@ -434,8 +467,13 @@ Actions require POST with a same-origin control header; there are no arbitrary s
 filesystem-path controls. It listens on all interfaces when explicitly started with `serve`;
 no web server starts in `run`. This bootstrap has no login, so use a trusted local network
 or bind to 127.0.0.1. Devices and configuration use GET `/api/camera/list`, `/api/audio/list`,
-and `/api/config`; hardware actions use POST `/api/camera/test`, `/api/camera/capture`,
-`/api/audio/test-input`, `/api/audio/test-output`, and `/api/config/validate`. Runtime uses
+and `/api/config`; GET/POST `/api/hardware` also carries the camera's size, rate, pixel
+format and pinned exposure. Hardware actions use POST `/api/camera/test`, `/api/camera/capture`,
+`/api/audio/test-input`, `/api/audio/test-output`, `/api/audio/level`, and
+`/api/config/validate`. The camera
+test answers a `latency` block — open, first frame, median and worst frame interval, and the
+frames/second actually delivered — measured in the adapter, so `sentry-mode camera test`
+reports the same numbers. They cover the node's own capture path, not glass-to-screen. Runtime uses
 GET `/api/runtime` and POST `/api/runtime/start` or `/api/runtime/stop`. Video uses POST
 `/api/video/start`, POST `/api/video/stop`, POST `/api/video/record/start`, POST
 `/api/video/record/stop`, GET `/api/video/status`, and GET `/api/video` for MJPEG. Speech uses POST `/api/speech` with a JSON body containing `text`, optional `voice`, and

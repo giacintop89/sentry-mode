@@ -17,6 +17,28 @@ red while recording; press it again to stop and save. The browser's recording (W
 MP4) is uploaded to POST `/api/captures/message` as `application/octet-stream` and converted
 to an AAC `.m4a` file of at most 5 MB.
 
+## Loudness
+
+A phone sends speech well below full scale: its own automatic gain aims at a safe recording
+level, not a loud one, so playing those samples untouched is much quieter than synthesized
+speech, which is rendered at full scale. The node lifts them on the way to the speaker, by up
+to `speech.talk_gain_db` decibels — 15 by default.
+
+The setting is a ceiling, not a fixed gain. The lift stops once the audio reaches the peak,
+so a phone that already sends a strong signal is barely touched and a quiet one is brought
+most of the way up; near-silence between words is left where it is rather than being raised
+into audible hiss. Set it to `0` to play exactly what the phone sent. Raising it costs
+nothing but headroom against room noise.
+
+If it is still quiet with the lift in place, the attenuation is below this software. The
+**Output level** slider on `/hardware` is the speaker's own gain, which caps everything the
+node plays through it ([hardware and devices](hardware-and-devices.md)); a sink sitting at a
+tenth of unity loses 20 dB, more than the lift puts back.
+
+The **Volume** slider in Voice modification applies after the lift and is a plain
+attenuation: 100% is unmodified, and it starts at `speaker.volume`. FFmpeg does the work, in
+the same pass as a pitch preset.
+
 ## HTTPS is required
 
 Phone browsers only grant microphone access over a trusted HTTPS connection; a LAN HTTP
@@ -52,7 +74,8 @@ consecutive `X-Audio-Sequence` values from zero and at most 9600 bytes each; the
 limits a chunk to 100 ms and uploads them in order. All four endpoints need the same-origin
 control header. `/api/talk/start` accepts the effects object as its optional JSON body.
 
-One player process runs for a whole press, and no audio file is retained on the server.
+One player process runs for a whole press, and no audio file is retained on the server. A
+second process filters the stream whenever a gain or a pitch preset is in force.
 Leading and trailing padding reuses the speech settings, capped at 1000/750 ms for live
 transmission. A bounded packet queue rejects a connection that falls behind, and a
 three-second idle timeout releases an abandoned session. Effects add a small processing
@@ -61,4 +84,5 @@ delay while keeping one continuous playback stream.
 Current Android Chrome and iPhone Safari expose the required APIs over HTTPS; device-specific
 permission and audio behavior still needs testing on real phones.
 
-See also: [text to speech](text-to-speech.md), [security model](security.md).
+See also: [text to speech](text-to-speech.md), [configuration](configuration.md),
+[security model](security.md).

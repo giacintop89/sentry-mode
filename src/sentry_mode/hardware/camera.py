@@ -2,6 +2,8 @@
 
 import glob
 import logging
+import statistics
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,9 +35,19 @@ class Camera:
             self._capture = cv2.VideoCapture(self.config.device)
             if not self._capture.isOpened():
                 raise HardwareError(f"cannot open camera {self.config.device}")
+            if self.config.fourcc:
+                # Asked for before the size: a UVC device picks its pixel format first, and the
+                # uncompressed default is what caps 1080p at 5 fps rather than 30.
+                self._capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.config.fourcc))
             self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)
             self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)
             self._capture.set(cv2.CAP_PROP_FPS, self.config.fps)
+            # V4L2 passes the mode straight through: 1 is manual, 3 the aperture-priority
+            # default. Both branches are set because the device keeps the mode between opens,
+            # so leaving one alone would strand it wherever a previous setting left it.
+            self._capture.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1 if self.config.exposure else 3)
+            if self.config.exposure:
+                self._capture.set(cv2.CAP_PROP_EXPOSURE, self.config.exposure)
             self._capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception as exc:
             self.close()
@@ -84,10 +96,35 @@ class Camera:
 
         if self._capture is None:
             raise HardwareError("camera is not open")
+        negotiated = int(self._capture.get(cv2.CAP_PROP_FOURCC))
         return {
             "width": self._capture.get(cv2.CAP_PROP_FRAME_WIDTH),
             "height": self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT),
             "fps": self._capture.get(cv2.CAP_PROP_FPS),
+            "fourcc": negotiated.to_bytes(4, "little").decode("ascii", "replace").strip(),
+        }
+
+    def measure_latency(self, frames: int = 20) -> dict[str, float | None]:
+        """Time the open, the first frame, and the intervals between the frames after it."""
+        was_open = self._capture is not None
+        started = time.perf_counter()
+        self.open()
+        opened = time.perf_counter()
+        self.capture_frame()
+        first = time.perf_counter()
+        intervals, previous = [], first
+        for _ in range(max(1, frames)):
+            self.capture_frame()
+            now = time.perf_counter()
+            intervals.append((now - previous) * 1000)
+            previous = now
+        return {
+            "open_ms": None if was_open else round((opened - started) * 1000, 1),
+            "first_frame_ms": round((first - started) * 1000, 1),
+            "frame_interval_ms": round(statistics.median(intervals), 1),
+            "slowest_frame_ms": round(max(intervals), 1),
+            "effective_fps": round(len(intervals) * 1000 / sum(intervals), 1),
+            "frames": len(intervals),
         }
 
     def is_available(self) -> bool:

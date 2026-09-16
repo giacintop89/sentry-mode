@@ -11,7 +11,7 @@ def test_config_validate(capsys):
 
 def test_failed_camera_test_returns_nonzero():
     with patch("sentry_mode.cli.Camera") as camera:
-        camera.return_value.__enter__.side_effect = HardwareError("missing camera")
+        camera.return_value.measure_latency.side_effect = HardwareError("missing camera")
         assert main(["camera", "test"]) == 1
 
 

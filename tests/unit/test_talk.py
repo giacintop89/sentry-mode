@@ -1,11 +1,14 @@
+import shutil
 import subprocess
 import sys
 import threading
+import time
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
-from sentry_mode.audio.talk import TalkStream
+from sentry_mode.audio.talk import TalkStream, gain_filter
 from sentry_mode.config import Settings
 from sentry_mode.core.errors import HardwareError
 from sentry_mode.core.models import AudioDevice
@@ -31,7 +34,8 @@ def talk(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "sentry_mode.audio.talk.Speaker.device", lambda _: AudioDevice("auto", "Test", "pipewire")
     )
-    config = Settings(speech={"lead_in_ms": 10, "tail_ms": 10})
+    # No gain: these cover the transport, and a filter would put FFmpeg between the pipes.
+    config = Settings(speech={"lead_in_ms": 10, "tail_ms": 10, "talk_gain_db": 0})
     stream = TalkStream(config, threading.Lock())
     try:
         yield stream, output
@@ -100,3 +104,48 @@ def test_missing_player_releases_lock(talk):
         with pytest.raises(FileNotFoundError):
             stream.start()
     assert not stream.lock.locked()
+
+
+def test_gain_is_a_ceiling_on_the_lift_and_switches_off_at_zero():
+    assert gain_filter(0) is None
+    assert "e=5.62:" in gain_filter(15)
+    assert "e=31.62:" in gain_filter(30)
+
+
+def test_quiet_phone_audio_reaches_the_speaker_louder(tmp_path):
+    """A phone sends speech far below full scale; the node lifts it before it is played."""
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg is not installed")
+    output = tmp_path / "played.pcm"
+    popen = subprocess.Popen
+
+    def launch(args, **kwargs):
+        if args[0] == "pw-play":
+            args = [
+                sys.executable,
+                "-c",
+                'import sys; open(sys.argv[1], "wb").write(sys.stdin.buffer.read())',
+                str(output),
+            ]
+        return popen(args, **kwargs)
+
+    quiet = (np.sin(2 * np.pi * 300 * np.arange(96000) / 48000) * 400).astype("<i2").tobytes()
+    stream = TalkStream(Settings(speech={"lead_in_ms": 0, "tail_ms": 0}), threading.Lock())
+    with (
+        patch("sentry_mode.audio.talk.subprocess.Popen", side_effect=launch),
+        patch(
+            "sentry_mode.audio.talk.Speaker.device",
+            return_value=AudioDevice("auto", "Test", "pipewire"),
+        ),
+    ):
+        try:
+            token = stream.start()["token"]
+            for sequence, index in enumerate(range(0, len(quiet), 9600)):
+                stream.chunk(token, sequence, quiet[index : index + 9600])
+                time.sleep(0.03)
+            stream.finish(token)
+        finally:
+            stream.close()
+    played = np.frombuffer(output.read_bytes(), "<i2")
+    assert abs(played).max() > 400 * 2.5
+    assert abs(played).max() < 32767

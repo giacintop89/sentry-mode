@@ -75,10 +75,11 @@ def main(argv: list[str] | None = None) -> int:
                 capture_image(camera, args.output)
                 print(f"Captured {args.output}")
             else:
-                with camera:
-                    for _ in range(5):
-                        camera.capture_frame()
-                    print(json.dumps(camera.info()))
+                try:
+                    latency = camera.measure_latency()
+                    print(json.dumps({**camera.info(), "latency": latency}, indent=2))
+                finally:
+                    camera.close()
         elif args.command == "audio":
             microphone, speaker = Microphone(config.microphone), Speaker(config.speaker)
             if args.action == "list":

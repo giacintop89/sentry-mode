@@ -18,6 +18,7 @@ and where its limits are.
 - [Telegram](telegram.md) — bot messages from a rule.
 - [SSH commands](ssh-commands.md) — saved remote commands from a rule.
 - [Web dashboard](web-dashboard.md) — views, navigation, embedding, small screens.
+- [Hardware and devices](hardware-and-devices.md) — choosing devices, capture settings, tests.
 
 ## Reference
 
@@ -27,6 +28,7 @@ and where its limits are.
 - [Security model](security.md) — what is exposed, what is stored, what is refused.
 - [Architecture](architecture.md) — how the parts fit together.
 - [Raspberry Pi setup](raspberry-pi-setup.md) — hardware, audio session, service install.
+- [USB devices](usb-devices.md) — what the link allows, why devices drop out, kernel quirks.
 - [Roadmap](roadmap.md) — what is implemented and what comes next.
 
 ## Plans

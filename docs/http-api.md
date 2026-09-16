@@ -20,9 +20,10 @@ local network.
 | GET `/api/status` | Node status summary (cached for ten seconds). |
 | GET `/api/config`, POST `/api/config/validate` | Effective configuration; validation. |
 | GET `/api/camera/list`, `/api/audio/list` | Devices the node reports. |
-| POST `/api/camera/test`, `/api/camera/capture` | Camera check; JPEG snapshot. |
+| POST `/api/camera/test`, `/api/camera/capture` | Camera check with a `latency` block ([camera and video](camera-and-video.md)); JPEG snapshot. |
 | POST `/api/audio/test-input`, `/api/audio/test-output` | Microphone and tone tests. |
-| GET/POST `/api/hardware` | Selected devices and speaker volume. |
+| POST `/api/audio/level` | `{"level": 0-100}`; the output sink's own gain, as a percentage of unity. Applied at once, never saved. |
+| GET/POST `/api/hardware` | Selected devices and speaker volume, the output sink's level, plus the camera's size, rate, pixel format and pinned exposure ([hardware and devices](hardware-and-devices.md)). |
 | GET `/api/runtime`, POST `/api/runtime/start`, `/api/runtime/stop` | The idle runtime. |
 | GET `/api/streams` | Whether the node is streaming video or audio. |
 
@@ -32,8 +33,8 @@ local network.
 |---|---|
 | GET `/api/video` | MJPEG stream. |
 | POST `/api/video/start`, `/api/video/stop` | Start and stop the camera worker. |
-| GET `/api/video/status` | `running`, `capture_running`, `monitoring`, `recording`, detection state and timing. |
-| POST `/api/video/detection` | `{"enabled": true|false}`. |
+| GET `/api/video/status` | `running`, `capture_running`, `monitoring`, `recording`, `reconnects`, detection state and timing. |
+| POST `/api/video/detection` | `{"enabled": true|false}`; object detection. |
 | POST `/api/video/record/start`, `/api/video/record/stop` | Record the preview. |
 | GET `/api/audio/monitor` | Raw 16-bit mono PCM at 16 kHz from the node microphone. |
 

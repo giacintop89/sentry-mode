@@ -22,7 +22,14 @@ def test_environment_overrides_yaml(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "text", ["camera:\n  width: -1", "speaker:\n  volume: 101", "unknown: true", "[]"]
+    "text",
+    [
+        "camera:\n  width: -1",
+        "camera:\n  fourcc: MJP",
+        "speaker:\n  volume: 101",
+        "unknown: true",
+        "[]",
+    ],
 )
 def test_invalid_configuration(tmp_path, text):
     path = tmp_path / "invalid.yaml"

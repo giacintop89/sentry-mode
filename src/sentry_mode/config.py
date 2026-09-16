@@ -27,6 +27,16 @@ class CameraConfig(Section):
     width: int = Field(default=1920, gt=0)
     height: int = Field(default=1080, gt=0)
     fps: float = Field(default=30, gt=0)
+    fourcc: str = "MJPG"
+    exposure: int = Field(default=0, ge=0)
+
+    @field_validator("fourcc")
+    @classmethod
+    def validate_fourcc(cls, value: str) -> str:
+        value = value.strip().upper()
+        if value and len(value) != 4:
+            raise ValueError("fourcc takes four characters, or none to keep the device default")
+        return value
 
     @field_validator("device")
     @classmethod
@@ -62,6 +72,7 @@ class SpeechConfig(Section):
     speakers: dict[str, str] = Field(default_factory=lambda: {"en": "af_heart", "it": "if_sara"})
     lead_in_ms: int = Field(default=1000, ge=0, le=5000)
     tail_ms: int = Field(default=750, ge=0, le=5000)
+    talk_gain_db: int = Field(default=15, ge=0, le=30)
     voice: str = Field(default="en", min_length=1, max_length=64)
     rate: int = Field(default=175, ge=80, le=450)
 

@@ -11,7 +11,10 @@ cp config/sentry-mode.example.yaml config/sentry-mode.yaml
 ./scripts/detect_audio.sh
 ```
 
-Select supported camera modes and a stable camera path from V4L2 diagnostics. If permissions
+Select supported camera modes and a stable camera path from V4L2 diagnostics. A camera that
+disconnects, refuses to stream, or offers fewer modes than expected is usually a USB problem
+rather than a configuration one — [USB devices](usb-devices.md) covers the symptoms, the
+diagnosis and the kernel quirks that fix them. If permissions
 require it, add your account to video/audio groups and log in again:
 
 ```bash
@@ -20,7 +23,10 @@ sudo usermod -aG video,audio "$USER"
 
 Pair the speaker interactively with `bluetoothctl`: `power on`, `scan on`, `pair <address>`,
 `trust <address>`, `connect <address>`, then `scan off` and `quit`. Run `wpctl status` or
-`pactl list short sinks` to confirm the audio sink. Select a default with OS tools or place
+`pactl list short sinks` to confirm the audio sink. Check its profile too: a speaker that is
+also a speakerphone connects in the headset profile whenever something wants its microphone,
+and plays 16 kHz mono at a fraction of the loudness until it is put back on A2DP
+([hardware and devices](hardware-and-devices.md)). Select a default with OS tools or place
 the sink's stable name / unique human-readable description in YAML. No diagnostic script
 changes audio defaults. ALSA fallback may not expose a Bluetooth speaker.
 

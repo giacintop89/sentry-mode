@@ -20,6 +20,16 @@ MAX_SECONDS = 60
 IDLE_SECONDS = 3
 
 
+def gain_filter(gain_db: int) -> str | None:
+    """Lift quiet phone audio toward full scale, by up to gain_db and no further."""
+    if not gain_db:
+        return None
+    # How far below full scale a phone sends depends on the handset and its own automatic
+    # gain, so the setting is a ceiling on the lift rather than a fixed gain: the filter
+    # stops at the peak, and the threshold keeps the silence between words from rising too.
+    return f"speechnorm=e={10 ** (gain_db / 20):.2f}:t=0.02:p=0.95"
+
+
 class TalkStream:
     def __init__(self, config: Settings, lock: threading.Lock):
         self.config = config
@@ -95,8 +105,14 @@ class TalkStream:
                     process = subprocess.Popen(
                         args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=errors
                     )
-                    pitch_filter = effects.pitch_filter()
-                    filters = [pitch_filter] if pitch_filter else []
+                    filters = [
+                        step
+                        for step in (
+                            gain_filter(self.config.speech.talk_gain_db),
+                            effects.pitch_filter(),
+                        )
+                        if step
+                    ]
                     if device.backend == "alsa" and volume != 100:
                         filters.append(f"volume={volume / 100:g}")
                     if filters:

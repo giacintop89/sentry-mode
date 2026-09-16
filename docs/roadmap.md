@@ -4,7 +4,8 @@
 
 Repository structure; camera discovery and headless OpenCV capture; microphone and speaker
 detection; CLI; configuration; logging; mocked and opt-in hardware tests; systemd preparation.
-Main video/speech UI on port 8083; hardware settings at `/hardware`.
+Main video/speech UI on port 8083; hardware settings at `/hardware`, including the camera's
+size, rate, pixel format and exposure.
 
 ## Phase 1 — Perception
 
@@ -33,5 +34,6 @@ and Pi/server orchestration integrations.
 
 ## Phase 5 — Production Node
 
-Event persistence, health monitoring, reconnect logic, watchdog, remote configuration,
-OTA/update strategy, metrics, and an optional expanded web dashboard.
+Camera reconnect after a device drops off the bus is implemented, and capture timing is
+measurable from both surfaces. Next: event persistence, health monitoring, watchdog, remote
+configuration, OTA/update strategy, metrics, and an optional expanded web dashboard.

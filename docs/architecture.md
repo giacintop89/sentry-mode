@@ -12,7 +12,9 @@ Logitech StreamCam → camera (OpenCV headless) → frame capture / future perce
 ```
 
 OpenCV handles camera acquisition, image encoding, and local object detection through the
-camera and vision modules. Audio subprocesses have bounded timeouts and are reaped on failure. Native PipeWire
+camera and vision modules. The camera adapter also owns what is asked of the device — pixel
+format, size, rate and exposure — and its own measurement, so the CLI and the dashboard get
+one implementation and the same numbers. Audio subprocesses have bounded timeouts and are reaped on failure. Native PipeWire
 recording receives SIGINT after two seconds to finalize its WAV header, with kill/reap
 cleanup if it fails to stop. Discovery falls back from Pulse to native PipeWire to ALSA. Temporary test recordings and tones are deleted.
 Status acquisition releases camera handles before the service waits for termination.
@@ -44,7 +46,9 @@ Live video is an explicitly started MJPEG feed. One worker owns the camera and p
 its latest resized JPEG through a condition variable, allowing multiple HTTP viewers
 without opening multiple camera handles. Hiding preview ends viewer responses and releases
 the camera if Sentry is disarmed; shutdown always releases it. Snapshots reuse the latest
-captured frame; status never reopens an active camera.
+captured frame; status never reopens an active camera. A read that fails because the device
+re-enumerated is retried against a reopened handle before the worker gives up, so a USB
+hiccup costs frames rather than the session.
 The main UI is at `/`; hardware settings are at `/hardware` (`/tests` still resolves).
 
 Speech synthesis passes validated text to local Kokoro or eSpeak NG through stdin and writes

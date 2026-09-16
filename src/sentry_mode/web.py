@@ -79,14 +79,24 @@ MANUAL_VIDEO_SECONDS = 60
 class HardwareRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     camera: int | str
+    camera_width: int = Field(gt=0, le=7680)
+    camera_height: int = Field(gt=0, le=4320)
+    camera_fps: float = Field(gt=0, le=240)
+    camera_fourcc: str = Field(max_length=4)
+    camera_exposure: int = Field(ge=0, le=100000)
     microphone: str = Field(min_length=1, max_length=200)
     speaker: str = Field(min_length=1, max_length=200)
     speaker_volume: int = Field(ge=0, le=100)
 
 
-class DetectionRequest(BaseModel):
+class ToggleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: StrictBool
+
+
+class OutputLevelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    level: int = Field(ge=0, le=100)
 
 
 class SentryUpdate(BaseModel):
@@ -184,9 +194,15 @@ class NodeControls:
                 ],
                 "speakers": [asdict(d) for d in Speaker(self.config.speaker).list_devices()],
                 "camera": str(self.config.camera.device),
+                "camera_width": self.config.camera.width,
+                "camera_height": self.config.camera.height,
+                "camera_fps": self.config.camera.fps,
+                "camera_fourcc": self.config.camera.fourcc,
+                "camera_exposure": self.config.camera.exposure,
                 "microphone": self.config.microphone.device,
                 "speaker": self.config.speaker.device,
                 "speaker_volume": self.config.speaker.volume,
+                "output_level": Speaker(self.config.speaker).output_level(),
                 "saved_to": str(saved) if saved else None,
             }
         if path == "/api/sounds":
@@ -359,7 +375,17 @@ class NodeControls:
             return self.video_status()
 
     def set_hardware(self, request: HardwareRequest) -> dict:
-        camera = CameraConfig(**{**self.config.camera.model_dump(), "device": request.camera})
+        camera = CameraConfig(
+            **{
+                **self.config.camera.model_dump(),
+                "device": request.camera,
+                "width": request.camera_width,
+                "height": request.camera_height,
+                "fps": request.camera_fps,
+                "fourcc": request.camera_fourcc,
+                "exposure": request.camera_exposure,
+            }
+        )
         if camera.device != self.config.camera.device and (
             self.video.status()["capture_running"] or self.sentry.status()["armed"]
         ):
@@ -379,14 +405,24 @@ class NodeControls:
             save_sections(
                 saved,
                 {
-                    "camera": {"device": camera.device},
+                    "camera": {
+                        "device": camera.device,
+                        "width": camera.width,
+                        "height": camera.height,
+                        "fps": camera.fps,
+                        "fourcc": camera.fourcc,
+                        "exposure": camera.exposure,
+                    },
                     "microphone": {"device": microphone.device},
                     "speaker": {"device": speaker.device, "volume": speaker.volume},
                 },
             )
         # Adapters read these objects on every use, so the change applies to the next
         # capture, recording or announcement without a restart.
-        self.config.camera.device = camera.device
+        # A running capture compares its settings each pass, so a size or rate change
+        # reopens the device on the next frame rather than waiting for a restart.
+        for field in ("device", "width", "height", "fps", "fourcc", "exposure"):
+            setattr(self.config.camera, field, getattr(camera, field))
         self.config.microphone.device = microphone.device
         self.config.speaker.device, self.config.speaker.volume = speaker.device, speaker.volume
         self.cached_status = None
@@ -418,7 +454,7 @@ class NodeControls:
             self.video.start()
             return self.video_status()
         if path == "/api/video/detection":
-            self.video.set_detection(DetectionRequest.model_validate(body).enabled)
+            self.video.set_detection(ToggleRequest.model_validate(body).enabled)
             return self.video_status()
         if path == "/api/video/stop":
             self.cached_status = None
@@ -437,6 +473,13 @@ class NodeControls:
             return self.soundboard.delete(SoundboardReference.model_validate(body).id)
         if path == "/api/hardware":
             return self.set_hardware(HardwareRequest.model_validate(body))
+        if path == "/api/audio/level":
+            level = OutputLevelRequest.model_validate(body).level
+            speaker = Speaker(self.config.speaker)
+            return {
+                "message": f"Speaker output level set to {level}% of unity.",
+                **speaker.set_output_level(level),
+            }
         if path == "/api/sounds/delete":
             sound = SoundReference.model_validate(body).id
             used = [
@@ -502,10 +545,19 @@ class NodeControls:
         try:
             self.cached_status = None
             if path == "/api/camera/test":
-                with Camera(self.config.camera) as camera:
-                    for _ in range(5):
-                        camera.capture_frame()
-                    return {"message": "Camera test successful", **camera.info()}
+                camera = Camera(self.config.camera)
+                try:
+                    latency = camera.measure_latency()
+                    return {
+                        "message": (
+                            f"Camera test successful: {latency['effective_fps']} frames/second"
+                            f" delivered, first frame after {latency['first_frame_ms']} ms."
+                        ),
+                        **camera.info(),
+                        "latency": latency,
+                    }
+                finally:
+                    camera.close()
             if path == "/api/camera/capture":
                 with tempfile.TemporaryDirectory(prefix="sentry-mode-web-") as directory:
                     output = Path(directory) / "frame.jpg"
@@ -533,6 +585,7 @@ JSON_POSTS = {
     "/api/soundboard/play",
     "/api/captures/delete",
     "/api/hardware",
+    "/api/audio/level",
     "/api/sounds/delete",
     "/api/sounds/play",
     "/api/tunes/play",

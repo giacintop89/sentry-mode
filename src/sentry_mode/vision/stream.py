@@ -10,6 +10,10 @@ from sentry_mode.hardware.camera import Camera
 from sentry_mode.vision.detection import DetectionWorker
 from sentry_mode.vision.recording import VIDEO_FPS, VIDEO_MAX_WIDTH
 
+# A device that re-enumerates takes a few seconds to come back; beyond that it is really gone.
+RECONNECT_ATTEMPTS = 6
+RECONNECT_PAUSE = 1.0
+
 
 class VideoStream:
     def __init__(
@@ -30,6 +34,7 @@ class VideoStream:
         self.detection = DetectionWorker(self.base_detection)
         self.preview = False
         self.preview_detection = self.base_detection.enabled
+        self.reconnects = 0
         self.monitoring = False
         self.monitor_fps = 2.0
         self.viewers = 0
@@ -50,6 +55,7 @@ class VideoStream:
             "viewers": self.viewers,
             "encoded_frames": self.encoded_frames,
             "capture_size": self.capture_size,
+            "reconnects": self.reconnects,
             "detection": self.detection.status(),
         }
 
@@ -170,21 +176,47 @@ class VideoStream:
         with self.condition:
             return None if self.stopped.is_set() else self.raw_frame
 
+    def _frame(self, camera):
+        """A frame, reopening the device first if it went away underneath us.
+
+        A USB camera that re-enumerates leaves the open handle pointing at nothing, and
+        every read fails until it is reopened. One dropped frame should cost the preview a
+        moment, not the whole session.
+        """
+        failure = HardwareError("camera returned no frame")
+        for attempt in range(RECONNECT_ATTEMPTS):
+            if attempt:
+                self.reconnects += 1
+                camera.close()
+                if self.stopped.wait(RECONNECT_PAUSE):
+                    raise failure
+                try:
+                    camera.open()
+                except HardwareError as exc:
+                    # Still gone, or gone again: spend the next attempt on reopening it.
+                    failure = exc
+                    continue
+            try:
+                return camera.capture_frame()
+            except HardwareError as exc:
+                failure = exc
+        raise failure
+
     def _capture(self):
         try:
-            selected = self._camera_config()
+            selected = self._camera_config().model_copy()
             with Camera(selected) as camera:
                 for _ in range(5 if self.preview else 2):
-                    frame = camera.capture_frame()
+                    frame = self._frame(camera)
                 while not self.stopped.is_set():
                     desired = self._camera_config()
                     if selected != desired:
                         camera.close()
                         camera.config = desired
                         camera.open()
-                        selected = desired
+                        selected = desired.model_copy()
                         for _ in range(5 if self.preview else 2):
-                            frame = camera.capture_frame()
+                            frame = self._frame(camera)
                     self.capture_size = (selected.width, selected.height)
                     self.detection.submit(frame)
                     with self.condition:
@@ -201,7 +233,7 @@ class VideoStream:
                     self.ready.set()
                     if self.stopped.wait(1 / self._rate()):
                         break
-                    frame = camera.capture_frame()
+                    frame = self._frame(camera)
         except Exception as exc:
             self.error = str(exc)
             if self.on_error is not None:

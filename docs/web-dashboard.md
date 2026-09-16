@@ -27,21 +27,15 @@ keep it steady.
 
 ## Hardware settings
 
-`/hardware` offers the same operational controls as the CLI: refresh status, list/test/
-capture camera, list audio, test microphone and speaker, show and validate the effective
-configuration, and start or stop an idle runtime. Audio tests execute on the node, not in
-the browser, and configuration show/validate never edit files.
+`/hardware` offers the same operational controls as the CLI: choose the devices and the
+camera's capture settings, list/test/capture camera, list audio, test microphone and
+speaker, set the output sink's own level, show and validate the effective configuration, and
+start or stop an idle runtime.
+Audio tests execute on the node, not in the browser, and configuration show/validate never
+edit files.
 
-Its **Inputs and output** panel picks camera, microphone, speaker and speaker volume from
-what the node reports. POST `/api/hardware` merges them into the YAML file named by
-`SENTRY_MODE_CONFIG`, leaving every other setting untouched, and applies them to the running
-dashboard without a restart; without that variable there is no file to write and the change
-lasts until the next restart. Changing the camera requires stopping video and disarming
-Sentry first.
-
-Start/stop controls only the runtime owned by this dashboard — not another CLI process, not
-the systemd service — and stopping it leaves the web UI available. That runtime stops when
-the web server shuts down.
+[Hardware and devices](hardware-and-devices.md) describes each control, what saving does,
+and which changes apply to a running capture.
 
 ## Look and layout
 
@@ -67,4 +61,5 @@ it, and it disarms itself after a few seconds. Phone microphone use inside a fra
 additionally requires a secure parent and delegated microphone permission; the standalone
 HTTPS Voice view remains available.
 
-See also: [HTTP API](http-api.md), [security model](security.md).
+See also: [hardware and devices](hardware-and-devices.md), [HTTP API](http-api.md),
+[security model](security.md).

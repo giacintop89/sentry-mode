@@ -6,6 +6,8 @@ camera:
   width: 1920
   height: 1080
   fps: 30
+  fourcc: MJPG
+  exposure: 0
 microphone:
   enabled: true
   device: auto
@@ -25,6 +27,7 @@ speech:
     it: if_sara
   lead_in_ms: 1000
   tail_ms: 750
+  talk_gain_db: 15
   voice: en
   rate: 175
 detection:
