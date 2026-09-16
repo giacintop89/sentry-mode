@@ -387,3 +387,14 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
 @media(max-width:400px){
   .workspace-tabs button{padding:11px 3px;font-size:13.667px}
 }
+
+/* A wide screen has room to spare on either side of the views: the run sits in the middle
+   of its row, the mark closes it on the right and the mirrored copy answers on the left. */
+@media(min-width:1101px){
+  /* The side room the marks occupy is kept clear, so a warning joining the row wraps
+     under the views instead of running into them. */
+  .app-views{position:relative;justify-content:center;padding-inline:calc(clamp(120px,17vw,212px) - 12px)}
+  .app-views .connection-frame{position:absolute;inset:0;margin:0;justify-content:space-between;pointer-events:none}
+  .app-views .connection-frame .connection-status{pointer-events:auto}
+  .app-views .connection-mirror{display:block}
+}
