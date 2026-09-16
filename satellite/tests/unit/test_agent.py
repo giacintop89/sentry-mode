@@ -47,12 +47,17 @@ class FakeTransport:
         self.handlers: dict = {}
         self._connected = False
         self.disconnects = 0
+        self.will: tuple[str, dict] | None = None
 
     @property
     def connected(self) -> bool:
         return self._connected
 
-    def connect(self) -> None:
+    def set_will(self, topic, payload) -> None:
+        self.will = (topic, json.loads(payload))
+
+    def connect(self, connection_id) -> None:
+        self.connection_id = connection_id
         self._connected = True
 
     def subscribe(self, topic, handler) -> None:
@@ -139,6 +144,23 @@ def test_a_node_with_nothing_attached_starts_and_stops():
     agent.stop()
     assert agent.stopped_cleanly
     assert transport.disconnects == 1
+
+
+def test_a_node_arranges_its_own_goodbye_before_it_says_hello():
+    """The will is set before connecting, and names the connection it belongs to.
+
+    A hub that receives it after the node has already reconnected must be able to tell
+    that it is about a connection that is over, not about the one it is watching.
+    """
+    agent, transport = build()
+    agent.start()
+    assert until(lambda: transport.will is not None)
+    agent.stop()
+    topic, payload = transport.will
+    assert topic.endswith("/state")
+    assert payload["online"] is False
+    assert payload["connection_id"] == transport.connection_id
+    assert transport.on("state")[0]["connection_id"] == transport.connection_id
 
 
 def test_the_first_thing_a_node_says_is_what_it_is():

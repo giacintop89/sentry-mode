@@ -29,7 +29,9 @@ class Transport(Protocol):
     @property
     def connected(self) -> bool: ...
 
-    def connect(self) -> None: ...
+    def set_will(self, topic: str, payload: bytes) -> None: ...
+
+    def connect(self, connection_id: str) -> None: ...
 
     def subscribe(self, topic: str, handler: Handler) -> None: ...
 
@@ -71,6 +73,7 @@ class MqttTransport:
         self._client: Any = None
         self._handlers: dict[str, Handler] = {}
         self._connected = False
+        self._will: tuple[str, bytes] | None = None
         self.connection_id = str(uuid.uuid4())
 
     @property
@@ -101,9 +104,21 @@ class MqttTransport:
         client.on_message = self._on_message
         return client
 
-    def connect(self) -> None:
-        self.connection_id = str(uuid.uuid4())
+    def set_will(self, topic: str, payload: bytes) -> None:
+        """What the broker says on this node's behalf if the link dies without a goodbye.
+
+        It is set before connecting, because afterwards is too late, and it names the
+        connection it belongs to so the hub can ignore it if the node has already come
+        back on a newer one.
+        """
+        self._will = (topic, payload)
+
+    def connect(self, connection_id: str) -> None:
+        self.connection_id = connection_id
         self._client = self._build()
+        if self._will is not None:
+            topic, payload = self._will
+            self._client.will_set(topic, payload, qos=1, retain=True)
         try:
             self._client.connect(
                 self._config.hub.mqtt_host, self._config.hub.mqtt_port, keepalive=self._keepalive

@@ -9,12 +9,13 @@ the house: the agent is a peripheral of the protocol.
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Event, Lock, Thread
 from typing import Callable, Iterable
 
-from sentry_satellite import commands, health, protocol
+from sentry_satellite import __version__, commands, health, protocol
 from sentry_satellite.config import Config
 from sentry_satellite.identity import Identity
 from sentry_satellite.mqtt import Transport, TransportError
@@ -185,8 +186,12 @@ class Agent:
     # -- work --------------------------------------------------------------------
 
     def _connect(self) -> None:
+        connection_id = str(uuid.uuid4())
+        self.transport.set_will(
+            self._topic("state"), self._state_payload(online=False, connection_id=connection_id)
+        )
         try:
-            self.transport.connect()
+            self.transport.connect(connection_id)
         except TransportError as error:
             log.warning("no link to the hub: %s", error)
             self._stop.wait(self.reconnect_seconds)
@@ -230,24 +235,35 @@ class Agent:
             self.spool.requeue(held)
             self._stop.wait(self.idle_seconds)
 
-    def _publish_state(self, *, online: bool) -> None:
+    def _state_payload(self, *, online: bool, connection_id: str) -> bytes:
         """The retained snapshot: what this node is, and whether it is here.
 
         Retained, because a hub that starts later still needs to know the node exists. A
         snapshot, never a pulse: an event that happened belongs on the events topic, where
-        nobody will replay it as if it had just happened.
+        nobody will replay it as if it had just happened. It names its connection, so that
+        a goodbye which took the long way round cannot bury a node that is already back.
         """
         state = {
             "schema_version": 1,
             "node_id": self.identity.node_id,
             "boot_id": self.identity.boot_id,
+            "connection_id": connection_id,
+            "agent_version": __version__,
             "profile": self.config.profile,
             "online": online,
             "sources": [
                 {"source_id": source.id, "kind": source.kind} for source in self.config.sources
             ],
         }
-        self._publish_json(self._topic("state"), state, qos=1, retain=True)
+        return json.dumps(state, separators=(",", ":")).encode("utf-8")
+
+    def _publish_state(self, *, online: bool) -> None:
+        self.transport.publish(
+            self._topic("state"),
+            self._state_payload(online=online, connection_id=self.transport.connection_id),
+            qos=1,
+            retain=True,
+        )
 
     def _publish_health(self) -> None:
         now = self.clock()

@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import sys
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -1039,3 +1040,73 @@ def test_hardware_page_lists_devices_and_saves_the_choice(web, tmp_path, monkeyp
     with patch.object(controls.video, "status", return_value={"capture_running": True}):
         busy = request(base, "/api/hardware", "POST", body={**choice, "camera": "1"})
     assert busy[0] == 409 and "Stop video" in busy[1]["error"]
+
+
+def dashboard(tmp_path, **satellites):
+    """A dashboard with its files under the test's own directory."""
+    return NodeControls(
+        Settings(
+            sentry_state_file=tmp_path / "sentry.json",
+            soundboard_file=tmp_path / "soundboard.json",
+            soundboard_directory=tmp_path / "soundboard",
+            captures_directory=tmp_path / "captures",
+            sounds_directory=tmp_path / "sounds",
+            satellites=satellites,
+        )
+    )
+
+
+def test_a_node_knows_its_own_devices_whether_or_not_it_has_satellites(tmp_path):
+    controls = dashboard(tmp_path)
+    try:
+        assert [record.ref.id for record in controls.sources.all()] == [
+            "legacy-primary",
+            "legacy-microphone",
+            "legacy-speaker",
+        ]
+        assert all(record.ref.node is None for record in controls.sources.all())
+        assert controls.satellites is None
+        assert controls.satellite_status() == {"enabled": False, "error": None, "nodes": []}
+        controls.stop_satellites()
+    finally:
+        controls.video.close()
+
+
+def test_a_link_that_will_not_start_does_not_take_the_dashboard_with_it(tmp_path):
+    controls = dashboard(
+        tmp_path,
+        enabled=True,
+        nodes_file=tmp_path / "nodes.json",
+        store_path=tmp_path / "satellites.sqlite3",
+        mqtt={
+            "tls_ca_file": tmp_path / "missing-ca.crt",
+            "tls_cert_file": tmp_path / "missing-hub.crt",
+            "tls_key_file": tmp_path / "missing-hub.key",
+        },
+    )
+    try:
+        status = controls.satellite_status()
+        assert controls.satellites is not None
+        assert status["enabled"] is True and status["nodes"] == []
+        assert status["broker"] == "transport_unavailable"
+        assert status["error"] and "Traceback" not in status["error"]
+        assert controls.video.status()["running"] is False
+        controls.stop_satellites()
+        assert controls.satellites is None
+    finally:
+        controls.video.close()
+
+
+def test_a_hub_with_satellites_off_never_loads_them(tmp_path):
+    script = (
+        "import sys;"
+        "from sentry_mode.config import Settings;"
+        "from sentry_mode.web import NodeControls;"
+        f"c = NodeControls(Settings(sentry_state_file={str(tmp_path / 's.json')!r}));"
+        "c.video.close();"
+        "print(sorted(m for m in sys.modules if 'satellites' in m or m == 'paho'))"
+    )
+    loaded = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert loaded == "['sentry_mode.satellites', 'sentry_mode.satellites.config']"

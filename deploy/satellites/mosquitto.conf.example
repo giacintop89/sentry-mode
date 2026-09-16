@@ -1,0 +1,45 @@
+# Mosquitto for Sentry Mode satellites.
+#
+# Copy to /etc/mosquitto/conf.d/sentry-mode.conf. Do not replace an existing broker
+# configuration in place: this file adds a listener of its own, and the machine may be
+# running a broker for something else entirely.
+#
+# Certificates come from scripts/satellite_admin.py, and the access control list is
+# generated from the node registry by `satellite_admin.py acl`. Editing that file by hand
+# means the broker and the hub no longer agree on who exists.
+
+per_listener_settings true
+
+listener 8883
+
+# Nobody gets in without a certificate this authority issued, and the name in that
+# certificate is the only name the connection can act under.
+cafile /etc/sentry-mode/satellites/ca.crt
+certfile /etc/sentry-mode/satellites/hub.crt
+keyfile /etc/sentry-mode/satellites/hub.key
+require_certificate true
+use_identity_as_username true
+tls_version tlsv1.2
+
+allow_anonymous false
+acl_file /etc/mosquitto/sentry-acl
+
+# One client per name. A second connection claiming an identity that is already connected
+# takes over rather than running alongside it, which is what makes a stolen certificate
+# visible instead of quiet.
+max_keepalive 120
+
+# Bounded on purpose: a satellite that has been off the air for an hour must not be able
+# to make the broker the thing that runs out of memory.
+max_queued_messages 1000
+max_inflight_messages 20
+message_size_limit 262144
+
+persistence true
+persistence_location /var/lib/mosquitto/
+autosave_interval 300
+
+log_dest syslog
+log_type warning
+log_type notice
+connection_messages true

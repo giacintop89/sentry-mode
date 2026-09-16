@@ -1,0 +1,21 @@
+# An example of what `satellite_admin.py acl` produces. The real file is generated from
+# the node registry; this one is here to be read, not installed.
+#
+# The shape is the whole point: a node writes only under its own name and reads only its
+# own commands. There is no topic a satellite can publish to that another satellite reads,
+# so a node that is taken over cannot speak for the house.
+
+user sentry-mode-hub
+topic read sentry/v1/nodes/+/events
+topic read sentry/v1/nodes/+/state
+topic read sentry/v1/nodes/+/health
+topic read sentry/v1/nodes/+/acks
+topic write sentry/v1/nodes/+/commands
+topic write sentry/v1/nodes/+/state
+
+user zero-entrance
+topic write sentry/v1/nodes/zero-entrance/events
+topic write sentry/v1/nodes/zero-entrance/state
+topic write sentry/v1/nodes/zero-entrance/health
+topic write sentry/v1/nodes/zero-entrance/acks
+topic read sentry/v1/nodes/zero-entrance/commands

@@ -19,6 +19,7 @@ and where its limits are.
 - [SSH commands](ssh-commands.md) — saved remote commands from a rule.
 - [Web dashboard](web-dashboard.md) — views, navigation, embedding, small screens.
 - [Hardware and devices](hardware-and-devices.md) — choosing devices, capture settings, tests.
+- [Satellites](satellites.md) — a second board with sensors, and the trust it is given.
 
 ## Reference
 
@@ -48,4 +49,5 @@ Records of what was measured and what was fixed; a decision here binds the code.
 - [Zero W runtime](adr/zero-w-runtime.md) — OS, packages and peripherals; unqualified until measured.
 - [Naming a source](adr/satellite-identity.md) — the identifier grammar and who issues it.
 - [What runs on the board](adr/satellite-agent.md) — the agent, measured on the real Zero W.
+- [What it takes to be believed](adr/satellite-trust.md) — certificates, approval and epochs.
 - [Satellite video profile](adr/satellite-video-profile.md) — the encode and transport decision; pending.

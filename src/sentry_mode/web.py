@@ -13,6 +13,7 @@ from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
@@ -47,9 +48,14 @@ from sentry_mode.hardware.speaker import Speaker
 from sentry_mode.hardware.status import inspect_hardware, network_available
 from sentry_mode.sentry.config import Rule, SentryConfig, TuneAction
 from sentry_mode.sentry.engine import Sentry
+from sentry_mode.sources.legacy import legacy_sources
+from sentry_mode.sources.registry import SourceRegistry
 from sentry_mode.vision.capture import capture_image
 from sentry_mode.vision.recording import MAX_MESSAGE_BYTES, MEDIA_TYPES
 from sentry_mode.vision.stream import VideoStream
+
+if TYPE_CHECKING:  # the satellite subsystem is imported only where it is used
+    from sentry_mode.satellites.service import SatelliteService
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +131,11 @@ class NodeControls:
         self.video = VideoStream(config.camera, self.hardware_lock, config.detection)
         self.sentry = Sentry(config, self.video, self.audio_lock)
         self.soundboard = Soundboard(config.soundboard_file, config.soundboard_directory)
+        self.sources = SourceRegistry()
+        for record in legacy_sources(config):
+            self.sources.register(record)
+        self.satellites_error: str | None = None
+        self.satellites = self._open_satellites()
         self.runtime_lock = threading.Lock()
         self.stopped = threading.Event()
         self.shutdown_requested = threading.Event()
@@ -135,6 +146,38 @@ class NodeControls:
         self.recording_lock = threading.Lock()
         self.recording: dict | None = None
         self.recording_result: dict | None = None
+
+    def _open_satellites(self) -> "SatelliteService | None":
+        """Build the satellite subsystem, but only on a hub that was told to want one.
+
+        The import is deferred on purpose: a hub with satellites switched off loads no
+        broker client, opens no trust store and starts no threads. A link that refuses to
+        start is reported through the status rather than taken as a reason to keep the
+        dashboard down, because the cameras on this node work whether or not it has any.
+        """
+        if not self.config.satellites.enabled:
+            return None
+        from sentry_mode.satellites.service import build
+
+        service = build(self.config.satellites, self.sources)
+        try:
+            assert service is not None
+            service.start()
+        except Exception as exc:
+            self.satellites_error = str(exc)
+            logger.exception("The satellite link could not be started")
+        return service
+
+    def satellite_status(self) -> dict:
+        """What the subsystem reports, with the reason it is absent when it is."""
+        if self.satellites is None:
+            return {"enabled": False, "error": self.satellites_error, "nodes": []}
+        return {**self.satellites.status(), "error": self.satellites_error}
+
+    def stop_satellites(self) -> None:
+        if self.satellites is not None:
+            self.satellites.stop()
+            self.satellites = None
 
     def runtime_status(self) -> dict:
         return {
@@ -965,6 +1008,7 @@ def serve(
                 controls.stop_video_recording()
                 controls.sentry.disarm()
                 controls.video.close()
+                controls.stop_satellites()
                 controls.stop_runtime()
     finally:
         controls.stop_runtime()

@@ -58,7 +58,30 @@
     "satellites": {
       "enabled": "bool",
       "fault_policy": "str",
-      "journal_file": "str"
+      "health": {
+        "heartbeat_seconds": "int",
+        "offline_after_seconds": "int",
+        "stale_after_seconds": "int"
+      },
+      "limits": {
+        "event_max_bytes": "int",
+        "events_per_minute": "int"
+      },
+      "mqtt": {
+        "host": "str",
+        "keepalive_seconds": "int",
+        "port": "int",
+        "tls_ca_file": "str",
+        "tls_cert_file": "str",
+        "tls_key_file": "str",
+        "topic_prefix": "str"
+      },
+      "nodes_file": "str",
+      "sessions": {
+        "grant_seconds": "int",
+        "renew_every_seconds": "int"
+      },
+      "store_path": "str"
     },
     "sentry": {
       "action_ttl_seconds": "int",
