@@ -25,6 +25,10 @@ TIMESTAMP = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
 `date-time` format alone, and a reading whose time zone is a guess is worse than useless
 when the hub has to order it against everything else, so the rule is written out."""
 
+UUID_TEXT = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+"""What an identifier looks like. `format: uuid` is advisory in JSON Schema, and a
+validator that ignores it would accept `"41"` where Pydantic refuses it."""
+
 
 class Wire(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
@@ -78,9 +82,27 @@ class EventEnvelope(Wire):
     delivery: Delivery
 
 
+def _spell_out_formats(node: object) -> None:
+    """Turn the formats a schema only advises into patterns it actually enforces.
+
+    Pydantic knows a UUID is a UUID. A satellite checking a document against the published
+    schema knows only what the schema says, so anything the hub enforces has to be written
+    where the other side can see it.
+    """
+    if isinstance(node, dict):
+        if node.get("format") == "uuid" and "pattern" not in node:
+            node["pattern"] = UUID_TEXT
+        for value in node.values():
+            _spell_out_formats(value)
+    elif isinstance(node, list):
+        for value in node:
+            _spell_out_formats(value)
+
+
 def contract_schema() -> dict:
     """The JSON schema published to satellites, generated from the models above."""
     schema = EventEnvelope.model_json_schema()
+    _spell_out_formats(schema)
     schema["$id"] = "https://sentry-mode.invalid/contracts/satellite/v1/event.schema.json"
     schema["title"] = "Satellite event envelope, version 1"
     return schema

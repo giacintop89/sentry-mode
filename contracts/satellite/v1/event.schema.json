@@ -17,7 +17,8 @@
         "connection_id": {
           "format": "uuid",
           "title": "Connection Id",
-          "type": "string"
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         },
         "hub_epoch": {
           "minimum": 0,
@@ -28,7 +29,8 @@
           "anyOf": [
             {
               "format": "uuid",
-              "type": "string"
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
             },
             {
               "type": "null"
@@ -79,7 +81,8 @@
         "event_id": {
           "format": "uuid",
           "title": "Event Id",
-          "type": "string"
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         },
         "node_id": {
           "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
@@ -94,7 +97,8 @@
         "boot_id": {
           "format": "uuid",
           "title": "Boot Id",
-          "type": "string"
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         },
         "sequence": {
           "minimum": 0,

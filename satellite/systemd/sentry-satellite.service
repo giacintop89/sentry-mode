@@ -1,0 +1,36 @@
+[Unit]
+Description=Sentry Mode satellite agent
+Documentation=https://github.com/giacintop89/sentry-mode
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentry-satellite
+Group=sentry-satellite
+SupplementaryGroups=gpio i2c spi audio
+ExecStart=/opt/sentry-satellite/venv/bin/sentry-satellite --config /etc/sentry-satellite/node.toml --identity /etc/sentry-satellite/identity.json run
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=mixed
+
+# The agent reads sensors and talks to one broker. It has no business anywhere else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+ReadOnlyPaths=/etc/sentry-satellite
+RuntimeDirectory=sentry-satellite
+
+[Install]
+WantedBy=multi-user.target

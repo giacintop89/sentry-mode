@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentry-satellite"
+version = "0.1.0"
+description = "Sensor agent for a Raspberry Pi that reports to a Sentry Mode hub"
+requires-python = ">=3.11"
+dependencies = ["paho-mqtt>=2,<3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+sentry-satellite = "sentry_satellite.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib -m 'not hardware'"
+markers = ["hardware: explicitly invoked physical hardware tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]

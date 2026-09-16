@@ -1,0 +1,34 @@
+# A board with sensors and, later, Bluetooth presence. Copy to /etc/sentry-satellite/node.toml.
+# Pins and debounce are examples: verify them against the sensor actually wired up.
+
+[node]
+id = "zero-entrance"
+profile = "sensor-presence"
+
+[hub]
+mqtt_host = "192.168.11.10" # the Pi 5 on the dedicated network, never a loopback address
+mqtt_port = 8883
+protocol = 5
+
+[tls]
+ca_file = "/etc/sentry-satellite/ca.crt"
+cert_file = "/etc/sentry-satellite/node.crt"
+key_file = "/etc/sentry-satellite/node.key"
+
+[limits]
+event_max_count = 256
+event_max_bytes = 1048576
+event_max_age_seconds = 300
+heartbeat_seconds = 15
+
+[[sources]]
+id = "pir-1"
+kind = "gpio"
+line_numbering = "bcm"
+line = 17
+active_high = true
+debounce_ms = 100
+
+[[sources]]
+id = "presence"
+kind = "ble"

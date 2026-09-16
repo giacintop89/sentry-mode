@@ -47,4 +47,5 @@ Records of what was measured and what was fixed; a decision here binds the code.
 - [Baseline before the satellite work](adr/zero-w-baseline.md) — the regression and fixtures to compare against.
 - [Zero W runtime](adr/zero-w-runtime.md) — OS, packages and peripherals; unqualified until measured.
 - [Naming a source](adr/satellite-identity.md) — the identifier grammar and who issues it.
+- [What runs on the board](adr/satellite-agent.md) — the agent, measured on the real Zero W.
 - [Satellite video profile](adr/satellite-video-profile.md) — the encode and transport decision; pending.

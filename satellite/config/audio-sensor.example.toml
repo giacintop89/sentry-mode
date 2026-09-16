@@ -1,0 +1,29 @@
+# A board with an I2S microphone and sensors. The microphone is a source of acoustic
+# events and of a stream the hub may ask for; it is never a speech recogniser.
+
+[node]
+id = "zero-hall"
+profile = "audio-sensor"
+
+[hub]
+mqtt_host = "192.168.11.10"
+mqtt_port = 8883
+protocol = 5
+
+[tls]
+ca_file = "/etc/sentry-satellite/ca.crt"
+cert_file = "/etc/sentry-satellite/node.crt"
+key_file = "/etc/sentry-satellite/node.key"
+
+[limits]
+event_max_count = 256
+event_max_bytes = 1048576
+event_max_age_seconds = 300
+heartbeat_seconds = 15
+
+[[sources]]
+id = "mic-1"
+kind = "microphone"
+device = "plughw:0,0"
+rate = 16000
+channels = 1

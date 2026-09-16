@@ -1,0 +1,26 @@
+# A node with no hardware at all, which is what the simulator and the tests run against.
+
+[node]
+id = "zero-simulated"
+profile = "sensor-presence"
+
+[hub]
+mqtt_host = "127.0.0.1"
+mqtt_port = 8883
+protocol = 5
+
+[tls]
+ca_file = "/etc/sentry-satellite/ca.crt"
+cert_file = "/etc/sentry-satellite/node.crt"
+key_file = "/etc/sentry-satellite/node.key"
+
+[limits]
+event_max_count = 64
+event_max_bytes = 65536
+event_max_age_seconds = 60
+heartbeat_seconds = 5
+
+[[sources]]
+id = "pir-1"
+kind = "dummy"
+interval_seconds = 1.0

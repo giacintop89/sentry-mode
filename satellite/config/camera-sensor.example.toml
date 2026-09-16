@@ -1,0 +1,38 @@
+# A board with a camera and a sensor. The camera profile has to be qualified on the real
+# board before it is used: see docs/adr/satellite-video-profile.md on the hub.
+
+[node]
+id = "zero-gate"
+profile = "camera-sensor"
+
+[hub]
+mqtt_host = "192.168.11.10"
+mqtt_port = 8883
+protocol = 5
+
+[tls]
+ca_file = "/etc/sentry-satellite/ca.crt"
+cert_file = "/etc/sentry-satellite/node.crt"
+key_file = "/etc/sentry-satellite/node.key"
+
+[limits]
+event_max_count = 256
+event_max_bytes = 1048576
+event_max_age_seconds = 300
+heartbeat_seconds = 15
+
+[[sources]]
+id = "zero-gate.camera-1"
+kind = "csi"
+profile = "qualified-csi-h264"
+width = 640
+height = 480
+fps = 10
+
+[[sources]]
+id = "pir-1"
+kind = "gpio"
+line_numbering = "bcm"
+line = 17
+active_high = true
+debounce_ms = 100
