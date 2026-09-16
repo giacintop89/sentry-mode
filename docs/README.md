@@ -52,5 +52,6 @@ Records of what was measured and what was fixed; a decision here binds the code.
 - [What runs on the board](adr/satellite-agent.md) — the agent, measured on the real Zero W.
 - [What it takes to be believed](adr/satellite-trust.md) — certificates, approval and epochs.
 - [The satellite journal](adr/satellite-journal.md) — acknowledged after commit, and what counts as news.
+- [Sensor drivers](adr/satellite-sensors.md) — how each bus is read, and how the hub changes a node's sources.
 - [Rules, second version](adr/rules-v2.md) — stable rule IDs, what each arming needs, and a way back.
 - [Satellite video profile](adr/satellite-video-profile.md) — the encode and transport decision; pending.

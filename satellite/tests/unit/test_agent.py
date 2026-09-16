@@ -341,3 +341,49 @@ def test_health_is_cheap_enough_to_lose():
     agent.stop()
     beats = [entry for entry in transport.published if entry[0].endswith("health")]
     assert all(qos == 0 and not retain for _, _, qos, retain in beats)
+
+
+class Holding(Scripted):
+    """A driver that knows where it stands, as the real ones do."""
+
+    def current(self):
+        return Reading(
+            source_id=self.source_id,
+            kind="sensor.motion",
+            value=False,
+            occurred_at=datetime.now(UTC),
+            initial=True,
+        )
+
+
+def test_a_baseline_is_sent_as_one_and_a_change_is_not():
+    first = Reading(
+        source_id="pir-1",
+        kind="sensor.motion",
+        value=False,
+        occurred_at=datetime.now(UTC),
+        initial=True,
+    )
+    agent, transport = build([Scripted("pir-1", [first, reading(True)])])
+    agent.start()
+    assert until(lambda: len(agent.spool) == 2)
+    grant(transport, agent)
+    assert until(lambda: len(transport.on("events")) >= 2)
+    agent.stop()
+    flags = [(m["event"]["value"], m["delivery"]["initial_state"]) for m in transport.on("events")]
+    assert flags[:2] == [(False, True), (True, False)]
+
+
+def test_a_new_grant_brings_a_fresh_baseline_and_a_renewal_does_not():
+    agent, transport = build([Holding("pir-1", [])])
+    agent.start()
+    grant(transport, agent)
+    assert until(lambda: len(transport.on("events")) == 1)
+    grant(transport, agent, command_id="c-2", action="renew", sequence=1)
+    time.sleep(0.1)
+    assert len(transport.on("events")) == 1
+    grant(transport, agent, command_id="c-3", grant_id="g-2", hub_epoch=8)
+    assert until(lambda: len(transport.on("events")) == 2)
+    agent.stop()
+    assert all(m["delivery"]["initial_state"] for m in transport.on("events"))
+    assert transport.on("events")[1]["delivery"]["hub_epoch"] == 8

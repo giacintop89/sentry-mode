@@ -190,6 +190,24 @@ class NodeControls:
             return {"enabled": False, "error": self.satellites_error, "nodes": []}
         return {**self.satellites.status(), "error": self.satellites_error}
 
+    def satellites_overview(self) -> dict:
+        """The satellites page: nodes, sources, readings and the last configuration sent."""
+        from sentry_mode.satellites.api import overview
+
+        return overview(self.satellite_status())
+
+    def configure_satellite(self, body: dict | None) -> dict:
+        from sentry_mode.satellites.api import ConfigureRequest
+
+        if self.satellites is None:
+            raise BlockingIOError("Satellites are switched off on this hub.")
+        request = ConfigureRequest.model_validate(body)
+        sent = self.satellites.configure(request.node_id, request.entries())
+        return {
+            "message": f"Configuration {sent['revision']} sent to {request.node_id}.",
+            "configuration": sent,
+        }
+
     def stop_satellites(self) -> None:
         if self.satellites is not None:
             self.satellites.stop()
@@ -236,6 +254,8 @@ class NodeControls:
             return self.sentry.configuration()
         if path == "/api/sentry/v2/config":
             return self.sentry.configuration_v2()
+        if path == "/api/satellites":
+            return self.satellites_overview()
         if path == "/api/talk/config":
             return {"https_port": self.https_port, "local_ca": self.tls_ca is not None}
         if path == "/api/config":
@@ -510,6 +530,8 @@ class NodeControls:
         if path == "/api/events/simulate":
             simulation = SimulationRequest.model_validate(body)
             return self.sentry.simulate(simulation.rule, simulation.samples)
+        if path == "/api/satellites/configure":
+            return self.configure_satellite(body)
         if path == "/api/sentry/start":
             if self.runtime_status()["running"]:
                 raise BlockingIOError("Stop the idle runtime before starting Sentry.")
@@ -652,6 +674,7 @@ JSON_POSTS = {
     "/api/sentry/v2/config",
     "/api/sentry/v2/rules/test",
     "/api/events/simulate",
+    "/api/satellites/configure",
     "/api/soundboard",
     "/api/soundboard/delete",
     "/api/soundboard/play",
@@ -668,6 +691,7 @@ def make_handler(controls: NodeControls):
     page = files("sentry_mode").joinpath("web.html").read_bytes()
     tests_page = files("sentry_mode").joinpath("tests.html").read_bytes()
     sentry_page = files("sentry_mode").joinpath("sentry.html").read_bytes()
+    satellites_page = files("sentry_mode").joinpath("satellites.html").read_bytes()
     stylesheet = files("sentry_mode").joinpath("dashboard.css").read_bytes()
     scripts = {
         "/dashboard.js": files("sentry_mode").joinpath("dashboard.js").read_bytes(),
@@ -677,6 +701,7 @@ def make_handler(controls: NodeControls):
         "/sentry.js": files("sentry_mode").joinpath("sentry.js").read_bytes(),
         "/soundboard.js": files("sentry_mode").joinpath("soundboard.js").read_bytes(),
         "/listen.js": files("sentry_mode").joinpath("listen.js").read_bytes(),
+        "/satellites.js": files("sentry_mode").joinpath("satellites.js").read_bytes(),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -717,6 +742,8 @@ def make_handler(controls: NodeControls):
                 self.respond(tests_page, content_type="text/html; charset=utf-8")
             elif self.path in {"/sentry", "/sentry/"}:
                 self.respond(sentry_page, content_type="text/html; charset=utf-8")
+            elif self.path in {"/satellites", "/satellites/"}:
+                self.respond(satellites_page, content_type="text/html; charset=utf-8")
             elif self.path in scripts:
                 self.respond(scripts[self.path], content_type="text/javascript; charset=utf-8")
             elif self.path == "/dashboard.css":
@@ -873,6 +900,8 @@ def make_handler(controls: NodeControls):
                     "/api/events/simulate",
                 }:
                     limit = 262144
+                if self.path == "/api/satellites/configure":
+                    limit = 65536
                 if self.path == "/api/sounds/upload":
                     limit = MAX_UPLOAD_BYTES
                 if self.path == "/api/captures/message":

@@ -6,6 +6,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import asdict
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -1179,3 +1180,85 @@ def test_the_engine_hears_the_satellites_through_the_dashboard(tmp_path):
         assert controls.sentry.sources is controls.sources
     finally:
         controls.video.close()
+
+
+# -- satellites page ----------------------------------------------------------------
+
+PAGES = ("/", "/hardware", "/sentry", "/satellites")
+
+
+def test_every_page_offers_the_satellites_view_only_once_it_is_switched_on(web):
+    _, base = web
+    for path in PAGES:
+        code, page, _ = request(base, path)
+        assert code == 200
+        nav = re.search(rb'<nav class="app-views".*?</nav>', page, re.S)[0]
+        link = re.search(rb"<a href=\"/satellites\"[^>]*>", nav)[0]
+        assert (b"hidden" in link) is (path != "/satellites")
+        assert (b'aria-current="page"' in link) is (path == "/satellites")
+    assert request(base, "/satellites.js")[0] == 200
+    code, data, _ = request(base, "/api/satellites")
+    assert code == 200 and data["enabled"] is False and data["nodes"] == []
+
+
+def test_the_views_fold_into_two_rows_on_a_phone_when_there_are_six():
+    css = (Path(__file__).resolve().parents[2] / "src/sentry_mode/dashboard.css").read_text()
+    folded = [
+        rule
+        for rule in re.findall(r"@media\(max-width:540px\)\{\s*([^}]*\})", css)
+        if "data-satellites-link" in rule
+    ]
+    assert folded
+    assert ":not([hidden])" in folded[0] and "33.333%" in folded[0]
+    script = (Path(__file__).resolve().parents[2] / "src/sentry_mode/dashboard.js").read_text()
+    assert "/api/satellites" in script and "data-satellites-link" in script
+
+
+def test_configuring_a_satellite_needs_them_switched_on_and_a_same_origin_request(web):
+    _, base = web
+    body = {"node_id": "zero-entrance", "sources": [{"id": "pir-1", "kind": "gpio"}]}
+    assert request(base, "/api/satellites/configure", "POST", {}, body)[0] == 403
+    code, data, _ = request(base, "/api/satellites/configure", "POST", body=body)
+    assert code == 409 and "switched off" in data["error"]
+
+
+class Configurable:
+    def __init__(self):
+        self.sent = []
+
+    def configure(self, node_id, sources):
+        self.sent.append((node_id, sources))
+        return {"revision": 4, "state": "sent", "command_id": "c"}
+
+    def stop(self):
+        pass
+
+
+def test_a_satellite_configuration_is_checked_before_it_is_sent(web):
+    controls, base = web
+    controls.satellites = Configurable()
+    good = {
+        "node_id": "zero-entrance",
+        "sources": [{"id": "pir-1", "kind": "gpio", "line_numbering": "bcm", "line": 17}],
+    }
+    code, data, _ = request(base, "/api/satellites/configure", "POST", body=good)
+    assert code == 200 and data["message"] == "Configuration 4 sent to zero-entrance."
+    assert controls.satellites.sent == [("zero-entrance", good["sources"])]
+    for sources, reason in [
+        ([{"id": "cam", "kind": "csi"}], "camera profile"),
+        ([{"id": "x", "kind": "shell", "command": "rm"}], "cannot be configured"),
+        ([{"id": "a", "kind": "dummy"}, {"id": "a", "kind": "dummy"}], "its own id"),
+        ([{"id": "a", "kind": "gpio", "line": [17]}], "plain value"),
+        ([{"id": "Bad Id", "kind": "gpio"}], "id"),
+        ([{"id": "a", "kind": "dummy"}] * 33, "33"),
+    ]:
+        code, data, _ = request(
+            base, "/api/satellites/configure", "POST", body={**good, "sources": sources}
+        )
+        assert code == 400 and reason in data["error"], (sources, data)
+    code, _, _ = request(
+        base, "/api/satellites/configure", "POST", body={**good, "network": {"ssid": "x"}}
+    )
+    assert code == 400
+    assert len(controls.satellites.sent) == 1
+    controls.satellites = None

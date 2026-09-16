@@ -40,6 +40,7 @@ class Held:
     size: int
     queued_at: float
     topic: str
+    initial: bool = False
 
 
 @dataclass
@@ -55,9 +56,11 @@ class Spool:
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
     drops: Drops = field(default_factory=Drops, init=False)
 
-    def put(self, topic: str, item: dict, size: int) -> None:
+    def put(self, topic: str, item: dict, size: int, *, initial: bool = False) -> None:
         with self._lock:
-            self._items.append(Held(item=item, size=size, queued_at=self.clock(), topic=topic))
+            self._items.append(
+                Held(item=item, size=size, queued_at=self.clock(), topic=topic, initial=initial)
+            )
             self._bytes += size
             self._expire()
             while len(self._items) > self.max_count:

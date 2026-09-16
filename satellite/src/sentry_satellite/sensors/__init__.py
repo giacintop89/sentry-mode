@@ -15,6 +15,8 @@ class Reading:
     occurred_at: datetime
     unit: str | None = None
     quality: str = "valid"
+    initial: bool = False
+    """A baseline: where things stand, not something that just happened."""
 
 
 @runtime_checkable
@@ -31,3 +33,9 @@ class Driver(Protocol):
     def read(self) -> Iterator[Reading]: ...
 
     def stop(self) -> None: ...
+
+
+def baseline(driver: Driver) -> Reading | None:
+    """The driver's current state as a baseline, if it keeps one."""
+    current = getattr(driver, "current", None)
+    return current() if callable(current) else None

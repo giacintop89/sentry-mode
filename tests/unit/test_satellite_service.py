@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from sentry_mode.satellites.api import overview
 from sentry_mode.satellites.config import SatellitesConfig
 from sentry_mode.satellites.identity import NodeRegistry
 from sentry_mode.satellites.mqtt import Message, parse_topic
@@ -258,9 +259,10 @@ def test_the_hub_only_ever_sends_commands_a_node_understands(service):
     online(service)
     service.sessions.grant("zero-entrance", "events", seconds=1)
     service.renew_due_grants()
+    service.configure("zero-entrance", [{"id": "pir-1", "kind": "gpio", "line": 17}])
     service.revoke("zero-entrance")
     actions = {command["action"] for _, command in service._transport.commands}
-    assert actions <= {"grant", "renew", "revoke", "stop"}
+    assert actions <= {"grant", "renew", "revoke", "stop", "configure"}
     for _, command in service._transport.commands:
         assert set(command) <= {
             "command_id",
@@ -271,6 +273,8 @@ def test_the_hub_only_ever_sends_commands_a_node_understands(service):
             "grant_id",
             "duration_seconds",
             "sequence",
+            "revision",
+            "sources",
         }
 
 
@@ -448,3 +452,180 @@ def test_stopping_ends_every_thread_the_service_started(service):
     service.stop()
     names = {thread.name for thread in threading.enumerate()}
     assert not names & {"satellite-events", "satellite-housekeeping"}
+
+
+# -- configuration ----------------------------------------------------------------
+
+PIR = [{"id": "pir-1", "kind": "gpio", "line_numbering": "bcm", "line": 17}]
+
+
+def ack(command_id: str, outcome: str, detail=None) -> Message:
+    return message(
+        "acks",
+        {
+            "schema_version": 1,
+            "command_id": command_id,
+            "node_id": "zero-entrance",
+            "outcome": outcome,
+            "detail": detail,
+        },
+    )
+
+
+def sent_configurations(service) -> list[dict]:
+    return [c for _, c in service._transport.commands if c["action"] == "configure"]
+
+
+def test_a_configuration_goes_to_the_current_session_and_its_answer_is_kept(service):
+    online(service)
+    epoch = service.sessions.current("zero-entrance").hub_epoch
+    sent = service.configure("zero-entrance", PIR)
+    command = sent_configurations(service)[-1]
+    assert command["hub_epoch"] == epoch and command["revision"] == 1
+    assert command["sources"] == PIR and command["command_id"] == sent["command_id"]
+    assert service.configuration("zero-entrance")["state"] == "sent"
+    service.handle(ack(sent["command_id"], "received"))
+    assert service.configuration("zero-entrance")["state"] == "received"
+    service.handle(ack(sent["command_id"], "applied", "revision 1"))
+    service.handle(ack(sent["command_id"], "received", "already handled"))
+    node = service.status()["nodes"][0]
+    assert node["configuration"]["state"] == "applied"
+    assert node["configuration"]["detail"] == "revision 1"
+
+
+def test_a_configuration_the_node_refused_says_why_and_allows_another(service):
+    online(service)
+    first = service.configure("zero-entrance", PIR)
+    with pytest.raises(BlockingIOError, match="has not answered configuration 1"):
+        service.configure("zero-entrance", PIR)
+    service.handle(
+        ack(first["command_id"], "failed", "door: line 22 is busy; revision 0 is still in use")
+    )
+    refused = service.configuration("zero-entrance")
+    assert refused["state"] == "failed" and "line 22 is busy" in refused["detail"]
+    second = service.configure("zero-entrance", PIR)
+    assert second["revision"] == 2
+
+
+def test_an_answer_to_some_other_command_changes_nothing(service):
+    online(service)
+    service.configure("zero-entrance", PIR)
+    service.handle(ack("not-the-one", "applied"))
+    service.handle(ack(service.configuration("zero-entrance")["command_id"], "maybe"))
+    assert service.configuration("zero-entrance")["state"] == "sent"
+
+
+def test_the_next_revision_follows_what_the_node_says_it_runs(service):
+    approve(service)
+    service.handle(message("state", {**hello(), "config_revision": 7}))
+    assert service.configure("zero-entrance", PIR)["revision"] == 8
+
+
+def test_only_an_approved_node_that_is_online_can_be_configured(service):
+    with pytest.raises(LookupError):
+        service.configure("zero-garden", PIR)
+    with pytest.raises(BlockingIOError, match="not approved"):
+        service.configure("zero-entrance", PIR)
+    approve(service)
+    with pytest.raises(BlockingIOError, match="offline"):
+        service.configure("zero-entrance", PIR)
+    assert sent_configurations(service) == []
+
+
+def test_a_command_the_broker_did_not_take_is_not_left_pending(service):
+    online(service)
+    service._transport.publish_command = lambda node_id, payload: False
+    with pytest.raises(BlockingIOError, match="link is down"):
+        service.configure("zero-entrance", PIR)
+    assert service.configuration("zero-entrance")["state"] == "failed"
+    service._transport.publish_command = FakeTransport().publish_command
+    assert service.configure("zero-entrance", PIR)["revision"] == 2
+
+
+def test_a_new_list_from_the_same_connection_keeps_the_session(service):
+    online(service)
+    session = service.sessions.current("zero-entrance")
+    grants = len(service._transport.commands)
+    changed = hello(
+        sources=[
+            {"source_id": "door", "kind": "gpio", "enabled": False, "options": {"line": 22}},
+            {"source_id": "temp", "kind": "onewire", "options": {"device": "28-0123456789ab"}},
+        ]
+    )
+    service.handle(message("state", {**changed, "config_revision": 3}))
+    assert service.sessions.current("zero-entrance") is session
+    assert len(service._transport.commands) == grants
+    states = {record.ref.id: record.state for record in service.sources.all()}
+    assert states["zero-entrance.pir-1"] == SourceState.DISABLED
+    assert states["zero-entrance.door"] == SourceState.DISABLED
+    assert states["zero-entrance.temp"] == SourceState.READY
+    node = service.status()["nodes"][0]
+    assert node["reported"]["config_revision"] == 3
+    assert node["reported"]["sources"][1]["options"] == {"device": "28-0123456789ab"}
+
+
+def test_a_revoked_node_forgets_what_it_reported_and_what_it_was_sent(service):
+    online(service)
+    service.configure("zero-entrance", PIR)
+    service.revoke("zero-entrance")
+    node = service.status()["nodes"][0]
+    assert node["reported"] is None and node["configuration"] is None
+
+
+def test_the_page_shows_each_source_with_its_reading_and_its_trouble(service):
+    approve(service)
+    declared = [
+        {"source_id": "pir-1", "kind": "gpio", "options": {"line": 17}},
+        {"source_id": "temp", "kind": "onewire", "options": {"device": "28-0123456789ab"}},
+        {"source_id": "tag", "kind": "ble"},
+    ]
+    service.handle(
+        message(
+            "state",
+            {**hello(sources=declared), "agent_version": "0.2.0", "config_revision": 2},
+        )
+    )
+    service.handle(
+        message(
+            "health",
+            {
+                "schema_version": 1,
+                "node_id": "zero-entrance",
+                "clock_status": "synced",
+                "sources": {
+                    "pir-1": {
+                        "readings": 3,
+                        "last_reading_age_seconds": 1.5,
+                        "driver": "running",
+                        "error": None,
+                        "last": {"value": True, "unit": None, "quality": "valid"},
+                    },
+                    "temp": {
+                        "readings": 1,
+                        "last_reading_age_seconds": 40.0,
+                        "driver": "running",
+                        "error": "CRC mismatch",
+                        "last": {"value": None, "unit": "°C", "quality": "unavailable"},
+                    },
+                },
+            },
+        )
+    )
+    page = overview({**service.status(), "error": None})
+    assert page["enabled"] and page["drivers"] == ["gpio", "onewire", "bme280", "adc", "dummy"]
+    node = page["nodes"][0]
+    assert (node["display_name"], node["zone"], node["profile"]) == (
+        "Ingresso",
+        "entrance",
+        "sensor-presence",
+    )
+    assert node["online"] and node["agent_version"] == "0.2.0"
+    assert node["config_revision"] == 2 and node["clock_status"] == "synced"
+    assert node["last_seen"] is not None
+    sources = {source["name"]: source for source in node["sources"]}
+    assert sources["pir-1"]["last"]["value"] is True
+    assert sources["pir-1"]["options"] == {"line": 17} and sources["pir-1"]["supported"]
+    assert sources["temp"]["error"] == "CRC mismatch"
+    assert sources["tag"]["supported"] is False
+    assert "temp: CRC mismatch" in node["errors"]
+    assert overview({"enabled": False, "nodes": []})["nodes"] == []

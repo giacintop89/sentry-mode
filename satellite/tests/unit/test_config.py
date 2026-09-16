@@ -27,6 +27,8 @@ key_file = "/etc/sentry-satellite/node.key"
 [[sources]]
 id = "pir-1"
 kind = "gpio"
+line_numbering = "bcm"
+line = 17
 """
 
 
@@ -59,7 +61,7 @@ def test_a_node_cannot_configure_a_source_that_belongs_to_another_node():
 
 def test_a_capability_outside_the_profile_is_refused():
     with pytest.raises(configuration.ConfigError, match="has no csi sources"):
-        parse(MINIMAL.replace('kind = "gpio"', 'kind = "csi"'))
+        parse(MINIMAL.replace('kind = "gpio"\nline_numbering = "bcm"\nline = 17', 'kind = "csi"'))
 
 
 def without(section: str) -> str:
@@ -98,7 +100,7 @@ def test_a_node_name_that_would_not_survive_a_topic_is_refused():
 
 def test_a_source_cannot_be_declared_twice():
     with pytest.raises(configuration.ConfigError, match="declared twice"):
-        parse(MINIMAL + '\n[[sources]]\nid = "pir-1"\nkind = "gpio"\n')
+        parse(MINIMAL + '\n[[sources]]\nid = "pir-1"\nkind = "dummy"\n')
 
 
 def test_the_agent_speaks_one_version_of_mqtt():

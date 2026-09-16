@@ -13,6 +13,7 @@ import logging
 import queue
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -32,6 +33,9 @@ from sentry_mode.sources.models import SourceKind, SourceRecord, SourceRef, Sour
 from sentry_mode.sources.registry import SourceRegistry
 
 log = logging.getLogger(__name__)
+
+CONFIGURE_PATIENCE_SECONDS = 30.0
+"""How long a configuration may go unanswered before another one is allowed."""
 
 KINDS = {
     "gpio": SourceKind.SENSOR,
@@ -98,6 +102,8 @@ class SatelliteService:
         self._running = threading.Event()
         self._on_event = on_event
         self._lock = threading.RLock()
+        self._reported: dict[str, dict] = {}
+        self._configurations: dict[str, dict] = {}
         self._transport = transport or HubTransport(
             config.mqtt,
             on_message=self.handle,
@@ -197,6 +203,9 @@ class SatelliteService:
         self._command(node_id, {"action": "revoke", "capability": "events"})
         self._transport.clear_retained_state(node_id)
         self.health.forget(node_id)
+        with self._lock:
+            self._reported.pop(node_id, None)
+            self._configurations.pop(node_id, None)
         for record in self.sources.all():
             if record.ref.node == node_id:
                 self.sources.set_state(record.ref, SourceState.DISABLED)
@@ -295,11 +304,23 @@ class SatelliteService:
         """A node saying what it is. This is where a session begins and ends."""
         connection_id = document.get("connection_id")
         online = bool(document.get("online"))
+        if online:
+            self._remember_report(message.node_id, document)
         if not online:
             if self.sessions.close(message.node_id, connection_id=connection_id, reason="said so"):
                 log.info("%s went offline", message.node_id)
             else:
                 self._refuse(message.node_id, "stale_goodbye")
+            return
+        current = self.sessions.current(message.node_id)
+        if (
+            current is not None
+            and current.connection_id == connection_id
+            and current.boot_id == document.get("boot_id")
+        ):
+            # The same connection saying what it is now, after a configuration change.
+            # The session and its grant carry on; only the list of sources moves.
+            self._adopt_sources(message.node_id, document.get("sources", []))
             return
         session = self.sessions.open(
             message.node_id,
@@ -317,6 +338,30 @@ class SatelliteService:
             len(document.get("sources", [])),
         )
 
+    def _remember_report(self, node_id: str, document: dict) -> None:
+        declared = document.get("sources")
+        revision = document.get("config_revision")
+        with self._lock:
+            self._reported[node_id] = {
+                "profile": document.get("profile"),
+                "agent_version": document.get("agent_version"),
+                "config_revision": revision
+                if isinstance(revision, int) and not isinstance(revision, bool)
+                else None,
+                "sources": [
+                    {
+                        "source_id": entry.get("source_id"),
+                        "kind": entry.get("kind"),
+                        "enabled": entry.get("enabled", True) is not False,
+                        "options": entry.get("options")
+                        if isinstance(entry.get("options"), dict)
+                        else {},
+                    }
+                    for entry in (declared if isinstance(declared, list) else [])[:64]
+                    if isinstance(entry, dict)
+                ],
+            }
+
     def _adopt_sources(self, node_id: str, declared: list) -> None:
         """Record the sensors a node says it has. Declaring one is not permission to use it.
 
@@ -324,6 +369,7 @@ class SatelliteService:
         willing to believe exists. A source that turns up here and nowhere else is visible
         and unused until somebody points a rule at it.
         """
+        named: set[SourceRef] = set()
         for entry in declared if isinstance(declared, list) else []:
             if not isinstance(entry, dict):
                 continue
@@ -337,9 +383,11 @@ class SatelliteService:
             except ValueError:
                 self._refuse(node_id, "bad_source_id")
                 continue
+            named.add(ref)
+            state = SourceState.DISABLED if entry.get("enabled") is False else SourceState.READY
             existing = self.sources.get(ref)
             if existing is not None:
-                self.sources.set_state(ref, SourceState.READY)
+                self.sources.set_state(ref, state)
                 continue
             self.sources.register(
                 SourceRecord(
@@ -348,9 +396,14 @@ class SatelliteService:
                     display_name=entry.get("display_name") or f"{node_id} {source_id}",
                     origin="satellite",
                     zone=self.nodes.require(node_id).zone,
-                    state=SourceState.READY,
+                    state=state,
                 )
             )
+        # A source the node no longer declares stays known, so rules that name it still
+        # read as they were written, but nothing may count on it.
+        for record in self.sources.all():
+            if record.ref.node == node_id and record.ref not in named:
+                self.sources.set_state(record.ref, SourceState.DISABLED)
 
     def _on_health(self, message: Message, document: dict) -> None:
         """A heartbeat replaces the one before it. None of them reaches the journal."""
@@ -367,6 +420,85 @@ class SatelliteService:
             document.get("command_id"),
             document.get("outcome"),
         )
+        outcome = document.get("outcome")
+        detail = document.get("detail")
+        with self._lock:
+            pending = self._configurations.get(message.node_id)
+            if pending is None or pending["command_id"] != document.get("command_id"):
+                return
+            if outcome not in ("received", "applied", "failed"):
+                return
+            if outcome == "received" and pending["state"] != "sent":
+                return  # a late copy of the first answer says nothing new
+            pending["state"] = outcome
+            pending["detail"] = detail if isinstance(detail, str) else None
+            pending["answered_at"] = time.time()
+        if outcome == "failed":
+            log.warning("%s refused configuration: %s", message.node_id, detail)
+        elif outcome == "applied":
+            log.info("%s applied configuration %s", message.node_id, pending["revision"])
+
+    # -- configuration -----------------------------------------------------------
+
+    def configure(self, node_id: str, sources: list[dict]) -> dict:
+        """Send a node a new list of sources. The answer arrives later, on its acks topic.
+
+        Refused here, before anything is sent: a node that is not approved or not online,
+        and a node that has not answered the previous request yet.
+        """
+        record = self.nodes.get(node_id)
+        if record is None:
+            raise LookupError(f"{node_id} is not a registered satellite")
+        if record.status != "approved":
+            raise BlockingIOError(f"{node_id} is not approved")
+        session = self.sessions.current(node_id)
+        if session is None:
+            raise BlockingIOError(f"{node_id} is offline; it can be configured once it is back")
+        now = time.time()
+        with self._lock:
+            pending = self._configurations.get(node_id)
+            if (
+                pending is not None
+                and pending["state"] in ("sent", "received")
+                and now - pending["sent_at"] < CONFIGURE_PATIENCE_SECONDS
+            ):
+                raise BlockingIOError(
+                    f"{node_id} has not answered configuration {pending['revision']} yet"
+                )
+            reported = (self._reported.get(node_id) or {}).get("config_revision") or 0
+            revision = max(reported, pending["revision"] if pending else 0) + 1
+            command_id = str(uuid.uuid4())
+            entry = {
+                "command_id": command_id,
+                "revision": revision,
+                "state": "sent",
+                "detail": None,
+                "sent_at": now,
+                "answered_at": None,
+            }
+            self._configurations[node_id] = entry
+        sent = self._command(
+            node_id,
+            {
+                "command_id": command_id,
+                "action": "configure",
+                "hub_epoch": session.hub_epoch,
+                "revision": revision,
+                "sources": sources,
+            },
+        )
+        if not sent:
+            with self._lock:
+                entry["state"] = "failed"
+                entry["detail"] = "the broker did not take the command"
+            raise BlockingIOError("The satellite link is down; nothing was sent.")
+        log.info("sent configuration %d to %s", revision, node_id)
+        return dict(entry)
+
+    def configuration(self, node_id: str) -> dict | None:
+        with self._lock:
+            entry = self._configurations.get(node_id)
+            return dict(entry) if entry else None
 
     def _on_events(self, message: Message, document: dict) -> None:
         """An event: who sent it, whether they may, what it is, and then the journal.
@@ -458,9 +590,7 @@ class SatelliteService:
             return {"events": 0, "receipts": 0}
         removed = {
             "events": self.store.forget_events(older_than_seconds=limits.journal_days * 86400),
-            "receipts": self.store.forget_receipts(
-                older_than_seconds=limits.dedup_days * 86400
-            ),
+            "receipts": self.store.forget_receipts(older_than_seconds=limits.dedup_days * 86400),
         }
         self.health.journal(self.store.status())
         return removed
@@ -495,6 +625,8 @@ class SatelliteService:
                     "freshness": self.sessions.freshness(record.node_id).value,
                     "session": sessions["nodes"].get(record.node_id),
                     "health": self.health.of(record.node_id),
+                    "reported": self._reported.get(record.node_id),
+                    "configuration": self.configuration(record.node_id),
                     "sources": [
                         {
                             "source_id": source.id,

@@ -3,21 +3,24 @@
 import argparse
 import json
 import logging
+import os
 import shutil
 import signal
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sentry_satellite import __version__, drivers, health, identity
+from sentry_satellite import __version__, drivers, health, identity, remote
 from sentry_satellite import config as configuration
 from sentry_satellite.agent import Agent
 from sentry_satellite.mqtt import MqttTransport, TransportError, tls_context
+from sentry_satellite.sensors.onewire import DEVICES
 
 log = logging.getLogger("sentry_satellite")
 
 DEFAULT_CONFIG = Path("/etc/sentry-satellite/node.toml")
 DEFAULT_IDENTITY = Path("/etc/sentry-satellite/identity.json")
+DEFAULT_STATE = Path("/var/lib/sentry-satellite")
 
 
 def _load(path: Path, identity_file: Path) -> configuration.Config:
@@ -40,6 +43,14 @@ def validate(arguments) -> int:
     print(json.dumps(configuration.summary(config), indent=2))
     for problem in problems:
         print(f"not yet: {problem}", file=sys.stderr)
+    overlay = remote.Overlay(arguments.state_dir / "sources.json")
+    applied = overlay.load(config, kinds=drivers.SUPPORTED)
+    if applied.revision:
+        print(
+            f"note: the hub has replaced the sources (revision {applied.revision}):"
+            f" {', '.join(configuration.summary(applied.config)['sources']) or 'none'}",
+            file=sys.stderr,
+        )
     return 1 if problems else 0
 
 
@@ -79,6 +90,8 @@ def doctor(arguments) -> int:
         config = None
     if config is not None:
         note("node", f"{config.node_id} ({config.profile})")
+        for name, value in _buses(config):
+            note(name, value)
         try:
             tls_context(config.tls.ca_file, config.tls.cert_file, config.tls.key_file)
             note("tls", "certificate, key and CA are a usable set")
@@ -96,6 +109,47 @@ def doctor(arguments) -> int:
         blocked = blocked or blocking
         print(f"{mark} {name.ljust(width)}  {value}")
     return 1 if blocked else 0
+
+
+def _buses(config: configuration.Config) -> list[tuple[str, str]]:
+    """Whether each bus the sources use is there and open to this user.
+
+    A missing bus is a note, not a failure: `run` still starts, and that source reports
+    itself unavailable, which is the same thing said later.
+    """
+    wanted: dict[str, str] = {}
+    for source in config.sources:
+        options = source.options
+        if not options.get("enabled", True):
+            continue
+        if source.kind == "gpio":
+            wanted["gpio"] = options["chip"]
+        elif source.kind in ("bme280", "adc"):
+            wanted[f"i2c-{options['bus']}"] = f"/dev/i2c-{options['bus']}"
+        elif source.kind == "onewire":
+            wanted[f"1-wire {options['device']}"] = str(DEVICES / options["device"])
+    found = []
+    if "gpio" in wanted:
+        try:
+            import gpiod  # noqa: F401
+
+            found.append(("libgpiod", getattr(gpiod, "__version__", "installed")))
+        except ImportError:
+            found.append(("libgpiod", "missing (apt install python3-libgpiod)"))
+    for name, path in wanted.items():
+        if name.startswith("1-wire"):
+            usable = os.path.exists(path)
+            hint = "not found (dtoverlay=w1-gpio, and is the probe wired?)"
+        else:
+            usable = os.access(path, os.R_OK | os.W_OK)
+            if name == "gpio":
+                hint = "not usable (is this user in the gpio group?)"
+            else:
+                hint = "not usable (dtparam=i2c_arm=on, and the i2c group)"
+            if not os.path.exists(path):
+                hint = "missing" + hint.removeprefix("not usable")
+        found.append((name, f"{path} " + ("ready" if usable else hint)))
+    return found
 
 
 def show_identity(arguments) -> int:
@@ -125,9 +179,13 @@ def run(arguments) -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     try:
-        config = _load(arguments.config, arguments.identity)
+        installed = _load(arguments.config, arguments.identity)
         known = identity.load(arguments.identity)
-        built = drivers.build(config)
+        overlay = remote.Overlay(arguments.state_dir / "sources.json")
+        applied = overlay.load(installed, kinds=drivers.SUPPORTED)
+        config = applied.config
+        builder = drivers.Builder()
+        built = builder(config)
     except (configuration.ConfigError, identity.IdentityError, drivers.UnsupportedSource) as error:
         print(f"refused: {error}", file=sys.stderr)
         return 2
@@ -139,7 +197,15 @@ def run(arguments) -> int:
         )
         return 2
 
-    agent = Agent(config=config, identity=known, transport=MqttTransport(config), drivers=built)
+    agent = Agent(
+        config=config,
+        identity=known,
+        transport=MqttTransport(config),
+        drivers=built,
+        builder=builder,
+        overlay=overlay,
+        revision=applied.revision,
+    )
 
     def asked_to_stop(signum, frame) -> None:
         log.info("signal %s: stopping", signal.Signals(signum).name)
@@ -156,6 +222,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--identity", type=Path, default=DEFAULT_IDENTITY)
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=DEFAULT_STATE,
+        help="where sources configured from the hub are kept",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     commands.add_parser("validate", help="read the configuration and report what it would do")

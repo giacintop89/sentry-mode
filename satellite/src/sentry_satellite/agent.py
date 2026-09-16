@@ -13,13 +13,13 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Event, Lock, Thread
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable, Protocol
 
-from sentry_satellite import __version__, commands, health, protocol
+from sentry_satellite import __version__, commands, health, protocol, remote
 from sentry_satellite.config import Config
 from sentry_satellite.identity import Identity
 from sentry_satellite.mqtt import Transport, TransportError
-from sentry_satellite.sensors import Driver, Reading
+from sentry_satellite.sensors import Driver, Reading, baseline
 from sentry_satellite.spool import Spool
 
 log = logging.getLogger(__name__)
@@ -42,18 +42,38 @@ class Grant:
         return now < self.expires_at
 
 
+class Rebuilder(Protocol):
+    """What remote configuration needs from `drivers.Builder`, without importing hardware."""
+
+    kinds: tuple[str, ...]
+
+    def check(self, config: Config) -> None: ...
+
+    def __call__(self, config: Config) -> list[Driver]: ...
+
+    def release(self) -> None: ...
+
+
 @dataclass
 class SourceState:
     readings: int = 0
     last_reading_at: float | None = None
     driver_alive: bool = True
+    retired: bool = False
+    last: Reading | None = None
+    driver: Any = field(default=None, repr=False)
 
     def as_dict(self, now: float) -> dict:
         age = None if self.last_reading_at is None else round(now - self.last_reading_at, 1)
+        last = self.last
         return {
             "readings": self.readings,
             "last_reading_age_seconds": age,
             "driver": "running" if self.driver_alive else "finished",
+            "error": getattr(self.driver, "error", None),
+            "last": None
+            if last is None
+            else {"value": last.value, "unit": last.unit, "quality": last.quality},
         }
 
 
@@ -68,6 +88,10 @@ class Agent:
     reconnect_seconds: float = 2.0
     idle_seconds: float = 0.05
     join_seconds: float = 2.0
+    builder: Rebuilder | None = None
+    overlay: remote.Overlay | None = None
+    revision: int = 0
+    probe_seconds: float = 2.0
 
     _stop: Event = field(default_factory=Event, init=False, repr=False)
     _threads: list[Thread] = field(default_factory=list, init=False, repr=False)
@@ -75,6 +99,9 @@ class Agent:
     _grant: Grant | None = field(default=None, init=False, repr=False)
     _seen: commands.Seen = field(default_factory=commands.Seen, init=False, repr=False)
     _states: dict[str, SourceState] = field(default_factory=dict, init=False, repr=False)
+    _driver_threads: dict[int, Thread] = field(default_factory=dict, init=False, repr=False)
+    _swap: Lock = field(default_factory=Lock, init=False, repr=False)
+    _configuring: Lock = field(default_factory=Lock, init=False, repr=False)
     published: int = field(default=0, init=False)
     refused: int = field(default=0, init=False)
     unstopped: list[str] = field(default_factory=list, init=False)
@@ -90,7 +117,7 @@ class Agent:
             clock=self.clock,
         )
         self.events = protocol.Events(self.identity.node_id, self.identity.boot_id)
-        self._states = {driver.source_id: SourceState() for driver in self.drivers}
+        self._states = self._fresh_states(self.drivers)
 
     # -- lifecycle ---------------------------------------------------------------
 
@@ -100,8 +127,7 @@ class Agent:
         self.transport.subscribe(self._topic("commands"), self._on_command)
         self._spawn("network", self._network)
         self._spawn("health", self._health)
-        for driver in self.drivers:
-            self._spawn(f"driver:{driver.source_id}", self._drive, driver)
+        self._start_drivers()
 
     def stop(self) -> None:
         """Ask everything to stop, and report what did not.
@@ -111,16 +137,16 @@ class Agent:
         would make an unstoppable sensor look like a clean shutdown.
         """
         self._stop.set()
-        for driver in self.drivers:
-            try:
-                driver.stop()
-            except Exception:  # noqa: BLE001 - one rude driver must not block the rest
-                log.exception("%s raised while stopping", driver.source_id)
+        with self._swap:
+            running = list(self.drivers)
+        self._stop_drivers(running)
         for thread in self._threads:
             thread.join(timeout=self.join_seconds)
             if thread.is_alive():
                 self.unstopped.append(thread.name)
                 log.warning("%s did not stop", thread.name)
+        if self.builder is not None:
+            self.builder.release()
         self._publish_state(online=False)
         self.transport.disconnect()
         log.info("stopped; %d published, %d refused", self.published, self.refused)
@@ -142,10 +168,11 @@ class Agent:
 
     # -- threads -----------------------------------------------------------------
 
-    def _spawn(self, name: str, target: Callable, *args) -> None:
+    def _spawn(self, name: str, target: Callable, *args) -> Thread:
         thread = Thread(target=self._guard, args=(name, target, *args), name=name, daemon=True)
-        thread.start()
         self._threads.append(thread)
+        thread.start()
+        return thread
 
     def _guard(self, name: str, target: Callable, *args) -> None:
         try:
@@ -153,17 +180,43 @@ class Agent:
         except Exception:  # noqa: BLE001 - a thread that dies quietly is a sensor that lies
             log.exception("%s stopped unexpectedly", name)
 
-    def _drive(self, driver: Driver) -> None:
-        state = self._states[driver.source_id]
+    def _drive(self, driver: Driver, state: SourceState) -> None:
         try:
             for reading in driver.read():
-                if self._stop.is_set():
+                if self._stop.is_set() or state.retired:
                     break
                 self._record(reading)
                 state.readings += 1
                 state.last_reading_at = self.clock()
+                state.last = reading
         finally:
             state.driver_alive = False
+
+    @staticmethod
+    def _fresh_states(drivers: list) -> dict[str, SourceState]:
+        return {driver.source_id: SourceState(driver=driver) for driver in drivers}
+
+    def _start_drivers(self) -> None:
+        with self._swap:
+            running = [(driver, self._states[driver.source_id]) for driver in self.drivers]
+        for driver, state in running:
+            name = f"driver:{driver.source_id}"
+            self._driver_threads[id(driver)] = self._spawn(name, self._drive, driver, state)
+
+    def _stop_drivers(self, drivers: list) -> list[Thread]:
+        threads = []
+        for driver in drivers:
+            state = self._states.get(driver.source_id)
+            if state is not None and state.driver is driver:
+                state.retired = True
+            try:
+                driver.stop()
+            except Exception:  # noqa: BLE001 - one rude driver must not block the rest
+                log.exception("%s raised while stopping", driver.source_id)
+            thread = self._driver_threads.pop(id(driver), None)
+            if thread is not None:
+                threads.append(thread)
+        return threads
 
     def _network(self) -> None:
         while not self._stop.is_set():
@@ -216,10 +269,10 @@ class Agent:
             log.warning("%s produced something unsendable: %s", reading.source_id, error)
             return
         size = len(json.dumps(event, separators=(",", ":")).encode("utf-8"))
-        self.spool.put(self._topic("events"), event, size)
+        self.spool.put(self._topic("events"), event, size, initial=reading.initial)
 
     def _send(self, held) -> None:
-        delivery = self._delivery(queued_ms=self.spool.queued_ms(held))
+        delivery = self._delivery(queued_ms=self.spool.queued_ms(held), initial=held.initial)
         if delivery is None:
             self.spool.requeue(held)
             return
@@ -251,8 +304,15 @@ class Agent:
             "agent_version": __version__,
             "profile": self.config.profile,
             "online": online,
+            "config_revision": self.revision,
             "sources": [
-                {"source_id": source.id, "kind": source.kind} for source in self.config.sources
+                {
+                    "source_id": source.id,
+                    "kind": source.kind,
+                    "enabled": source.enabled,
+                    "options": {k: v for k, v in source.options.items() if k != "enabled"},
+                }
+                for source in self.config.sources
             ],
         }
         return json.dumps(state, separators=(",", ":")).encode("utf-8")
@@ -280,7 +340,9 @@ class Agent:
                 "drops": self.spool.drops.as_dict(),
                 "granted": self._granted(),
             },
-            sources={source_id: state.as_dict(now) for source_id, state in self._states.items()},
+            sources={
+                source_id: state.as_dict(now) for source_id, state in dict(self._states).items()
+            },
             now=now,
         )
         self._publish_json(self._topic("health"), payload, qos=0, retain=False)
@@ -308,18 +370,127 @@ class Agent:
             return
         previous = self._seen.outcome(command.command_id)
         if previous is not None:
-            self._publish_json(
-                self._topic("acks"),
-                commands.ack(command, previous, detail="already handled"),
-                qos=1,
-                retain=False,
-            )
+            self._answer(command, previous, "already handled")
+            return
+        if command.action == "configure":
+            self._begin_configure(command)
             return
         outcome, detail = self._apply(command)
         self._seen.remember(command.command_id, outcome)
+        self._answer(command, outcome, detail)
+
+    def _answer(self, command: commands.Command, outcome: commands.Outcome, detail) -> None:
         self._publish_json(
             self._topic("acks"), commands.ack(command, outcome, detail=detail), qos=1, retain=False
         )
+
+    # -- remote configuration ----------------------------------------------------
+
+    def _begin_configure(self, command: commands.Command) -> None:
+        """Acknowledge at once and do the work elsewhere.
+
+        Stopping drivers and watching the new ones start takes seconds, and this runs on
+        the thread that keeps the link alive. A second request while one is being applied
+        is refused without being remembered, so the hub can simply send it again.
+        """
+        if not self._configuring.acquire(blocking=False):
+            self._answer(command, "failed", "another configuration is being applied")
+            return
+        self._seen.remember(command.command_id, "received")
+        self._answer(command, "received", None)
+        try:
+            self._spawn(f"configure:{command.revision}", self._finish_configure, command)
+        except Exception:
+            self._configuring.release()
+            raise
+
+    def _finish_configure(self, command: commands.Command) -> None:
+        try:
+            outcome, detail = self._configure(command)
+        finally:
+            self._configuring.release()
+        self._seen.remember(command.command_id, outcome)
+        self._answer(command, outcome, detail)
+
+    def _configure(self, command: commands.Command) -> tuple[commands.Outcome, str | None]:
+        """Apply a new list of sources, or leave the old one running and say why.
+
+        The request is checked in full, drivers included, before anything stops. Then the
+        old drivers stop, the new ones start and are watched for `probe_seconds`; a driver
+        that dies or reports an error in that time, or an overlay that cannot be written,
+        puts the previous list back.
+        """
+        if self.builder is None:
+            return "failed", "this node does not take its sources from the hub"
+        try:
+            proposed = remote.check(
+                self.config,
+                command.revision,
+                list(command.sources),
+                current=self.revision,
+                kinds=self.builder.kinds,
+            )
+            self.builder.check(proposed)
+        except Exception as error:  # noqa: BLE001 - any refusal leaves everything running
+            return "failed", str(error)
+
+        previous = self.config
+        try:
+            self._replace_drivers(proposed)
+            problem = self._probe()
+        except Exception as error:  # noqa: BLE001 - a driver that cannot start is a refusal
+            problem = str(error)
+        if problem is None and self.overlay is not None:
+            try:
+                self.overlay.save(proposed, command.revision)
+            except OSError as error:
+                problem = f"the configuration could not be kept: {error}"
+        if problem is not None:
+            log.warning("revision %d not applied: %s", command.revision, problem)
+            try:
+                self._replace_drivers(previous)
+            except Exception as error:  # noqa: BLE001 - say so, rather than die here
+                log.exception("the previous sources could not be restored")
+                return "failed", f"{problem}; the previous sources did not restart: {error}"
+            self._publish_state(online=True)
+            return "failed", f"{problem}; revision {self.revision} is still in use"
+        self.revision = command.revision
+        log.info("sources replaced with revision %d", self.revision)
+        self._publish_state(online=True)
+        return "applied", f"revision {self.revision}"
+
+    def _replace_drivers(self, config: Config) -> None:
+        assert self.builder is not None
+        with self._swap:
+            old = list(self.drivers)
+        for thread in self._stop_drivers(old):
+            thread.join(timeout=self.join_seconds)
+            if thread.is_alive():
+                log.warning("%s did not stop before its replacement started", thread.name)
+        built = self.builder(config)
+        with self._swap:
+            self.config = config
+            self.drivers = built
+            self._states = self._fresh_states(built)
+        self._start_drivers()
+
+    def _probe(self) -> str | None:
+        """The first problem a new driver reports while it starts, if any."""
+        with self._swap:
+            watched = list(self.drivers)
+        deadline = time.monotonic() + self.probe_seconds
+        while True:
+            for driver in watched:
+                thread = self._driver_threads.get(id(driver))
+                if thread is None or not thread.is_alive():
+                    return f"{driver.source_id}: the driver stopped as soon as it started"
+                error = getattr(driver, "error", None)
+                if error:
+                    return f"{driver.source_id}: {error}"
+            if time.monotonic() >= deadline:
+                return None
+            if self._stop.wait(0.05):
+                return "the agent is stopping"
 
     def _apply(self, command: commands.Command) -> tuple[commands.Outcome, str | None]:
         if command.action == "stop":
@@ -341,6 +512,7 @@ class Agent:
                         return "failed", "there is no such grant to renew"
                     if command.sequence <= held.sequence:
                         return "failed", "a renewal that is not newer than the grant it renews"
+                fresh = held is None or held.grant_id != command.grant_id
                 self._grant = Grant(
                     grant_id=command.grant_id,
                     capability=command.capability,
@@ -348,8 +520,23 @@ class Agent:
                     expires_at=self.clock() + command.duration_seconds,
                     sequence=command.sequence,
                 )
+            if fresh:
+                self._baselines()
             return "applied", None
         return "failed", "unknown action"
+
+    def _baselines(self) -> None:
+        """Tell a hub that has just granted us where every source stands.
+
+        The hub may have restarted, or may have put a source in doubt over its clock. A
+        baseline is what it needs in either case, and it is never taken as news.
+        """
+        with self._swap:
+            running = list(self.drivers)
+        for driver in running:
+            reading = baseline(driver)
+            if reading is not None:
+                self._record(reading)
 
     # -- small things ------------------------------------------------------------
 
@@ -363,7 +550,7 @@ class Agent:
             return False
         return grant.valid(self.clock())
 
-    def _delivery(self, *, queued_ms: int) -> protocol.Delivery | None:
+    def _delivery(self, *, queued_ms: int, initial: bool = False) -> protocol.Delivery | None:
         with self._lock:
             grant = self._grant
         if grant is None or not grant.valid(self.clock()):
@@ -374,6 +561,7 @@ class Agent:
             grant_id=grant.grant_id,
             queued_ms=queued_ms,
             replayed=queued_ms > 0,
+            initial_state=initial,
         )
 
     def refresh_clock_status(self) -> str:

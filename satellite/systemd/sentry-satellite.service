@@ -9,7 +9,7 @@ Type=simple
 User=sentry-satellite
 Group=sentry-satellite
 SupplementaryGroups=gpio i2c spi audio
-ExecStart=/opt/sentry-satellite/venv/bin/sentry-satellite --config /etc/sentry-satellite/node.toml --identity /etc/sentry-satellite/identity.json run
+ExecStart=/opt/sentry-satellite/venv/bin/sentry-satellite --config /etc/sentry-satellite/node.toml --identity /etc/sentry-satellite/identity.json --state-dir /var/lib/sentry-satellite run
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
@@ -31,6 +31,9 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 ReadOnlyPaths=/etc/sentry-satellite
 RuntimeDirectory=sentry-satellite
+# Sources the hub configured live here, never in /etc: the installed file stays as written.
+StateDirectory=sentry-satellite
+StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

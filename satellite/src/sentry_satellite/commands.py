@@ -1,9 +1,11 @@
 """What the hub is allowed to tell this node to do.
 
 The list is short and it is closed. A command can grant a capability for a while, renew
-that grant, or take it away; it cannot name a program to run, a file to read or a rule to
-apply. That is the difference between a peripheral and a second Sentry, and it is enforced
-here rather than trusted to the sender.
+that grant, or take it away, and it can replace the list of sources with one made only of
+drivers this agent already has. It cannot name a program to run, a file to read, a rule to
+apply, or touch the network, the certificates or the installed packages. That is the difference
+between a peripheral and a second Sentry, and it is enforced here rather than trusted to
+the sender.
 """
 
 from collections import OrderedDict
@@ -13,7 +15,8 @@ from typing import Literal
 from sentry_satellite.names import InvalidName, check_name
 
 CAPABILITIES = ("events", "video", "audio")
-ACTIONS = ("grant", "renew", "revoke", "stop")
+ACTIONS = ("grant", "renew", "revoke", "stop", "configure")
+MAX_SOURCES = 32
 
 Outcome = Literal["received", "applied", "failed"]
 
@@ -32,6 +35,8 @@ class Command:
     grant_id: str | None = None
     duration_seconds: float = 0.0
     sequence: int = 0
+    revision: int = 0
+    sources: tuple[dict, ...] = ()
 
 
 def parse(message: dict, *, node_id: str) -> Command:
@@ -46,6 +51,8 @@ def parse(message: dict, *, node_id: str) -> Command:
         "grant_id",
         "duration_seconds",
         "sequence",
+        "revision",
+        "sources",
     }
     if unknown:
         raise CommandError(f"a command does not take {', '.join(sorted(unknown))}")
@@ -73,6 +80,17 @@ def parse(message: dict, *, node_id: str) -> Command:
     sequence = message.get("sequence", 0)
     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
         raise CommandError("a renewal is numbered")
+    revision = message.get("revision", 0)
+    sources = message.get("sources", [])
+    if action == "configure":
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+            raise CommandError("a configuration is numbered from 1")
+        if not isinstance(sources, list) or len(sources) > MAX_SOURCES:
+            raise CommandError(f"a configuration is a list of at most {MAX_SOURCES} sources")
+        if not all(isinstance(entry, dict) for entry in sources):
+            raise CommandError("each configured source is an object")
+    elif "revision" in message or "sources" in message:
+        raise CommandError(f"a {action} command does not take a configuration")
     return Command(
         command_id=command_id,
         action=action,
@@ -82,6 +100,8 @@ def parse(message: dict, *, node_id: str) -> Command:
         grant_id=message.get("grant_id"),
         duration_seconds=float(duration),
         sequence=sequence,
+        revision=revision if action == "configure" else 0,
+        sources=tuple(sources) if action == "configure" else (),
     )
 
 

@@ -155,3 +155,77 @@ Use `--snapshot` rather than copying the file: the journal runs in write-ahead m
 a plain copy can be missing the newest events. Forgetting events leaves the receipts in
 place, so an old event still cannot be admitted twice; receipts younger than a day are
 never forgotten. The hub also trims both once an hour by `journal_days` and `dedup_days`.
+
+## Sensors
+
+A node reads the sources listed in its `[[sources]]`. Each one has an `id`, a `kind` and
+the options of that kind; anything else is refused when the file is read, with the name of
+the option. Two sources may not share a pin, a probe, an I2C address and measurement, or a
+pin that a bus already uses.
+
+| Kind | What it reads | Options |
+|---|---|---|
+| `gpio` | A PIR or a contact on one pin. Sends `sensor.motion` (or `event_kind`) with `active` or `idle`. | `line_numbering = "bcm"` (required), `line`, `active_high`, `bias` (`disabled`, `pull_up`, `pull_down`, `as_is`), `debounce_ms`, `settle_seconds`, `chip` |
+| `onewire` | A DS18B20 probe, in °C. | `device` (`28-…`), `line` (the 1-Wire pin, default 4), `interval_seconds` |
+| `bme280` | Temperature (°C), humidity (%) or pressure (hPa) — one source per quantity. | `measure`, `bus`, `address` (`0x76` or `0x77`), `interval_seconds` |
+| `adc` | One channel of an ADS1115, for an LDR divider or another analogue part. | `channel`, `output` (`ratio` or `volts`), `reference_volts`, `bus`, `address`, `interval_seconds` |
+| `dummy` | A simulated value, for testing the link. | `interval_seconds` |
+
+Every source also takes `enabled = false`, which keeps it in the list without reading it.
+
+What the board needs first, in `/boot/firmware/config.txt`, followed by a reboot:
+
+    dtoverlay=w1-gpio            # DS18B20, on GPIO 4 unless gpiopin= says otherwise
+    dtparam=i2c_arm=on           # BME280 and ADS1115, on /dev/i2c-1 (GPIO 2 and 3)
+
+and the packages: `sudo apt install python3-libgpiod python3-paho-mqtt`. The service runs
+in the `gpio` and `i2c` groups; `sentry-satellite doctor` says what is missing.
+
+A few things worth knowing before wiring:
+
+- **A PIR needs time to settle.** Set `settle_seconds` to what the module actually needs
+  after power-up — some need a minute. Edges in that time are ignored, and the level at
+  the end is sent as a baseline, which never starts a rule.
+- **`debounce_ms`** is how long a change has to last. A contact switch usually needs 20 to
+  50 ms; a PIR has its own hold time and needs little.
+- **An LDR is not a lux meter.** It needs the ADS1115 because the board has no analogue
+  input, and it reports a fraction of the supply or a voltage, which depends on the
+  resistor next to it. A `threshold` rule on it has to be calibrated against the room.
+- **A failed read is `unavailable`, never zero.** A probe that is unplugged, a bus that
+  does not answer or a reading the part itself flags as bad is reported once as
+  unavailable, and a threshold rule does not fire on it.
+- **A DS18B20 reading exactly 85 °C** is its power-on value, not a temperature, and is
+  refused.
+
+The drivers and their choices are described in [sensor drivers](adr/satellite-sensors.md).
+
+## Changing a node's sources from the hub
+
+The **Satellites** page, in the menu once satellites are on, lists every node: whether it
+is fresh, stale or offline, its agent version, its sources with their state and latest
+reading, and what went wrong recently.
+
+An approved, online node can be given a new list of sources from its card. Open *Change
+sources*, edit the list — it is the node's `[[sources]]` written as JSON — and send it.
+Only the kinds in the table above can be sent; a camera, a microphone or Bluetooth are
+refused with a note on when they arrive. The network, the certificates and the hub address
+cannot be changed this way, on purpose.
+
+Each change has a revision number, higher than the last. The node checks the whole list
+before touching anything, stops the old drivers, starts the new ones and watches them for
+two seconds. If a driver cannot start — a pin held by another program, say — the node
+goes back to the list it had, and the card says why. What was applied is kept in
+`/var/lib/sentry-satellite/sources.json` and used at the next start in place of the
+sources in `/etc/sentry-satellite/node.toml`, which is never rewritten. To go back to the
+installed file, stop the service, delete that file and start it again.
+
+A node takes one change at a time. A second one sent while the first is starting is
+refused and can simply be sent again; the hub waits up to 30 seconds for an answer before
+it lets you try.
+
+The same is available to scripts, with the control header:
+
+    curl -s localhost:8083/api/satellites
+    curl -s -X POST localhost:8083/api/satellites/configure \
+      -H 'X-Sentry-Mode-Control: 1' -H 'Content-Type: application/json' \
+      -d '{"node_id": "zero-entrance", "sources": [{"id": "pir-1", "kind": "gpio", "line_numbering": "bcm", "line": 17}]}'

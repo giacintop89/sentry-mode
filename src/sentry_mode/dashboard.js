@@ -152,6 +152,13 @@
       if (readout) readout.textContent = 'Node connection unavailable.';
     } finally { pending = false; }
   }
+  // The satellites view exists only on a hub that has them switched on.
+  const satellites = [...document.querySelectorAll('[data-satellites-link]')];
+  if (satellites.some(link => link.hidden)) {
+    get('/api/satellites').then(data => {
+      for (const link of satellites) link.hidden = !data.enabled && !link.hasAttribute('aria-current');
+    }).catch(() => {});
+  }
   refresh();
   window.nodeRefresh = refresh;
   if (document.body.dataset.page !== 'hardware') {

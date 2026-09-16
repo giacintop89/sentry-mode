@@ -399,3 +399,34 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
      pushing the run off centre. */
   .app-views #save-help{order:1;flex-basis:100%;max-width:none;margin:0;text-align:center}
 }
+
+/* Six views do not fit one phone row: with satellites on they take two rows of three. */
+@media(max-width:540px){
+  .app-views:has(a[data-satellites-link]:not([hidden])) a{flex:1 1 calc(33.333% - 4px)}
+}
+
+/* Satellites: one card per node, its sources as a table that scrolls on its own. */
+.satellite-summary,.satellite-off,.satellite-card{padding:20px;border:1px solid #21492f;background:#08190f;margin-bottom:16px}
+.satellite-summary h2 .badge{margin-left:8px;vertical-align:middle}
+.satellite-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:16px}
+.satellite-card{margin:0;min-width:0}
+.satellite-card .panel-heading>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.satellite-card h3{margin:0;color:#07110a;font-size:17.667px;letter-spacing:.5px;overflow-wrap:anywhere}
+/* A badge sits on the green heading bar here, so it takes the dark of the page. */
+.satellite-summary .panel-heading .badge,.satellite-card .panel-heading .badge{background:#07110a;color:#a8ff85;border-color:#07110a;text-transform:uppercase}
+.satellite-summary .panel-heading .badge.armed,.satellite-card .panel-heading .badge.armed{color:#07110a;background:#baffc8;border-color:#07110a}
+.satellite-meta{color:var(--muted);font:14.667px/1.5 var(--mono);overflow-wrap:anywhere}
+.satellite-table{overflow-x:auto;margin:12px 0}
+.satellite-table table{width:100%;border-collapse:collapse;font:14.667px var(--mono)}
+.satellite-table th,.satellite-table td{text-align:left;padding:8px 10px;border-bottom:1px solid #21492f;white-space:nowrap}
+.satellite-table th{color:var(--muted);font-weight:normal;text-transform:uppercase;font-size:12.667px}
+.satellite-table tr[data-state=error] td,.satellite-table tr[data-state="no driver yet"] td:nth-child(3){color:#ffa65b}
+.satellite-errors{margin:8px 0;padding-left:20px;color:#ffa65b;font:14.667px/1.5 var(--mono);overflow-wrap:anywhere}
+.satellite-errors:empty{display:none}
+.satellite-card details{margin-top:12px}
+.satellite-card textarea{width:100%;min-height:180px;font:14.667px/1.4 var(--mono)}
+@media(max-width:540px){
+  .satellite-summary,.satellite-off,.satellite-card{padding:14px}
+  .satellite-table th,.satellite-table td{padding:7px 6px;font-size:13.667px}
+  .satellite-card .actions button{flex:1}
+}

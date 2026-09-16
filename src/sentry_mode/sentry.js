@@ -1,6 +1,6 @@
 (() => {
   const $ = id => document.getElementById(id);
-  let config, revision, status, video, editing = -1, busy = false, eventId = -1;
+  let config, revision, status, video, editing = -1, busy = false, eventId = -1, sources = [];
   const dirty = new Set();
   const num = id => Number($(id).value);
   function message(text, kind = '') { $('sentry-result').textContent = text; $('sentry-result').title = text; $('sentry-result').className = 'result ' + kind; }
@@ -71,13 +71,44 @@
     }
     return groups.map(group=>group.join('+')).join(' → ');
   }
+  // Rules name their sensor by id; the list shows the name the source registry gives it.
+  const sourceName=id=>sources.find(s=>s.source_id===id)?.display_name||id;
+  function triggerSummary(t) {
+    if(t.type==='vision')return t.object;
+    if(t.type==='sensor_event')return sourceName(t.source_id)+' '+({rising:'active',falling:'idle',any:'changes'})[t.edge||'rising'];
+    if(t.type==='threshold')return sourceName(t.source_id)+(t.above!=null?' > '+t.above:' < '+t.below);
+    return t.type.replace('_',' ');
+  }
+  // Only the fields of the chosen trigger take part in the form: the others are disabled,
+  // so a hidden required field can never block saving.
+  function showTrigger() {
+    const type=$('rule-trigger').value,sensor=type==='sensor_event'||type==='threshold';
+    $('trigger-vision').hidden=$('trigger-vision').disabled=type!=='vision';
+    $('trigger-sensor').hidden=$('trigger-sensor').disabled=!sensor;
+    $('trigger-kept').hidden=type!=='kept';
+    for(const box of $('trigger-sensor').querySelectorAll('[data-trigger]')){
+      box.hidden=box.dataset.trigger!==type;
+      for(const control of box.querySelectorAll('input,select'))control.disabled=box.hidden;
+    }
+    if(sensor&&!$('rule-kind').value)$('rule-kind').value=type==='threshold'?'climate.temperature':'sensor.motion';
+    $('trigger-help').textContent=sensors().length?'Sensors come from satellites. A reading of doubtful quality never sets a rule off, and a state that was already there when Sentry started is not news.'
+      :'No satellite sensor is known yet. Add one on the Satellites page; a rule can name it once the node has reported it.';
+  }
+  const sensors=()=>sources.filter(s=>s.kind==='sensor');
+  function fillSources(selected) {
+    const entries=sensors().map(s=>[s.source_id,s.display_name+(s.zone?' · '+s.zone:'')+(s.state!=='ready'?' · '+s.state:'')]);
+    if(selected&&!entries.some(([id])=>id===selected))entries.unshift([selected,'Missing sensor: '+selected]);
+    if(!entries.length)entries.push(['','No sensors yet']);
+    options($('rule-source'),entries,selected||entries[0][0]);
+  }
+  $('rule-trigger').addEventListener('change',showTrigger);
   function renderRules() {
     $('rules').replaceChildren();
     config.rules.forEach((rule, index) => {
       const row=document.createElement('button');row.type='button';row.className='rule'+(index===editing?' editing':'');const text=document.createElement('span');
       if(index===editing)row.setAttribute('aria-current','true');
       const title=document.createElement('strong');title.textContent=rule.name;
-      const detail=document.createElement('small');detail.textContent=(rule.enabled?'Enabled':'Disabled')+' · '+rule.object+' · '+sequence(rule.actions);
+      const detail=document.createElement('small');detail.textContent=(rule.enabled?'Enabled':'Disabled')+' · '+triggerSummary(rule.trigger)+' · '+sequence(rule.actions);
       text.append(title,detail);row.append(text);
       row.addEventListener('click',()=>{if(index===editing)return;if(dirty.has('rule'))return ruleMessage('Save the current rule or reset the editor first.','error');loadRule(index);});$('rules').append(row);
     });locks();
@@ -257,18 +288,24 @@
   async function testAction(action,button) {
     if(!$('rule-form').reportValidity())return;
     button.disabled=true;message('Testing this step on the node…');
-    try{message((await api('sentry/rules/test',{...collectRule(),actions:[{...action,with_previous:false}]},true)).message,'success');}
+    try{message((await api('sentry/v2/rules/test',{...collectRule(),actions:[{...action,with_previous:false}]},true)).message,'success');}
     catch(error){message(error.message,'error');}
     finally{button.disabled=false;}
   }
   function loadRule(index) {
-    editing=index;const r=config.rules[index]||{name:'',enabled:true,object:'person',min_confidence:.7,min_count:1,consecutive_detections:3,rearm_after_absence_seconds:10,cooldown_seconds:60,region:null,actions:[{type:'tts',text:'Hello. Please wait here.',voice:'en',rate:175,effects:{preset:'natural',pitch:0,volume:60}}]};
+    editing=index;const r=config.rules[index]||{id:'',name:'',enabled:true,trigger:{type:'vision',object:'person'},cooldown_seconds:60,actions:[{type:'tts',text:'Hello. Please wait here.',voice:'en',rate:175,effects:{preset:'natural',pitch:0,volume:60}}]};
+    const t=r.trigger,v=t.type==='vision'?t:{},sensor=t.type==='sensor_event'||t.type==='threshold'?t:{};
     // The rule library already highlights the rule being edited, so the heading only
     // appears for a new rule, which is highlighted nowhere.
     $('rule-heading').textContent=index<0?'New rule':'Edit rule · '+r.name;$('rule-heading').hidden=index>=0;
-    for(const [id,value] of Object.entries({'rule-name':r.name,'rule-object':r.object,'rule-confidence':r.min_confidence*100,'rule-count':r.min_count,'rule-hits':r.consecutive_detections,'rule-absence':r.rearm_after_absence_seconds,'rule-cooldown':r.cooldown_seconds}))$(id).value=value;
-    $('rule-enabled').checked=r.enabled;$('use-region').checked=!!r.region;
-    ['left','top','right','bottom'].forEach((side,i)=>$('region-'+side).value=(r.region||[0,0,1,1])[i]*100);
+    for(const [id,value] of Object.entries({'rule-name':r.name,'rule-object':v.object??'person','rule-confidence':(v.min_confidence??.7)*100,'rule-count':v.min_count??1,'rule-hits':v.consecutive_detections??3,'rule-absence':v.rearm_after_absence_seconds??10,'rule-cooldown':r.cooldown_seconds??60,
+      'rule-kind':sensor.kind??'','rule-edge':sensor.edge??'rising','rule-limit':sensor.below!=null?'below':'above','rule-value':sensor.above??sensor.below??'','rule-hysteresis':sensor.hysteresis??0,'rule-for':sensor.for_seconds??0}))$(id).value=value;
+    $('rule-enabled').checked=r.enabled;$('use-region').checked=!!v.region;
+    ['left','top','right','bottom'].forEach((side,i)=>$('region-'+side).value=(v.region||[0,0,1,1])[i]*100);
+    const editable=['vision','sensor_event','threshold'].includes(t.type);
+    $('rule-trigger').querySelector('[value=kept]').hidden=editable;
+    $('rule-trigger').value=editable?t.type:'kept';
+    fillSources(sensor.source_id);showTrigger();
     setSteps(r.actions);
     ruleMessage('');dirty.delete('rule');showRegion();renderRules();
   }
@@ -366,13 +403,32 @@
   function collectRule() {
     const actions=steps().map(readStep);
     if(actions.length)actions[0].with_previous=false;
-    return {name:$('rule-name').value.trim(),enabled:$('rule-enabled').checked,object:$('rule-object').value.trim().toLowerCase(),min_confidence:num('rule-confidence')/100,min_count:num('rule-count'),consecutive_detections:num('rule-hits'),rearm_after_absence_seconds:num('rule-absence'),cooldown_seconds:num('rule-cooldown'),region:$('use-region').checked?['left','top','right','bottom'].map(s=>num('region-'+s)/100):null,actions};
+    const name=$('rule-name').value.trim();
+    return {id:ruleId(name),name,enabled:$('rule-enabled').checked,trigger:collectTrigger(),cooldown_seconds:num('rule-cooldown'),actions};
+  }
+  function collectTrigger() {
+    const type=$('rule-trigger').value,saved=config.rules[editing]?.trigger;
+    if(type==='kept')return saved;
+    if(type==='vision')return {type,source_id:saved?.type==='vision'?saved.source_id:'legacy-primary',object:$('rule-object').value.trim().toLowerCase(),min_confidence:num('rule-confidence')/100,min_count:num('rule-count'),consecutive_detections:num('rule-hits'),rearm_after_absence_seconds:num('rule-absence'),region:$('use-region').checked?['left','top','right','bottom'].map(s=>num('region-'+s)/100):null};
+    const common={type,source_id:$('rule-source').value,kind:$('rule-kind').value.trim()};
+    if(type==='sensor_event')return {...common,edge:$('rule-edge').value};
+    const limit={above:null,below:null};limit[$('rule-limit').value]=num('rule-value');
+    return {...common,...limit,hysteresis:num('rule-hysteresis'),for_seconds:num('rule-for')};
+  }
+  // A rule keeps the id it was saved with; a new one takes one made from its name that no
+  // other rule has, so renaming never changes what the rest of the system calls it.
+  function ruleId(name) {
+    const kept=config.rules[editing]?.id;if(kept)return kept;
+    const base=(name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,56).replace(/-+$/,''))||'rule';
+    const taken=new Set(config.rules.map(r=>r.id));
+    let id=base,n=2;while(taken.has(id))id=base+'-'+n++;
+    return id;
   }
   async function save(next, section, clearTelegramToken = false) {
     if(busy)return false;busy=true;locks();message('Saving…');
     next.test_mode=$('test-mode').checked;next.detection_fps=num('detection-fps');
     try {
-      const data=await api('sentry/config',{config:next,revision,clear_telegram_token:clearTelegramToken},true);config=data.config;revision=data.revision;
+      const data=await api('sentry/v2/config',{config:next,revision,clear_telegram_token:clearTelegramToken},true);config=data.config;revision=data.revision;sources=data.sources;
       if(section==='Telegram')loadTelegram(data.telegram_token_configured);
       dirty.delete(section);dirty.delete('settings');renderRules();message('Saved.','success');return true;
     }catch(error){message(error.message,'error');return false;}
@@ -412,7 +468,7 @@
     if(rule.actions.some(a=>a.type==='ssh'||a.type==='telegram')
       &&!armButton($('test-rule'))){ruleMessage('This runs the actions for real, including SSH commands and Telegram messages. Click again to run.','error');return;}
     $('test-rule').disabled=true;ruleMessage('Testing this rule on the node…');
-    try{ruleMessage((await api('sentry/rules/test',rule,true)).message,'success');}
+    try{ruleMessage((await api('sentry/v2/rules/test',rule,true)).message,'success');}
     catch(error){ruleMessage(error.message,'error');}
     finally{$('test-rule').disabled=false;}
   });
@@ -478,7 +534,7 @@
     $('captures-list').replaceChildren(...cards);$('captures-result').textContent='';
   }
   document.querySelector('.app-views a[href="/sentry#captures"]').addEventListener('click',loadCaptures);
-  async function init(){try{const data=await api('sentry/config');config=data.config;revision=data.revision;
+  async function init(){try{const data=await api('sentry/v2/config');config=data.config;revision=data.revision;sources=data.sources;
     $('test-mode').checked=config.test_mode;$('detection-fps').value=config.detection_fps;
     loadTelegram(data.telegram_token_configured);
     objects=data.objects;options($('rule-objects'),objects.map(x=>[x,x]));refreshCommands();renderRules();loadRule(config.rules.length?0:-1);loadCommand('');await Promise.all([loadVoices(),loadSoundboard(),loadSounds(),loadCaptures(),poll()]);message(data.error||'',data.error?'error':'');

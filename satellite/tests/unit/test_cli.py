@@ -52,14 +52,14 @@ def test_validate_accepts_a_node_it_could_run(installation, capsys, tmp_path):
 
 
 def test_validate_says_which_driver_does_not_exist_yet(installation, capsys, tmp_path):
-    installation.write_text(installation.read_text().replace('kind = "dummy"', 'kind = "gpio"'))
+    installation.write_text(installation.read_text().replace('kind = "dummy"', 'kind = "ble"'))
     assert (
         cli.main(
             ["--config", str(installation), "--identity", str(tmp_path / "id.json"), "validate"]
         )
         == 1
     )
-    assert "PR-06" in capsys.readouterr().err
+    assert "PR-12" in capsys.readouterr().err
 
 
 def test_validate_refuses_a_file_it_cannot_use(tmp_path, capsys):
@@ -103,3 +103,24 @@ def test_running_a_node_that_is_not_this_node_is_refused(installation, tmp_path,
     cli.main(["--identity", str(path), "identity", "--create", "zero-garage"])
     assert cli.main(["--config", str(installation), "--identity", str(path), "run"]) == 2
     assert "provisioned as zero-garage" in capsys.readouterr().err
+
+
+def test_doctor_says_whether_each_bus_is_there(tmp_path, monkeypatch):
+    from sentry_satellite import config as configuration
+
+    node = tmp_path / "node.toml"
+    node.write_text(
+        '[node]\nid = "zero-entrance"\nprofile = "sensor-presence"\n'
+        '[hub]\nmqtt_host = "192.168.11.10"\n'
+        '[tls]\nca_file = "a"\ncert_file = "b"\nkey_file = "c"\n'
+        '[[sources]]\nid = "t"\nkind = "bme280"\nbus = 7\nmeasure = "temperature"\n'
+        '[[sources]]\nid = "probe"\nkind = "onewire"\ndevice = "28-0123456789ab"\n'
+        '[[sources]]\nid = "off"\nkind = "adc"\nbus = 9\nchannel = 0\nenabled = false\n'
+    )
+    monkeypatch.setattr(cli, "DEVICES", tmp_path)
+    (tmp_path / "28-0123456789ab").mkdir()
+    loaded = configuration.load(node, identity_file=tmp_path / "missing.json")
+    found = dict(cli._buses(loaded))
+    assert found["1-wire 28-0123456789ab"].endswith("ready")
+    assert found["i2c-7"].startswith("/dev/i2c-7 missing")
+    assert "i2c-9" not in found and "libgpiod" not in found
