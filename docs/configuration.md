@@ -47,6 +47,9 @@ SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
   inference rate.
 - `sentry` — initial rules, `detection_fps`, `test_mode`, `action_ttl_seconds`, SSH commands
   and Telegram settings. Used only until the editor writes its own state file.
+- `satellites` — `enabled` (off by default), `journal_file`, `fault_policy` (`isolated` or
+  `global`). With this off the node behaves exactly as it did before there were
+  satellites, and needs none of the optional dependencies.
 - `logging` — level (`DEBUG` … `CRITICAL`).
 - `web_frame_origins` — up to 16 exact HTTP(S) origins allowed to embed the app, without
   paths; empty blocks embedding.

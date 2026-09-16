@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "event": {
+    "event_id": "a7f3d915-6b08-4c27-91de-3e5b8c04a2f6",
+    "node_id": "zero-entrance",
+    "source_id": "presence",
+    "boot_id": "e1440b73-92af-4d58-8b06-c271f5a93d84",
+    "sequence": 0,
+    "kind": "presence.state",
+    "occurred_at": "2026-09-16T20:59:31Z",
+    "clock_status": "unsynced",
+    "value": "occupied",
+    "unit": null,
+    "quality": "unknown"
+  },
+  "delivery": {
+    "connection_id": "3c5f9a20-7e14-4b6d-a83c-f9021d47e5b8",
+    "hub_epoch": 8,
+    "grant_id": null,
+    "queued_ms": 48211,
+    "replayed": true,
+    "initial_state": true
+  }
+}

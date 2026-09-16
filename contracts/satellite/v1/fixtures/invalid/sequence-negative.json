@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "event": {
+    "event_id": "0f6c4a1e-9a5b-4c2d-8e11-5b7c9d0a1f23",
+    "node_id": "zero-entrance",
+    "source_id": "pir-1",
+    "boot_id": "2c9a7f38-16d4-4b9e-9a0c-77f0b2d5e611",
+    "sequence": -1,
+    "kind": "sensor.motion",
+    "occurred_at": "2026-09-16T21:04:07.512000Z",
+    "clock_status": "synced",
+    "value": true,
+    "quality": "valid"
+  },
+  "delivery": {
+    "connection_id": "9b1d6e44-0f27-4a83-8c55-1d3e7a9042bb",
+    "hub_epoch": 7,
+    "replayed": false,
+    "initial_state": false
+  }
+}

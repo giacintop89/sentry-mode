@@ -55,6 +55,11 @@
     "node": {
       "name": "str"
     },
+    "satellites": {
+      "enabled": "bool",
+      "fault_policy": "str",
+      "journal_file": "str"
+    },
     "sentry": {
       "action_ttl_seconds": "int",
       "detection_fps": "float",

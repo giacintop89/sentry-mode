@@ -10,6 +10,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from sentry_mode.satellites.config import SatellitesConfig
 from sentry_mode.sentry.config import SentryConfig
 
 
@@ -102,6 +103,7 @@ class Settings(BaseSettings):
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     sentry: SentryConfig = Field(default_factory=SentryConfig)
+    satellites: SatellitesConfig = Field(default_factory=SatellitesConfig)
     sentry_state_file: Path = Path(".local/sentry.json")
     soundboard_file: Path = Path(".local/soundboard.json")
     soundboard_directory: Path = Path(".local/soundboard")

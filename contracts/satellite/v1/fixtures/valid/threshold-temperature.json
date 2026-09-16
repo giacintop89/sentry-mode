@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "event": {
+    "event_id": "5e2b8c70-3d41-4f6a-b2c8-0a9e4d1f7c35",
+    "node_id": "zero-garage",
+    "source_id": "temperature",
+    "boot_id": "2c9a7f38-16d4-4b9e-9a0c-77f0b2d5e611",
+    "sequence": 1288,
+    "kind": "threshold.temperature",
+    "occurred_at": "2026-09-16T21:05:00+02:00",
+    "clock_status": "synced",
+    "value": 4.5,
+    "unit": "C",
+    "quality": "degraded"
+  },
+  "delivery": {
+    "connection_id": "9b1d6e44-0f27-4a83-8c55-1d3e7a9042bb",
+    "hub_epoch": 7,
+    "grant_id": "74a0c1b9-5f83-4e2a-9d16-6c8b0e3f2a47",
+    "queued_ms": 12,
+    "replayed": false,
+    "initial_state": false
+  }
+}

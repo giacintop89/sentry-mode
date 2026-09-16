@@ -1,0 +1,194 @@
+{
+  "$defs": {
+    "ClockStatus": {
+      "description": "Whether the timestamp on a reading came from a clock that knows the time.",
+      "enum": [
+        "synced",
+        "unsynced",
+        "unknown"
+      ],
+      "title": "ClockStatus",
+      "type": "string"
+    },
+    "Delivery": {
+      "additionalProperties": false,
+      "description": "How this copy of the event reached the hub, which is not part of what happened.\n\nA replayed event and a fresh one describe the same moment; only these fields differ,\nwhich is what lets the hub tell them apart without rewriting the event itself.",
+      "properties": {
+        "connection_id": {
+          "format": "uuid",
+          "title": "Connection Id",
+          "type": "string"
+        },
+        "hub_epoch": {
+          "minimum": 0,
+          "title": "Hub Epoch",
+          "type": "integer"
+        },
+        "grant_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grant Id"
+        },
+        "queued_ms": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Queued Ms",
+          "type": "integer"
+        },
+        "replayed": {
+          "default": false,
+          "title": "Replayed",
+          "type": "boolean"
+        },
+        "initial_state": {
+          "default": false,
+          "title": "Initial State",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "connection_id",
+        "hub_epoch"
+      ],
+      "title": "Delivery",
+      "type": "object"
+    },
+    "Quality": {
+      "description": "How much a single reading can be trusted.",
+      "enum": [
+        "valid",
+        "degraded",
+        "unavailable",
+        "unknown"
+      ],
+      "title": "Quality",
+      "type": "string"
+    },
+    "SatelliteEvent": {
+      "additionalProperties": false,
+      "description": "One reading from one source, as the satellite that took it describes it.\n\n`source_id` is the name the source has on its own node; the hub joins it to `node_id`\nto get the identifier it uses everywhere else. The satellite never has to know that\nidentifier, and cannot claim a source on another node.",
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "node_id": {
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "source_id": {
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "boot_id": {
+          "format": "uuid",
+          "title": "Boot Id",
+          "type": "string"
+        },
+        "sequence": {
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "kind": {
+          "pattern": "^[a-z][a-z0-9]*\\.[a-z][a-z0-9_]*$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "clock_status": {
+          "$ref": "#/$defs/ClockStatus",
+          "default": "unknown"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "maxLength": 16,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "quality": {
+          "$ref": "#/$defs/Quality",
+          "default": "valid"
+        }
+      },
+      "required": [
+        "event_id",
+        "node_id",
+        "source_id",
+        "boot_id",
+        "sequence",
+        "kind",
+        "occurred_at"
+      ],
+      "title": "SatelliteEvent",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What is actually published: a version, an event, and how it got here.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "event": {
+      "$ref": "#/$defs/SatelliteEvent"
+    },
+    "delivery": {
+      "$ref": "#/$defs/Delivery"
+    }
+  },
+  "required": [
+    "event",
+    "delivery"
+  ],
+  "title": "Satellite event envelope, version 1",
+  "type": "object",
+  "$id": "https://sentry-mode.invalid/contracts/satellite/v1/event.schema.json"
+}
