@@ -369,13 +369,11 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
 
 /* The mark belongs to the HUD frame, not to a row under the buttons: on a narrow screen
    it moves above them, with a rotated copy closing the frame on the left. */
-.connection-frame{display:flex;align-items:center;margin-left:auto}
-.connection-frame .connection-status{margin-left:0}
-.app-views .connection-mirror{display:none;transform:rotate(180deg)}
+.app-views .connection-mirror{display:block;transform:rotate(180deg)}
+/* The mark and its mirrored copy take the row above the views on a phone, one at each end. */
 @media(max-width:700px){
-  .app-views .connection-frame{order:-1;width:100%;margin:0 0 4px;justify-content:space-between}
-  .app-views .connection-frame .connection-status{width:auto;margin-top:0}
-  .app-views .connection-mirror{display:block}
+  .app-views .connection-mirror{order:-1;flex:1 1 calc(50% - 6px);min-width:0;margin-bottom:4px}
+  .app-views .connection-status{order:-1;flex:1 1 calc(50% - 6px);min-width:0;width:auto;margin:0 0 4px;justify-content:flex-end}
 }
 
 /* The workspace tabs stay on one line: folded into a grid they read as two separate rows
@@ -388,13 +386,16 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
   .workspace-tabs button{padding:11px 3px;font-size:13.667px}
 }
 
-/* A wide screen has room to spare on either side of the views: the run sits in the middle
-   of its row, the mark closes it on the right and the mirrored copy answers on the left. */
-@media(min-width:1101px){
-  /* The side room the marks occupy is kept clear, so a warning joining the row wraps
-     under the views instead of running into them. */
-  .app-views{position:relative;justify-content:center;padding-inline:calc(clamp(120px,17vw,212px) - 12px)}
-  .app-views .connection-frame{position:absolute;inset:0;margin:0;justify-content:space-between;pointer-events:none}
-  .app-views .connection-frame .connection-status{pointer-events:auto}
-  .app-views .connection-mirror{display:block}
+/* The views sit in the middle of their row, closed by the mark on the right and by its
+   mirrored copy on the left. Both ends share what the views leave over, so they keep the
+   run centred at any width and shrink together instead of crowding it. */
+@media(min-width:701px){
+  .app-views{justify-content:center}
+  .app-views .connection-mirror,.app-views .connection-status{flex:1 1 0;min-width:0;max-width:212px}
+  .app-views .connection-mirror{order:-1;width:auto;margin-right:auto}
+  .app-views .connection-status{margin-left:auto}
+  .app-views .connection-status .connection-mark{width:100%}
+  /* A warning is not one of the views: it takes the line under them rather than
+     pushing the run off centre. */
+  .app-views #save-help{order:1;flex-basis:100%;max-width:none;margin:0;text-align:center}
 }

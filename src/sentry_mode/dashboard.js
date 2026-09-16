@@ -100,12 +100,9 @@
   // decorative, so it is cloned here instead of being repeated in every page's markup.
   const status = document.querySelector('.connection-status');
   if (status) {
-    const frame = document.createElement('span');
-    frame.className = 'connection-frame';
-    status.replaceWith(frame);
     const mirror = status.querySelector('.connection-mark').cloneNode(true);
     mirror.classList.add('connection-mirror');
-    frame.append(mirror, status);
+    status.parentElement.prepend(mirror);
   }
   async function get(path) {
     const response = await fetch(path, {signal: AbortSignal.timeout(5000)});
