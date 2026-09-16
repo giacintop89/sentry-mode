@@ -52,7 +52,12 @@ SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
   With this off the node behaves exactly as it did before there were satellites, and
   needs none of the optional dependencies. `mqtt.host` is the address the satellites
   use, never a loopback address, and it is the address the hub certificate has to be
-  valid for. See [satellites](satellites.md).
+  valid for. `limits` sets each node's event budget (`events_per_minute`) apart from
+  everyone's (`total_events_per_minute`), how old an event may be and still count as
+  news (`accept_within_seconds`, at most a day), how far ahead a satellite's clock may
+  be (`future_tolerance_seconds`), the depth of the queue towards the rules, and how
+  long history (`journal_days`) and duplicate protection (`dedup_days`) are kept.
+  See [satellites](satellites.md).
 - `logging` — level (`DEBUG` … `CRITICAL`).
 - `web_frame_origins` — up to 16 exact HTTP(S) origins allowed to embed the app, without
   paths; empty blocks embedding.

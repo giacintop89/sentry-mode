@@ -10,19 +10,24 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
 from sentry_mode.satellites.config import SatellitesConfig
+from sentry_mode.satellites.health import HealthBoard
 from sentry_mode.satellites.identity import (
     NodeRegistry,
     NotApproved,
     UnknownNode,
     WrongCertificate,
 )
+from sentry_mode.satellites.ingress import EventIngress, NormalizedEvent, RateLimiter
 from sentry_mode.satellites.mqtt import HubTransport, Message, TransportError, new_client_id
 from sentry_mode.satellites.sessions import BrokerState, Freshness, SessionManager
+from sentry_mode.satellites.store import Store, StoreUnavailable
 from sentry_mode.sources.models import SourceKind, SourceRecord, SourceRef, SourceState
 from sentry_mode.sources.registry import SourceRegistry
 
@@ -67,7 +72,8 @@ class SatelliteService:
         sources: SourceRegistry,
         nodes: NodeRegistry | None = None,
         transport: HubTransport | None = None,
-        on_event: Callable[[str, dict, Message], None] | None = None,
+        store: Store | None = None,
+        on_event: Callable[[NormalizedEvent], None] | None = None,
     ) -> None:
         self.config = config
         self.sources = sources
@@ -76,6 +82,20 @@ class SatelliteService:
             health=config.health, sessions=config.sessions, next_epoch=self.nodes.next_epoch
         )
         self.counters = Counters()
+        self.health = HealthBoard()
+        self.store = store or Store(config.store_path)
+        self.ingress = EventIngress(
+            store=self.store,
+            sources=sources,
+            limits=config.limits,
+            zone_of=self._zone_of,
+        )
+        self._limiter = RateLimiter(config.limits)
+        self._queue: queue.Queue[NormalizedEvent] = queue.Queue(maxsize=config.limits.queue_depth)
+        self._dispatcher: threading.Thread | None = None
+        self._keeper: threading.Thread | None = None
+        self._stopping = threading.Event()
+        self._running = threading.Event()
         self._on_event = on_event
         self._lock = threading.RLock()
         self._transport = transport or HubTransport(
@@ -92,6 +112,17 @@ class SatelliteService:
         if not self.config.enabled:
             log.debug("satellites are switched off")
             return
+        self._open_journal()
+        self._running.set()
+        self._dispatcher = threading.Thread(
+            target=self._dispatch, name="satellite-events", daemon=True
+        )
+        self._dispatcher.start()
+        self._stopping.clear()
+        self._keeper = threading.Thread(
+            target=self._housekeeping, name="satellite-housekeeping", daemon=True
+        )
+        self._keeper.start()
         try:
             self._transport.start()
         except TransportError as error:
@@ -99,11 +130,49 @@ class SatelliteService:
             log.error("the satellite link could not be started: %s", error)
             raise
 
+    def _open_journal(self) -> None:
+        """Open the journal, or carry on without it and say so where it can be seen.
+
+        A hub whose disk is full or whose journal is damaged keeps its own cameras and
+        rules; what it stops doing is admitting events it cannot write down, because
+        acknowledging one would be claiming to have kept it.
+        """
+        try:
+            self.store.open()
+        except StoreUnavailable as error:
+            log.error("the satellite journal is unusable: %s", error)
+        self.health.journal(self.store.status())
+
     def stop(self) -> None:
         for record in self.nodes.of_status("approved"):
             self._command(record.node_id, {"action": "revoke", "capability": "events"})
         self._transport.stop()
         self.sessions.broker_stopped()
+        self._running.clear()
+        self._stopping.set()
+        for worker in (self._dispatcher, self._keeper):
+            if worker is not None:
+                worker.join(timeout=5)
+        self._dispatcher = self._keeper = None
+        self.store.close()
+
+    def _dispatch(self) -> None:
+        """Hand eligible events to whoever acts on them, off the network thread.
+
+        The link and the journal must not wait on a rule engine, and a rule engine must not
+        be handed events straight from a broker callback, so there is a queue between them
+        with a bottom to it.
+        """
+        while self._running.is_set():
+            try:
+                event = self._queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                if self._on_event is not None:
+                    self._on_event(event)
+            except Exception:  # noqa: BLE001 - one bad rule must not stop the queue
+                log.exception("an event from %s could not be delivered", event.node_id)
 
     def _link_up(self) -> None:
         self.sessions.broker_connected()
@@ -127,6 +196,7 @@ class SatelliteService:
         self.sessions.close(node_id, reason="revoked")
         self._command(node_id, {"action": "revoke", "capability": "events"})
         self._transport.clear_retained_state(node_id)
+        self.health.forget(node_id)
         for record in self.sources.all():
             if record.ref.node == node_id:
                 self.sources.set_state(record.ref, SourceState.DISABLED)
@@ -137,21 +207,52 @@ class SatelliteService:
     # -- messages ----------------------------------------------------------------
 
     def handle(self, message: Message) -> None:
-        """Everything that arrives from a satellite comes through here."""
+        """Everything that arrives from a satellite comes through here.
+
+        The cheap refusals come first, in the order of what they cost: who is speaking,
+        how often they are speaking, how big the message is, and only then what it says.
+        """
         handler = {
             "state": self._on_state,
             "health": self._on_health,
             "acks": self._on_ack,
             "events": self._on_events,
         }[message.channel]
+        if not self._authenticated(message.node_id):
+            self._settle(message)
+            return
+        if message.channel == "events":
+            budget = self._limiter.allow(message.node_id)
+            if budget is not None:
+                self._refuse(message.node_id, "rate_limited")
+                log.warning("%s is over the %s event budget", message.node_id, budget)
+                # Settled deliberately: telling the broker to keep sending a message the
+                # hub is refusing on purpose would make the flood worse.
+                self._settle(message)
+                return
         document = self._decode(message)
         if document is None:
+            self._settle(message)
             return
         handler(message, document)
 
+    def _settle(self, message: Message) -> None:
+        try:
+            self._transport.settle(message)
+        except Exception:  # noqa: BLE001 - the link owns its own failures
+            log.exception("a message from %s could not be acknowledged", message.node_id)
+
+    def _refuse(self, node_id: str, reason: str) -> None:
+        self.counters.refuse(reason)
+        self.health.refused(node_id, reason)
+
+    def _zone_of(self, node_id: str) -> str | None:
+        record = self.nodes.get(node_id)
+        return record.zone if record is not None else None
+
     def _decode(self, message: Message) -> dict | None:
         if len(message.payload) > self.config.limits.event_max_bytes:
-            self.counters.refuse("too_big")
+            self._refuse(message.node_id, "too_big")
             log.warning("a message from %s was too big to parse", message.node_id)
             return None
         if not message.payload:
@@ -159,19 +260,25 @@ class SatelliteService:
         try:
             document = json.loads(message.payload)
         except ValueError:
-            self.counters.refuse("not_json")
+            self._refuse(message.node_id, "not_json")
             return None
         if not isinstance(document, dict):
-            self.counters.refuse("not_an_object")
+            self._refuse(message.node_id, "not_an_object")
             return None
         claimed = document.get("node_id")
         if claimed is not None and claimed != message.node_id:
-            self.counters.refuse("identity_mismatch")
+            self._refuse(message.node_id, "identity_mismatch")
             log.warning("a message on %s claims to be from %s", message.topic, claimed)
             return None
         return document
 
     def _authenticated(self, node_id: str) -> bool:
+        """Counted in the total only: a name nobody approved does not get a health entry.
+
+        The broker's access control is what keeps a stranger off these topics at all, and a
+        name that gets past it anyway must not be able to make the hub keep a record per
+        name it invents.
+        """
         try:
             self.nodes.authenticate(node_id=node_id)
         except UnknownNode:
@@ -186,15 +293,13 @@ class SatelliteService:
 
     def _on_state(self, message: Message, document: dict) -> None:
         """A node saying what it is. This is where a session begins and ends."""
-        if not self._authenticated(message.node_id):
-            return
         connection_id = document.get("connection_id")
         online = bool(document.get("online"))
         if not online:
             if self.sessions.close(message.node_id, connection_id=connection_id, reason="said so"):
                 log.info("%s went offline", message.node_id)
             else:
-                self.counters.refuse("stale_goodbye")
+                self._refuse(message.node_id, "stale_goodbye")
             return
         session = self.sessions.open(
             message.node_id,
@@ -225,12 +330,12 @@ class SatelliteService:
             source_id = entry.get("source_id")
             kind = KINDS.get(entry.get("kind", ""))
             if not isinstance(source_id, str) or kind is None:
-                self.counters.refuse("unknown_source_kind")
+                self._refuse(node_id, "unknown_source_kind")
                 continue
             try:
                 ref = SourceRef(node=node_id, name=source_id)
             except ValueError:
-                self.counters.refuse("bad_source_id")
+                self._refuse(node_id, "bad_source_id")
                 continue
             existing = self.sources.get(ref)
             if existing is not None:
@@ -248,16 +353,14 @@ class SatelliteService:
             )
 
     def _on_health(self, message: Message, document: dict) -> None:
-        if not self._authenticated(message.node_id):
-            return
+        """A heartbeat replaces the one before it. None of them reaches the journal."""
+        self.health.heartbeat(message.node_id, document)
         try:
             self.sessions.heartbeat(message.node_id)
         except Exception:  # noqa: BLE001 - a heartbeat without a session is not an error
-            self.counters.refuse("heartbeat_without_session")
+            self._refuse(message.node_id, "heartbeat_without_session")
 
     def _on_ack(self, message: Message, document: dict) -> None:
-        if not self._authenticated(message.node_id):
-            return
         log.debug(
             "%s answered %s with %s",
             message.node_id,
@@ -266,49 +369,56 @@ class SatelliteService:
         )
 
     def _on_events(self, message: Message, document: dict) -> None:
-        """An event, checked for who sent it and whether they may. What it means is later.
+        """An event: who sent it, whether they may, what it is, and then the journal.
 
-        Validating the envelope, journalling it and deduplicating it is the next increment.
-        What happens here is the part that cannot be deferred: an event from a node that is
-        not approved, not connected, or holding no current grant never gets that far.
+        The order matters. The checks here are about the sender and cost nothing, so they
+        come before the envelope is validated; the journal is written before the message is
+        acknowledged; and the rule engine hears about it last, through a queue, so that
+        neither the link nor the writer waits on it.
         """
-        if not self._authenticated(message.node_id):
-            return
-        event = document.get("event")
         delivery = document.get("delivery")
-        if not isinstance(event, dict) or not isinstance(delivery, dict):
-            self.counters.refuse("not_an_envelope")
-            return
-        if event.get("node_id") != message.node_id:
-            self.counters.refuse("identity_mismatch")
+        if not isinstance(document.get("event"), dict) or not isinstance(delivery, dict):
+            self._refuse(message.node_id, "not_an_envelope")
+            self._settle(message)
             return
         connection_id = delivery.get("connection_id")
         if not isinstance(connection_id, str) or not self.sessions.is_current(
             message.node_id, connection_id=connection_id, hub_epoch=delivery.get("hub_epoch")
         ):
-            self.counters.refuse("old_connection")
+            self._refuse(message.node_id, "old_connection")
+            self._settle(message)
             return
         grant_id = delivery.get("grant_id")
         if not isinstance(grant_id, str) or not self.sessions.grant_is_current(
             message.node_id, grant_id
         ):
-            self.counters.refuse("no_grant")
+            self._refuse(message.node_id, "no_grant")
+            self._settle(message)
             return
-        source_id = event.get("source_id")
-        if not isinstance(source_id, str):
-            self.counters.refuse("unregistered_source")
-            return
-        try:
-            ref = SourceRef(node=message.node_id, name=source_id)
-        except ValueError:
-            self.counters.refuse("bad_source_id")
-            return
-        if ref.id not in self.sources:
-            self.counters.refuse("unregistered_source")
+        receipt = self.ingress.accept(message.node_id, document, retained=message.retained)
+        if receipt.settle:
+            self._settle(message)
+        else:
+            # Nothing was written, so nothing is acknowledged and the node keeps its copy.
+            self.health.journal(self.store.status())
+        if receipt.reason is not None:
+            self._refuse(message.node_id, receipt.reason)
             return
         self.counters.accepted += 1
-        if self._on_event is not None:
-            self._on_event(message.node_id, document, message)
+        self.health.accepted(message.node_id)
+        if receipt.event is None:
+            return
+        try:
+            self._queue.put_nowait(receipt.event)
+        except queue.Full:
+            # A full queue is an outcome, not an acceptance: the event stays in the journal
+            # marked as dropped rather than being counted as one the hub acted on.
+            self._refuse(message.node_id, "queue_full")
+            log.warning("the event queue is full; an event from %s was dropped", message.node_id)
+            try:
+                self.store.outcome(message.node_id, receipt.event.event_id, "dropped")
+            except StoreUnavailable:  # pragma: no cover - the write above had just worked
+                pass
 
     # -- outward -----------------------------------------------------------------
 
@@ -324,8 +434,39 @@ class SatelliteService:
             node_id, json.dumps(body, separators=(",", ":")).encode("utf-8")
         )
 
+    def _housekeeping(self, *, every: float = 5.0) -> None:
+        """Renew grants before they lapse, and trim the journal now and then.
+
+        Without the renewals a node's permission to report runs out a few minutes after it
+        connects, so this is not optional tidying: it is what keeps a healthy node heard.
+        """
+        tidied_at = float("-inf")
+        while not self._stopping.wait(every):
+            try:
+                self.renew_due_grants()
+                now = time.monotonic()
+                if now - tidied_at >= 3600:
+                    tidied_at = now
+                    self.tidy()
+            except Exception:  # noqa: BLE001 - housekeeping must outlive one bad round
+                log.exception("satellite housekeeping failed")
+
+    def tidy(self) -> dict:
+        """Forget history and receipts past their retention, each by its own clock."""
+        limits = self.config.limits
+        if not self.store.available:
+            return {"events": 0, "receipts": 0}
+        removed = {
+            "events": self.store.forget_events(older_than_seconds=limits.journal_days * 86400),
+            "receipts": self.store.forget_receipts(
+                older_than_seconds=limits.dedup_days * 86400
+            ),
+        }
+        self.health.journal(self.store.status())
+        return removed
+
     def renew_due_grants(self) -> int:
-        """Renew what is close to lapsing. Called on a timer by whoever owns the loop."""
+        """Renew what is close to lapsing. The housekeeping thread calls this."""
         renewed = 0
         for grant in self.sessions.due_for_renewal():
             fresh = self.sessions.renew(grant.node_id, grant.capability)
@@ -343,6 +484,7 @@ class SatelliteService:
             "broker": sessions["broker"],
             "revision": self.nodes.revision,
             "counters": self.counters.as_dict(),
+            "journal": self.store.status(),
             "nodes": [
                 {
                     "node_id": record.node_id,
@@ -352,6 +494,7 @@ class SatelliteService:
                     "profile": record.profile,
                     "freshness": self.sessions.freshness(record.node_id).value,
                     "session": sessions["nodes"].get(record.node_id),
+                    "health": self.health.of(record.node_id),
                     "sources": [
                         {
                             "source_id": source.id,
@@ -378,4 +521,11 @@ def build(config: SatellitesConfig, sources: SourceRegistry, **extra) -> Satelli
     return SatelliteService(config, sources=sources, **extra)
 
 
-__all__ = ["BrokerState", "Counters", "Freshness", "SatelliteService", "build"]
+__all__ = [
+    "BrokerState",
+    "Counters",
+    "Freshness",
+    "NormalizedEvent",
+    "SatelliteService",
+    "build",
+]

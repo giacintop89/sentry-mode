@@ -64,8 +64,14 @@
         "stale_after_seconds": "int"
       },
       "limits": {
+        "accept_within_seconds": "int",
+        "dedup_days": "int",
         "event_max_bytes": "int",
-        "events_per_minute": "int"
+        "events_per_minute": "int",
+        "future_tolerance_seconds": "int",
+        "journal_days": "int",
+        "queue_depth": "int",
+        "total_events_per_minute": "int"
       },
       "mqtt": {
         "host": "str",

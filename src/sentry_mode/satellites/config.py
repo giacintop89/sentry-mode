@@ -44,8 +44,31 @@ class HealthConfig(Section):
 
 
 class LimitsConfig(Section):
+    """How much one node may send, how much everyone may send, and how long news keeps.
+
+    The two rates are separate on purpose: a node that has gone mad is meant to run out of
+    its own budget long before it exhausts the hub's, so the other nodes keep working.
+    """
+
     event_max_bytes: int = Field(default=8192, ge=256, le=65536)
     events_per_minute: int = Field(default=600, ge=1, le=60000)
+    total_events_per_minute: int = Field(default=3000, ge=1, le=600000)
+    queue_depth: int = Field(default=256, ge=8, le=10000)
+    accept_within_seconds: int = Field(default=300, ge=5, le=86400)
+    future_tolerance_seconds: int = Field(default=5, ge=0, le=300)
+    journal_days: int = Field(default=14, ge=1, le=3650)
+    # Receipts outlive the replay window by construction: the shortest retention is a day
+    # and the longest window is a day, so no setting can forget a receipt while its event
+    # could still arrive and be admitted twice.
+    dedup_days: int = Field(default=7, ge=1, le=3650)
+
+    @field_validator("total_events_per_minute")
+    @classmethod
+    def everyone_is_more_than_anyone(cls, value: int, info) -> int:
+        each = info.data.get("events_per_minute")
+        if each is not None and value < each:
+            raise ValueError("the budget for every node cannot be smaller than one node's")
+        return value
 
 
 class SessionsConfig(Section):

@@ -12,6 +12,7 @@ event arriving over MQTT must never be able to cause any of it.
     python scripts/satellite_admin.py register --node zero-entrance --certificate zero-entrance.crt
     python scripts/satellite_admin.py approve --node zero-entrance
     python scripts/satellite_admin.py acl --out /etc/mosquitto/sentry-acl
+    python scripts/satellite_admin.py journal --snapshot /var/backups/satellites.sqlite3
 
 Keys are elliptic curve P-256: a Zero W handles the handshake in a fraction of the time an
 RSA key of comparable strength would take, and every client here is one we issue ourselves.
@@ -29,11 +30,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from sentry_mode.satellites.identity import NodeRegistry, fingerprint  # noqa: E402
+from sentry_mode.satellites.store import Store, StoreUnavailable  # noqa: E402
 
 CA_DAYS = 3650
 LEAF_DAYS = 825
 DEFAULT_DIRECTORY = Path("/etc/sentry-mode/satellites")
 DEFAULT_NODES_FILE = Path(".local/satellite-nodes.json")
+DEFAULT_JOURNAL = Path(".local/satellites.sqlite3")
+DAY = 86400
 
 
 class Refused(RuntimeError):
@@ -329,12 +333,46 @@ def acl(arguments) -> int:
     return 0
 
 
+def journal(arguments) -> int:
+    """Look at the journal, copy it safely, or forget part of it, one thing at a time.
+
+    Forgetting history and forgetting receipts are separate on purpose. History is what a
+    person reads; receipts are what stops an old event being admitted again, and deleting
+    them inside the replay window would let a spooled event count as news a second time.
+    """
+    store = Store(arguments.journal_file)
+    try:
+        store.open()
+        if arguments.snapshot:
+            keep(arguments.snapshot, arguments.force)
+            print(f"copied the journal to {store.snapshot(arguments.snapshot)}")
+        elif arguments.forget_events_older_than is not None:
+            days = arguments.forget_events_older_than
+            removed = store.forget_events(older_than_seconds=days * DAY)
+            print(f"forgot {removed} journal entries; the receipts are kept")
+        elif arguments.forget_receipts_older_than is not None:
+            if arguments.forget_receipts_older_than < 1:
+                raise Refused("receipts younger than a day may still be protecting a replay")
+            removed = store.forget_receipts(
+                older_than_seconds=arguments.forget_receipts_older_than * DAY
+            )
+            print(f"forgot {removed} receipts")
+        else:
+            print(json.dumps(store.status(), indent=2, sort_keys=True))
+    except StoreUnavailable as error:
+        raise Refused(str(error)) from error
+    finally:
+        store.close()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--directory", type=Path, default=DEFAULT_DIRECTORY)
     parser.add_argument("--nodes-file", type=Path, default=DEFAULT_NODES_FILE)
+    parser.add_argument("--journal-file", type=Path, default=DEFAULT_JOURNAL)
     parser.add_argument(
         "--force", action="store_true", help="replace what is there, keeping a backup"
     )
@@ -380,6 +418,12 @@ def build_parser() -> argparse.ArgumentParser:
     rules = commands.add_parser("acl", help="write the broker access control list")
     rules.add_argument("--out", type=Path)
     rules.add_argument("--topic-prefix", default="sentry/v1")
+
+    kept = commands.add_parser("journal", help="inspect, copy or trim the event journal")
+    action = kept.add_mutually_exclusive_group()
+    action.add_argument("--snapshot", type=Path, help="write a consistent copy here")
+    action.add_argument("--forget-events-older-than", type=int, metavar="DAYS")
+    action.add_argument("--forget-receipts-older-than", type=int, metavar="DAYS")
     return parser
 
 
@@ -395,6 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         "revoke": revoke,
         "list": show,
         "acl": acl,
+        "journal": journal,
     }
     try:
         return handlers[arguments.command](arguments)

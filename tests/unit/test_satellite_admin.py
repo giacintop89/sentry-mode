@@ -158,3 +158,22 @@ def test_revoking_says_what_still_has_to_be_done(admin, where, tmp_path, capsys)
 def test_an_unknown_node_is_refused_rather_than_invented(admin, where, capsys):
     assert admin.main([*where, "approve", "--node", "zero-nowhere"]) == 2
     assert "refused" in capsys.readouterr().err
+
+
+def test_the_journal_can_be_read_copied_and_trimmed_one_part_at_a_time(admin, tmp_path, capsys):
+    journal = ["--journal-file", str(tmp_path / "journal.sqlite3")]
+    assert admin.main([*journal, "journal"]) == 0
+    assert json.loads(capsys.readouterr().out)["available"] is True
+    copy = tmp_path / "backup.sqlite3"
+    assert admin.main([*journal, "journal", "--snapshot", str(copy)]) == 0
+    assert copy.exists()
+    assert admin.main([*journal, "journal", "--snapshot", str(copy)]) == 2
+    assert admin.main([*journal, "journal", "--forget-events-older-than", "0"]) == 0
+    assert "receipts are kept" in capsys.readouterr().out
+
+
+def test_receipts_that_may_still_stop_a_replay_are_not_forgotten(admin, tmp_path, capsys):
+    journal = ["--journal-file", str(tmp_path / "journal.sqlite3")]
+    assert admin.main([*journal, "journal", "--forget-receipts-older-than", "0"]) == 2
+    assert "replay" in capsys.readouterr().err
+    assert admin.main([*journal, "journal", "--forget-receipts-older-than", "30"]) == 0

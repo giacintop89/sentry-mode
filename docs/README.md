@@ -50,4 +50,5 @@ Records of what was measured and what was fixed; a decision here binds the code.
 - [Naming a source](adr/satellite-identity.md) — the identifier grammar and who issues it.
 - [What runs on the board](adr/satellite-agent.md) — the agent, measured on the real Zero W.
 - [What it takes to be believed](adr/satellite-trust.md) — certificates, approval and epochs.
+- [The satellite journal](adr/satellite-journal.md) — acknowledged after commit, and what counts as news.
 - [Satellite video profile](adr/satellite-video-profile.md) — the encode and transport decision; pending.

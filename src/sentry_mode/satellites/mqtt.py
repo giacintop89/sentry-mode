@@ -30,13 +30,20 @@ class TransportError(RuntimeError):
 
 @dataclass(frozen=True)
 class Message:
-    """One message, with the identity the topic gives it already separated out."""
+    """One message, with the identity the topic gives it already separated out.
+
+    `mid` and `qos` are what the acknowledgement needs. The hub acknowledges by hand, once
+    the message is on disk, so a hub that dies between receiving an event and writing it
+    down is sent the event again rather than losing it.
+    """
 
     node_id: str
     channel: str
     payload: bytes
     retained: bool
     topic: str
+    mid: int = 0
+    qos: int = 0
 
 
 def parse_topic(topic: str, prefix: str) -> tuple[str, str] | None:
@@ -118,6 +125,8 @@ class HubTransport:
         )
         client.tls_set_context(tls_context(self._config))
         client.max_inflight_messages_set(20)
+        # Nothing is acknowledged by the library on our behalf: see `settle`.
+        client.manual_ack_set(True)
         client.on_connect = self._handle_connect
         client.on_disconnect = self._handle_disconnect
         client.on_message = self._handle_message
@@ -142,6 +151,17 @@ class HubTransport:
             client.disconnect()
         finally:
             client.loop_stop()
+
+    def settle(self, message: Message) -> bool:
+        """Tell the broker this message is dealt with, which is only true after the commit.
+
+        Until this is called the broker keeps the message and will deliver it again, which
+        is exactly what should happen to an event the hub did not manage to write down.
+        """
+        if self._client is None or message.qos == 0:
+            return False
+        self._client.ack(message.mid, message.qos)
+        return True
 
     def publish_command(self, node_id: str, command: bytes) -> bool:
         """Send a command to one node. There is no topic here that reaches all of them."""
@@ -189,6 +209,8 @@ class HubTransport:
                     payload=message.payload,
                     retained=bool(getattr(message, "retain", False)),
                     topic=message.topic,
+                    mid=int(getattr(message, "mid", 0)),
+                    qos=int(getattr(message, "qos", 0)),
                 )
             )
         except Exception:  # noqa: BLE001 - one bad message must not take the link down

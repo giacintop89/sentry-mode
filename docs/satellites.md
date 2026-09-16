@@ -108,3 +108,47 @@ the dashboard, which tells the nodes it is going before the socket closes.
 A node's own devices are in the same inventory as everything a satellite reports:
 `legacy-primary`, `legacy-microphone` and `legacy-speaker` are this board's camera,
 microphone and speaker, named without a node prefix because they are not somewhere else.
+
+## The journal
+
+Every event a satellite sends is written to `satellites.store_path`, a SQLite file, and
+only then acknowledged. If the hub dies before the write, the broker still holds the
+message and delivers it again; if it dies after, the copy that arrives next is recognised
+as a duplicate. A message the hub refuses on purpose is acknowledged too, so a malformed
+event is not sent for ever.
+
+Being in the journal does not mean being acted on. Only an event that is happening now
+reaches a rule. Everything else is kept with its reason:
+
+| Reason | What it means |
+|---|---|
+| `duplicate` | The same event again, usually a retry. |
+| `id_reused`, `sequence_reused` | A different event wearing an identifier already used. A fault on the node. |
+| `replayed` | Sent from the node's spool after a disconnection. History, not news. |
+| `retained` | A copy the broker kept, delivered to a fresh subscriber. |
+| `initial_state` | A sensor saying what it already was when it started. A baseline, not a change. |
+| `out_of_order` | Older than something already seen from that source since it booted. |
+| `expired` | Older than `limits.accept_within_seconds`. |
+| `time_uncertain` | The board's clock is not synchronised, or is ahead of the hub's. The source stays in this state until it sends a new baseline. |
+| `rate_limited` | Over the node's budget, or over everyone's. |
+| `store_unavailable` | The journal could not be written. The event is **not** acknowledged. |
+| `queue_full` | Written down, but the rules were too far behind to take it. Marked `dropped`. |
+
+Heartbeats are not written down. The latest one from each node replaces the one before
+and is shown with the node's status.
+
+If the disk is full or the file is damaged, the hub keeps running its own cameras and
+rules, reports the journal as unavailable, and stops admitting satellite events it
+cannot keep. Nothing is acknowledged that was not written.
+
+To look at the journal, copy it, or trim it:
+
+    python scripts/satellite_admin.py journal
+    python scripts/satellite_admin.py journal --snapshot /var/backups/satellites.sqlite3
+    python scripts/satellite_admin.py journal --forget-events-older-than 30
+    python scripts/satellite_admin.py journal --forget-receipts-older-than 30
+
+Use `--snapshot` rather than copying the file: the journal runs in write-ahead mode, and
+a plain copy can be missing the newest events. Forgetting events leaves the receipts in
+place, so an old event still cannot be admitted twice; receipts younger than a day are
+never forgotten. The hub also trims both once an hour by `journal_days` and `dedup_days`.

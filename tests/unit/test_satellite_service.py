@@ -1,6 +1,7 @@
 """What the hub does with what arrives, before anything is allowed to mean anything."""
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -12,6 +13,12 @@ from sentry_mode.sources.models import SourceState
 from sentry_mode.sources.registry import SourceRegistry
 
 CONNECTION = "d3b07384-d9a0-4f1e-9c2b-3e1f7a5c9b21"
+BOOT = "6f1c2d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f"
+
+
+def moments_ago(seconds: float = 1) -> str:
+    """Events are judged against the hub's clock, so the tests use it too."""
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
 
 
 class FakeTransport:
@@ -20,6 +27,7 @@ class FakeTransport:
     def __init__(self) -> None:
         self.commands: list[tuple[str, dict]] = []
         self.cleared: list[str] = []
+        self.settled: list[str] = []
         self.started = False
 
     def start(self) -> None:
@@ -36,17 +44,27 @@ class FakeTransport:
         self.cleared.append(node_id)
         return True
 
+    def settle(self, message) -> bool:
+        self.settled.append(message.topic)
+        return True
+
 
 @pytest.fixture
 def service(tmp_path) -> SatelliteService:
-    config = SatellitesConfig(enabled=True, nodes_file=tmp_path / "nodes.json")
+    config = SatellitesConfig(
+        enabled=True,
+        nodes_file=tmp_path / "nodes.json",
+        store_path=tmp_path / "journal.sqlite3",
+    )
     nodes = NodeRegistry(config.nodes_file)
     nodes.register("zero-entrance", display_name="Ingresso", zone="entrance")
     built = SatelliteService(
         config, sources=SourceRegistry(), nodes=nodes, transport=FakeTransport()
     )
     built.sessions.broker_connected()
-    return built
+    built.store.open()
+    yield built
+    built.store.close()
 
 
 def approve(service) -> None:
@@ -69,7 +87,7 @@ def hello(connection_id: str = CONNECTION, sources=None) -> dict:
     return {
         "schema_version": 1,
         "node_id": "zero-entrance",
-        "boot_id": "b1",
+        "boot_id": BOOT,
         "connection_id": connection_id,
         "online": True,
         "profile": "sensor-presence",
@@ -92,13 +110,13 @@ def event(service, *, source_id="pir-1", node_id="zero-entrance", **changes) -> 
     body = {
         "schema_version": 1,
         "event": {
-            "event_id": "0f6c4a1e-9a5b-4c2d-8e11-5b7c9d0a1f23",
+            "event_id": changes.pop("event_id", "0f6c4a1e-9a5b-4c2d-8e11-5b7c9d0a1f23"),
             "node_id": changes.pop("claimed_node", node_id),
             "source_id": source_id,
-            "boot_id": "b1",
-            "sequence": 0,
+            "boot_id": changes.pop("boot_id", BOOT),
+            "sequence": changes.pop("sequence", 0),
             "kind": "sensor.motion",
-            "occurred_at": "2026-09-17T09:00:00Z",
+            "occurred_at": changes.pop("occurred_at", moments_ago()),
             "clock_status": "synced",
             "value": True,
             "unit": None,
@@ -153,7 +171,7 @@ def test_saying_hello_opens_a_session_and_earns_a_grant(service):
     online(service)
     session = service.sessions.current("zero-entrance")
     assert session.connection_id == CONNECTION
-    assert session.boot_id == "b1"
+    assert session.boot_id == BOOT
     node, command = service._transport.commands[-1]
     assert node == "zero-entrance"
     assert command["action"] == "grant"
@@ -207,13 +225,17 @@ def test_an_event_from_a_sensor_nobody_registered_is_refused(service):
     assert service.counters.reasons["unregistered_source"] == 1
 
 
-def test_an_event_that_passes_every_check_is_handed_on(service):
-    handed = []
-    service._on_event = lambda node_id, document, message: handed.append((node_id, document))
+def test_an_event_that_passes_every_check_is_queued_for_the_rules(service):
     online(service)
     service.handle(event(service))
     assert service.counters.accepted == 1
-    assert handed[0][0] == "zero-entrance"
+    queued = service._queue.get_nowait()
+    assert (queued.ref.id, queued.kind, queued.value) == (
+        "zero-entrance.pir-1",
+        "sensor.motion",
+        True,
+    )
+    assert queued.zone == "entrance" and queued.eligible is True
 
 
 # -- revocation -----------------------------------------------------------------
@@ -303,3 +325,126 @@ def test_the_status_is_readable_before_anything_has_happened(service):
     assert status["nodes"][0]["node_id"] == "zero-entrance"
     assert status["nodes"][0]["freshness"] == "never_seen"
     assert status["counters"]["accepted"] == 0
+
+
+# -- the journal and the acknowledgement ----------------------------------------
+
+
+def test_an_event_is_acknowledged_only_once_it_is_written_down(service):
+    online(service)
+    service.handle(event(service))
+    assert service._transport.settled[-1].endswith("/events")
+    assert service.store.counts()["journal"] == 1
+
+
+def test_an_event_the_hub_could_not_write_is_left_with_the_node(service):
+    online(service)
+    settled = len(service._transport.settled)
+    service.store.close()
+    service.handle(event(service))
+    assert len(service._transport.settled) == settled
+    assert service.counters.reasons["store_unavailable"] == 1
+    assert service.status()["journal"]["available"] is False
+
+
+def test_a_deliberate_refusal_is_acknowledged_so_it_is_not_sent_for_ever(service):
+    online(service)
+    service.handle(event(service, source_id="pir-9"))
+    assert service._transport.settled[-1].endswith("/events")
+
+
+def test_a_node_over_its_budget_is_refused_and_the_others_are_not(tmp_path):
+    config = SatellitesConfig(
+        enabled=True,
+        nodes_file=tmp_path / "nodes.json",
+        store_path=tmp_path / "journal.sqlite3",
+        limits={"events_per_minute": 2},
+    )
+    nodes = NodeRegistry(config.nodes_file)
+    nodes.register("zero-entrance", display_name="Ingresso", zone="entrance")
+    noisy = SatelliteService(
+        config, sources=SourceRegistry(), nodes=nodes, transport=FakeTransport()
+    )
+    noisy.sessions.broker_connected()
+    noisy.store.open()
+    try:
+        online(noisy)
+        for sequence in range(4):
+            identifier = f"0f6c4a1e-9a5b-4c2d-8e11-5b7c9d0a1f2{sequence}"
+            noisy.handle(event(noisy, sequence=sequence, event_id=identifier))
+        assert noisy.counters.accepted == 2
+        assert noisy.counters.reasons["rate_limited"] == 2
+        assert noisy.health.of("zero-entrance")["events"]["reasons"]["rate_limited"] == 2
+    finally:
+        noisy.store.close()
+
+
+def test_a_full_queue_is_recorded_as_a_drop_not_as_an_acceptance(service):
+    online(service)
+    while not service._queue.full():
+        service._queue.put_nowait(object())
+    service.handle(event(service))
+    assert service.counters.reasons["queue_full"] == 1
+    assert service.store.recent()[0]["outcome"] == "dropped"
+
+
+def test_eligible_events_reach_whoever_acts_on_them_off_the_network_thread(service):
+    import threading
+
+    delivered = threading.Event()
+    seen = []
+
+    def act(normalized):
+        seen.append((normalized.ref.id, threading.current_thread().name))
+        delivered.set()
+
+    service._on_event = act
+    service.start()
+    try:
+        online(service)
+        service.handle(event(service))
+        assert delivered.wait(2)
+    finally:
+        service.stop()
+    assert seen == [("zero-entrance.pir-1", "satellite-events")]
+    assert service.store.available is False
+
+
+def test_a_heartbeat_is_the_current_picture_and_not_history(service):
+    online(service)
+    beat = {"node_id": "zero-entrance", "clock_status": "synced", "queue": {"count": 3}}
+    service.handle(message("health", beat))
+    service.handle(message("health", {**beat, "queue": {"count": 0}}))
+    report = service.health.of("zero-entrance")
+    assert (report["heartbeats"], report["queue"]) == (2, {"count": 0})
+    assert service.store.counts()["journal"] == 0
+    node = service.status()["nodes"][0]
+    assert node["health"]["clock_status"] == "synced"
+
+
+def test_a_revoked_node_leaves_no_health_behind(service):
+    online(service)
+    service.handle(message("health", {"node_id": "zero-entrance"}))
+    service.revoke("zero-entrance", reason="lost")
+    assert service.health.of("zero-entrance") is None
+
+
+def test_housekeeping_keeps_a_healthy_node_heard_and_trims_by_retention(service):
+    online(service)
+    service.handle(event(service))
+    later = service.sessions._clock() + 200  # past the renewal point, before expiry
+    service.sessions._clock = lambda: later
+    assert service.renew_due_grants() == 1
+    assert service._transport.commands[-1][1]["action"] == "renew"
+    assert service.tidy() == {"events": 0, "receipts": 0}
+    service.store._clock = lambda: 10**12
+    assert service.tidy() == {"events": 1, "receipts": 1}
+
+
+def test_stopping_ends_every_thread_the_service_started(service):
+    import threading
+
+    service.start()
+    service.stop()
+    names = {thread.name for thread in threading.enumerate()}
+    assert not names & {"satellite-events", "satellite-housekeeping"}
