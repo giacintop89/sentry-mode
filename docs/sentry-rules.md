@@ -76,5 +76,8 @@ persisted. A damaged saved configuration prevents arming until a valid one is sa
 `detection_fps` (0.5–5) sets how often Sentry samples, and `action_ttl_seconds` (1–120,
 15 by default) how long a queued step may wait before it is dropped as stale.
 
+Rules started by a satellite sensor, and the second version of the rules file, are
+described in [rules, second version](rules-v2.md).
+
 See also: [rule reference](rule-reference.md), [action sequencer](action-sequencer.md),
 [object detection](object-detection.md).

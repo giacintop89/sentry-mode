@@ -24,6 +24,7 @@ and where its limits are.
 ## Reference
 
 - [Rule reference](rule-reference.md) — every condition and action field, with its limits.
+- [Rules, second version](rules-v2.md) — triggers from sensors, planning, migration and the V2 API.
 - [HTTP API](http-api.md) — every endpoint, with the headers they require.
 - [Configuration](configuration.md) — YAML, environment variables, state files, services.
 - [Security model](security.md) — what is exposed, what is stored, what is refused.
@@ -51,4 +52,5 @@ Records of what was measured and what was fixed; a decision here binds the code.
 - [What runs on the board](adr/satellite-agent.md) — the agent, measured on the real Zero W.
 - [What it takes to be believed](adr/satellite-trust.md) — certificates, approval and epochs.
 - [The satellite journal](adr/satellite-journal.md) — acknowledged after commit, and what counts as news.
+- [Rules, second version](adr/rules-v2.md) — stable rule IDs, what each arming needs, and a way back.
 - [Satellite video profile](adr/satellite-video-profile.md) — the encode and transport decision; pending.

@@ -15,6 +15,7 @@ import pytest
 
 from sentry_mode.config import Settings, load_config
 from sentry_mode.sentry.engine import Sentry
+from sentry_mode.sentry.migration import dump_v1, to_v1
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures/satellites/v1"
 SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
@@ -76,7 +77,8 @@ def test_legacy_rules_load_without_error(state):
 
 
 def test_legacy_rule_details_survive_loading(state):
-    entrance, gate = state.config.rules
+    # The engine works on the second version; the first is what the old editor reads.
+    entrance, gate = to_v1(state.config).rules
     assert entrance.actions[1].type == "video"
     assert entrance.actions[1].audio is True
     assert entrance.actions[1].with_previous is True
@@ -85,7 +87,7 @@ def test_legacy_rule_details_survive_loading(state):
 
 
 def test_legacy_rules_round_trip_without_loss(state):
-    saved = state.config.model_dump(mode="json")
+    saved = dump_v1(to_v1(state.config))
     saved["telegram"]["bot_token"] = state.config.telegram.bot_token.get_secret_value()
     recorded = json.loads((FIXTURES / "sentry-v1-state.json").read_text())
     assert saved == recorded["config"]

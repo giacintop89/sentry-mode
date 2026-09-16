@@ -47,8 +47,9 @@ SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
   inference rate.
 - `sentry` — initial rules, `detection_fps`, `test_mode`, `action_ttl_seconds`, SSH commands
   and Telegram settings. Used only until the editor writes its own state file.
-- `satellites` — `enabled` (off by default), `store_path`, `nodes_file`, `fault_policy`
-  (`isolated` or `global`), and the `mqtt`, `health`, `limits` and `sessions` blocks.
+- `satellites` — `enabled` (off by default), `store_path`, `nodes_file`, and the `mqtt`,
+  `health`, `limits` and `sessions` blocks. What a failing source does to the armed rules
+  is `fault_policy` in the rules document ([rules, second version](rules-v2.md)).
   With this off the node behaves exactly as it did before there were satellites, and
   needs none of the optional dependencies. `mqtt.host` is the address the satellites
   use, never a loopback address, and it is the address the hub certificate has to be
@@ -77,6 +78,11 @@ These are written by the app, not by hand, with private file permissions:
 
 `.local/sentry.json` takes precedence over the `sentry` YAML section, which only supplies
 initial defaults. Arming is never persisted: a restart always leaves Sentry disarmed.
+
+The rules file comes in two versions. A file without `schema_version` is the first
+version, and the node keeps writing it that way so an older release can still read it.
+`scripts/migrate_satellites.py --apply` converts it, after keeping a backup; see
+[rules, second version](rules-v2.md).
 
 ## Running as a service
 

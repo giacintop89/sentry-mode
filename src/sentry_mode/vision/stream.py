@@ -69,9 +69,25 @@ class VideoStream:
             self.preview_detection = enabled
             return self.status()
 
-    def set_sentry(self, enabled: bool, fps: float = 2, confidence: float = 0.7) -> dict:
+    def set_sentry(
+        self, enabled: bool, fps: float = 2, confidence: float = 0.7, detect: bool = True
+    ) -> dict:
+        """Keep the camera running for Sentry, with the detector only when `detect` is set.
+
+        Without the detector the camera just stays open, so a photo or a video asked for
+        by a sensor rule starts at once instead of waiting for the camera to open.
+        """
         with self.lifecycle_lock:
-            if enabled:
+            if enabled and not detect:
+                try:
+                    self.monitor_fps, self.monitoring = fps, True
+                    self._ensure_capture()
+                except Exception:
+                    self.monitoring = False
+                    if not self.preview:
+                        self._stop_capture()
+                    raise
+            elif enabled:
                 self.detection.pause()
                 self.detection.config = self.base_detection.model_copy(
                     update={

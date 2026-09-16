@@ -27,7 +27,6 @@ def imported_modules(module: str) -> set[str]:
 def test_a_node_that_was_never_told_about_satellites_has_none():
     settings = Settings()
     assert settings.satellites.enabled is False
-    assert settings.satellites.fault_policy == "isolated"
 
 
 def test_a_configuration_file_written_before_any_of_this_still_loads(tmp_path):

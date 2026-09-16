@@ -25,6 +25,7 @@ from sentry_mode.sentry.config import (
     WaitAction,
 )
 from sentry_mode.sentry.engine import Job, RuleState, Sentry
+from sentry_mode.sentry.migration import rule_to_v2
 from sentry_mode.vision.detection import Detection
 
 PERSON = Detection("person", 0.9, (0.2, 0.2, 0.8, 0.8))
@@ -54,7 +55,7 @@ def direct_arm(engine):
     engine.armed = True
     engine.armed_at = 99
     engine.cancelled.clear()
-    engine.states = {r.name: RuleState() for r in engine.config.rules}
+    engine.states = {r.id: RuleState() for r in engine.config.rules}
 
 
 def sample(engine, timestamp, detections=None):
@@ -85,7 +86,7 @@ def test_confirmation_test_mode_and_no_retrigger_while_present(sentry):
 
 
 def test_real_absence_rearms_and_cooldown_is_independent(sentry):
-    sentry.config.rules[0].rearm_after_absence_seconds = 2
+    sentry.config.rules[0].trigger.rearm_after_absence_seconds = 2
     sentry.config.rules[0].cooldown_seconds = 10
     direct_arm(sentry)
     for t in [100, 100.5, 101]:
@@ -104,12 +105,12 @@ def test_duplicate_stale_and_missing_frames_cannot_confirm_or_fake_absence(sentr
     direct_arm(sentry)
     sample(sentry, 100)
     sample(sentry, 100)
-    assert sentry.states["Person at entrance"].hits == 1
+    assert sentry.states["person-at-entrance"].hits == 1
     with patch("sentry_mode.sentry.engine.time.monotonic", return_value=120):
         sentry.observe([PERSON], 100.5)
-    assert sentry.states["Person at entrance"].hits == 1
+    assert sentry.states["person-at-entrance"].hits == 1
     sample(sentry, 120)
-    assert sentry.states["Person at entrance"].hits == 1
+    assert sentry.states["person-at-entrance"].hits == 1
     sample(sentry, 120.5)
     sample(sentry, 121)
     sample(sentry, 122, [])
@@ -118,9 +119,9 @@ def test_duplicate_stale_and_missing_frames_cannot_confirm_or_fake_absence(sentr
 
 
 def test_confidence_region_count_and_class_filter(sentry):
-    rule = sentry.config.rules[0]
-    rule.region = (0.4, 0.4, 0.6, 0.6)
-    rule.min_count = 2
+    trigger = sentry.config.rules[0].trigger
+    trigger.region = (0.4, 0.4, 0.6, 0.6)
+    trigger.min_count = 2
     direct_arm(sentry)
     invalid = [
         Detection("dog", 0.99, PERSON.box),
@@ -374,7 +375,10 @@ def test_rule_test_runs_for_real_in_test_mode_and_refuses_unrunnable_actions(sen
         with pytest.raises(ValueError, match=complaint):
             sentry.test(Rule(name="Draft", object="person", actions=actions))
     sentry.config.rules = [
-        Rule(name="Telegram", object="person", actions=[TelegramAction(text="hi")])
+        rule_to_v2(
+            Rule(name="Telegram", object="person", actions=[TelegramAction(text="hi")]),
+            "telegram",
+        )
     ]
     sentry.arm()
     with pytest.raises(BlockingIOError, match="Disarm"):

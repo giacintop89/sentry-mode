@@ -8,12 +8,16 @@ say which camera it means once there is more than one.
 from __future__ import annotations
 
 from sentry_mode.config import Settings
-from sentry_mode.sources.models import SourceKind, SourceRecord, SourceRef, SourceState
+from sentry_mode.sources.models import (
+    PRIMARY_CAMERA,
+    PRIMARY_MICROPHONE,
+    PRIMARY_SPEAKER,
+    SourceKind,
+    SourceRecord,
+    SourceRef,
+    SourceState,
+)
 from sentry_mode.sources.registry import SourceRegistry
-
-PRIMARY_CAMERA = "legacy-primary"
-PRIMARY_MICROPHONE = "legacy-microphone"
-PRIMARY_SPEAKER = "legacy-speaker"
 
 
 def _state(enabled: bool) -> SourceState:

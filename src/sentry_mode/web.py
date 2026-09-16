@@ -46,8 +46,9 @@ from sentry_mode.hardware.camera import Camera, list_cameras
 from sentry_mode.hardware.microphone import Microphone
 from sentry_mode.hardware.speaker import Speaker
 from sentry_mode.hardware.status import inspect_hardware, network_available
-from sentry_mode.sentry.config import Rule, SentryConfig, TuneAction
+from sentry_mode.sentry.config import Rule, RuleV2, SentryConfig, SentryConfigV2, TuneAction
 from sentry_mode.sentry.engine import Sentry
+from sentry_mode.sentry.migration import SchemaUpgradeRequired
 from sentry_mode.sources.legacy import legacy_sources
 from sentry_mode.sources.registry import SourceRegistry
 from sentry_mode.vision.capture import capture_image
@@ -112,6 +113,21 @@ class SentryUpdate(BaseModel):
     clear_telegram_token: StrictBool = False
 
 
+class SentryV2Update(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    config: SentryConfigV2
+    revision: int = Field(ge=0)
+    clear_telegram_token: StrictBool = False
+
+
+class SimulationRequest(BaseModel):
+    """A rule and the observations to play through it; nothing is executed."""
+
+    model_config = ConfigDict(extra="forbid")
+    rule: RuleV2
+    samples: list[dict] = Field(max_length=500)
+
+
 class TestModeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: StrictBool
@@ -129,11 +145,11 @@ class NodeControls:
         self.https_port: int | None = None
         self.tls_ca: Path | None = None
         self.video = VideoStream(config.camera, self.hardware_lock, config.detection)
-        self.sentry = Sentry(config, self.video, self.audio_lock)
         self.soundboard = Soundboard(config.soundboard_file, config.soundboard_directory)
         self.sources = SourceRegistry()
         for record in legacy_sources(config):
             self.sources.register(record)
+        self.sentry = Sentry(config, self.video, self.audio_lock, self.sources)
         self.satellites_error: str | None = None
         self.satellites = self._open_satellites()
         self.runtime_lock = threading.Lock()
@@ -159,7 +175,7 @@ class NodeControls:
             return None
         from sentry_mode.satellites.service import build
 
-        service = build(self.config.satellites, self.sources)
+        service = build(self.config.satellites, self.sources, on_event=self.sentry.observe_event)
         try:
             assert service is not None
             service.start()
@@ -218,6 +234,8 @@ class NodeControls:
             return self.sentry.status()
         if path == "/api/sentry/config":
             return self.sentry.configuration()
+        if path == "/api/sentry/v2/config":
+            return self.sentry.configuration_v2()
         if path == "/api/talk/config":
             return {"https_port": self.https_port, "local_ca": self.tls_ca is not None}
         if path == "/api/config":
@@ -484,6 +502,14 @@ class NodeControls:
             return self.sentry.set_test_mode(TestModeRequest.model_validate(body).enabled)
         if path == "/api/sentry/rules/test":
             return self.sentry.test(Rule.model_validate(body))
+        if path == "/api/sentry/v2/config":
+            v2 = SentryV2Update.model_validate(body)
+            return self.sentry.update_v2(v2.config, v2.revision, v2.clear_telegram_token)
+        if path == "/api/sentry/v2/rules/test":
+            return self.sentry.test(RuleV2.model_validate(body))
+        if path == "/api/events/simulate":
+            simulation = SimulationRequest.model_validate(body)
+            return self.sentry.simulate(simulation.rule, simulation.samples)
         if path == "/api/sentry/start":
             if self.runtime_status()["running"]:
                 raise BlockingIOError("Stop the idle runtime before starting Sentry.")
@@ -623,6 +649,9 @@ JSON_POSTS = {
     "/api/sentry/config",
     "/api/sentry/test-mode",
     "/api/sentry/rules/test",
+    "/api/sentry/v2/config",
+    "/api/sentry/v2/rules/test",
+    "/api/events/simulate",
     "/api/soundboard",
     "/api/soundboard/delete",
     "/api/soundboard/play",
@@ -838,7 +867,11 @@ def make_handler(controls: NodeControls):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 limit = MAX_CHUNK if self.path == "/api/talk/chunk" else 8192
-                if self.path == "/api/sentry/config":
+                if self.path in {
+                    "/api/sentry/config",
+                    "/api/sentry/v2/config",
+                    "/api/events/simulate",
+                }:
                     limit = 262144
                 if self.path == "/api/sounds/upload":
                     limit = MAX_UPLOAD_BYTES
@@ -920,6 +953,10 @@ def make_handler(controls: NodeControls):
                 self.respond({"error": str(exc)}, 404)
             except BlockingIOError as exc:
                 self.respond({"error": str(exc)}, 409)
+            except SchemaUpgradeRequired as exc:
+                self.respond(
+                    {"error": str(exc), "code": exc.code, "reasons": list(exc.reasons)}, 409
+                )
             except (ValueError, ValidationError) as exc:
                 self.respond({"error": str(exc)}, 400)
             except (HardwareError, OSError, ImportError) as exc:

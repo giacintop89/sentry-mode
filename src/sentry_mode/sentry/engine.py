@@ -1,4 +1,9 @@
-"""Confirmed appearances, a bounded action queue, and explicit arm/disarm lifecycle."""
+"""Confirmed triggers, a bounded action queue, and explicit arm/disarm lifecycle.
+
+A rule is set off by a camera, a sensor or a measurement, and its actions run in order
+from a bounded queue. Every queued action carries the context it was decided in, so an
+action left over from an earlier arming is dropped rather than run late.
+"""
 
 import json
 import logging
@@ -14,6 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pydantic import SecretStr
+
 from sentry_mode.audio.sounds import SoundLibrary
 from sentry_mode.audio.speech import speak
 from sentry_mode.audio.tunes import TUNES, play_tune
@@ -24,30 +31,51 @@ from sentry_mode.sentry.config import (
     AudioAction,
     PhotoAction,
     Rule,
+    RuleV2,
+    SensorEventTrigger,
     SentryConfig,
+    SentryConfigV2,
     SoundAction,
     SSHAction,
     SSHCommand,
     TelegramAction,
+    ThresholdTrigger,
     TTSAction,
     TuneAction,
     VideoAction,
+    VisionTrigger,
     WaitAction,
 )
+from sentry_mode.sentry.context import ActionContext
+from sentry_mode.sentry.migration import (
+    LEGACY_SCHEMA,
+    SchemaUpgradeRequired,
+    dump_v1,
+    obstacles,
+    read_document,
+    rule_to_v2,
+    slug,
+    to_v1,
+    to_v2,
+    write_document,
+)
+from sentry_mode.sentry.resources import Plan, ResourcePlanner
+from sentry_mode.sentry.triggers import (
+    RuleState,
+    cooled,
+    detection_matches,
+    sensor_fires,
+    threshold_fires,
+)
+from sentry_mode.sources.legacy import register_legacy
+from sentry_mode.sources.models import PRIMARY_CAMERA, SourceRef, SourceState
+from sentry_mode.sources.registry import SourceRegistry
 from sentry_mode.vision.detection import Detection
 from sentry_mode.vision.labels import CLASSES
 from sentry_mode.vision.recording import Captures
 from sentry_mode.vision.stream import VideoStream
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class RuleState:
-    hits: int = 0
-    latched: bool = False
-    absent_since: float | None = None
-    last_trigger: float = float("-inf")
 
 
 Action = (
@@ -72,14 +100,29 @@ class Job:
     steps: list[Action]
     created: float
     delay: float = 0.0
+    context: ActionContext | None = None
 
 
 class Sentry:
-    def __init__(self, settings: Settings, video: VideoStream, audio_lock):
+    def __init__(
+        self,
+        settings: Settings,
+        video: VideoStream,
+        audio_lock,
+        sources: SourceRegistry | None = None,
+    ):
         self.settings, self.video, self.audio_lock = settings, video, audio_lock
         self.guard = threading.RLock()
         self.lifecycle = threading.Lock()
-        self.config = settings.sentry.model_copy(deep=True)
+        self.config: SentryConfigV2 = to_v2(settings.sentry)
+        self.schema_version = LEGACY_SCHEMA
+        self.sources = (
+            sources if sources is not None else register_legacy(SourceRegistry(), settings)
+        )
+        self.planner = ResourcePlanner(self.sources, satellites_enabled=settings.satellites.enabled)
+        self.plan: Plan | None = None
+        self.arm_epoch = 0
+        self.suspended: dict[str, str] = {}
         self.revision = 0
         self.config_error: str | None = None
         self.error: str | None = None
@@ -119,15 +162,21 @@ class Sentry:
         try:
             if path.stat().st_size > 262144:
                 raise ValueError("Saved Sentry configuration is too large.")
-            data = json.loads(path.read_text())
-            self.config = SentryConfig.model_validate(data["config"])
-            self.revision = int(data["revision"])
+            document = read_document(json.loads(path.read_text()))
+            self.config = document.config
+            self.revision = document.revision
+            self.schema_version = document.schema_version
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.config_error = f"Saved Sentry configuration could not be loaded: {exc}"
 
     def configuration(self) -> dict:
+        """The rules as the first version of the editor sees them, or a clear refusal.
+
+        When the rules use anything the first version cannot express, this raises
+        `SchemaUpgradeRequired` rather than returning a partial copy.
+        """
         with self.guard:
-            config = self.config.model_dump(mode="json")
+            config = dump_v1(to_v1(self.config))
             config["telegram"]["bot_token"] = ""
             return {
                 "config": config,
@@ -139,8 +188,52 @@ class Sentry:
                 "objects": CLASSES,
             }
 
+    def configuration_v2(self) -> dict:
+        with self.guard:
+            config = self.config.model_dump(mode="json")
+            config["telegram"]["bot_token"] = ""
+            enabled = [rule for rule in self.config.rules if rule.enabled]
+            return {
+                "schema_version": 2,
+                "stored_schema_version": self.schema_version,
+                "config": config,
+                "telegram_token_configured": bool(
+                    self.config.telegram.bot_token.get_secret_value()
+                ),
+                "revision": self.revision,
+                "error": self.config_error,
+                "objects": CLASSES,
+                "plan": self.planner.plan(enabled).as_dict(),
+                "sources": [
+                    {
+                        "source_id": record.id,
+                        "kind": record.kind.value,
+                        "display_name": record.display_name,
+                        "zone": record.zone,
+                        "state": record.state.value,
+                    }
+                    for record in self.sources.all()
+                ],
+            }
+
     def update(
         self, config: SentryConfig, revision: int, clear_telegram_token: bool = False
+    ) -> dict:
+        """Save rules from the first version of the editor.
+
+        A first-version client cannot see rules it does not understand. If it were allowed
+        to save, it would delete them, so it is refused while any such rule exists.
+        """
+        with self.guard:
+            reasons = obstacles(self.config)
+            if reasons:
+                raise SchemaUpgradeRequired(reasons)
+            converted = to_v2(config, previous=self.config)
+        self.update_v2(converted, revision, clear_telegram_token)
+        return self.configuration()
+
+    def update_v2(
+        self, config: SentryConfigV2, revision: int, clear_telegram_token: bool = False
     ) -> dict:
         with self.lifecycle, self.guard:
             if self.armed:
@@ -149,14 +242,12 @@ class Sentry:
                 raise BlockingIOError("Configuration changed in another tab. Reload before saving.")
             config = config.model_copy(deep=True)
             if clear_telegram_token:
-                from pydantic import SecretStr
-
                 config.telegram.bot_token = SecretStr("")
             elif not config.telegram.bot_token.get_secret_value():
                 config.telegram.bot_token = self.config.telegram.bot_token
             self._persist(config, revision + 1)
             self._event("configured", "Rules and actions saved.")
-            return self.configuration()
+            return self.configuration_v2()
 
     def set_test_mode(self, enabled: bool) -> dict:
         """Switch the node between logging actions and running them.
@@ -180,17 +271,30 @@ class Sentry:
                 )
             return {"test_mode": self.config.test_mode, "revision": self.revision}
 
-    def _persist(self, config: SentryConfig, revision: int) -> None:
-        """Write the configuration and adopt it. The caller holds the guard."""
-        saved_config = config.model_dump(mode="json")
-        saved_config["telegram"]["bot_token"] = config.telegram.bot_token.get_secret_value()
+    def _persist(self, config: SentryConfigV2, revision: int) -> None:
+        """Write the configuration and adopt it. The caller holds the guard.
+
+        The file keeps the version it already has, so the previous release can still read
+        an unmigrated file. A node with no file yet has nothing to preserve and is written
+        in the newer version as soon as its rules need it. An existing first-version file
+        is converted only by the migration script, which keeps a backup first.
+        """
         path = self.settings.sentry_state_file
+        version = self.schema_version
+        if version == LEGACY_SCHEMA and obstacles(config):
+            if path.exists():
+                raise SchemaUpgradeRequired(
+                    obstacles(config)
+                    + ["run scripts/migrate_satellites.py --apply to convert the saved rules"]
+                )
+            version = 2
+        document = write_document(config, revision, version)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         name = None
         try:
             with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as out:
                 name = Path(out.name)
-                json.dump({"config": saved_config, "revision": revision}, out)
+                json.dump(document, out)
                 out.flush()
                 os.fsync(out.fileno())
             name.replace(path)
@@ -198,8 +302,9 @@ class Sentry:
             if name is not None:
                 name.unlink(missing_ok=True)
         self.config, self.revision, self.config_error = config, revision, None
+        self.schema_version = version
 
-    def _check(self, rules: list[Rule], logged_only: bool = False):
+    def _check(self, rules: list[Rule] | list[RuleV2], logged_only: bool = False):
         """Refuse actions whose file, saved command or credentials are missing.
 
         Rules that will only be logged are allowed to lack Telegram credentials; rules
@@ -289,8 +394,8 @@ class Sentry:
                     {
                         "name": rule.name,
                         "enabled": rule.enabled,
-                        "confirmed": self.states.get(rule.name, RuleState()).latched,
-                        "hits": self.states.get(rule.name, RuleState()).hits,
+                        "confirmed": self.states.get(rule.id, RuleState()).latched,
+                        "hits": self.states.get(rule.id, RuleState()).hits,
                     }
                     for rule in self.config.rules
                 ],
@@ -309,21 +414,34 @@ class Sentry:
                 if not rules:
                     raise ValueError("Enable at least one rule before starting Sentry.")
                 self._check(rules, self.config.test_mode)
+                plan = self.planner.plan(rules)
+                if not plan.ok:
+                    raise ValueError(
+                        "Sentry cannot start: " + "; ".join(str(p) for p in plan.problems)
+                    )
             if self.thread is not None:
                 self.thread.join(timeout=3)
                 if self.thread.is_alive():
                     raise BlockingIOError("Sentry is still stopping; try again shortly.")
-            self.video.set_sentry(
-                True, self.config.detection_fps, min(rule.min_confidence for rule in rules)
-            )
+            if plan.camera:
+                # Only what the rules need: a sensor rule with no camera action starts
+                # nothing here, and a photo after a PIR does not load the detector.
+                self.video.set_sentry(
+                    True, self.config.detection_fps, plan.min_confidence, detect=plan.detector
+                )
             with self.guard:
                 self.cancelled = threading.Event()
                 self.jobs = queue.Queue(maxsize=16)
-                self.states = {rule.name: RuleState() for rule in rules}
+                self.states = {rule.id: RuleState() for rule in rules}
+                self.suspended = {}
+                self.plan = plan
+                self.arm_epoch += 1
                 self.last_sample = 0
                 self.armed_at = time.monotonic()
                 self.error = None
                 self.armed = True
+                for note in plan.notes:
+                    self._event("configured", note)
                 self.thread = threading.Thread(target=self._worker, name="sentry-mode-sentry")
                 self.thread.start()
                 self._event(
@@ -335,7 +453,9 @@ class Sentry:
                 return self.status()
 
     @staticmethod
-    def _groups(rule: Rule, created: float) -> list[Job]:
+    def _groups(
+        rule: Rule | RuleV2, created: float, context: ActionContext | None = None
+    ) -> list[Job]:
         """Split a rule's steps into the groups the queue runs one after another.
 
         A step marked with_previous joins the group before it instead of opening a new one.
@@ -352,10 +472,10 @@ class Sentry:
                 delay += max(
                     (s.seconds for s in jobs[-1].steps if isinstance(s, WaitAction)), default=0.0
                 )
-            jobs.append(Job(rule.name, [action], created, delay))
+            jobs.append(Job(rule.name, [action], created, delay, context))
         return jobs
 
-    def test(self, rule: Rule) -> dict:
+    def test(self, rule: Rule | RuleV2) -> dict:
         """Run one rule's actions now, because somebody asked for them by pressing a button.
 
         Test mode holds back what a detection would do, not what the editor was told to do,
@@ -365,14 +485,19 @@ class Sentry:
             with self.guard:
                 if self.armed:
                     raise BlockingIOError("Disarm Sentry before testing a rule.")
+                if isinstance(rule, Rule):
+                    rule = rule_to_v2(rule, slug(rule.name))
                 self._check([rule])
+                problems = self.planner.plan_actions(rule)
+                if problems:
+                    raise ValueError("; ".join(str(p) for p in problems))
             if self.thread is not None:
                 self.thread.join(timeout=3)
                 if self.thread.is_alive():
                     raise BlockingIOError("A rule test is still running; try again shortly.")
             with self.guard:
                 self.cancelled = threading.Event()
-                jobs = self._groups(rule, time.monotonic())
+                jobs = self._groups(rule, time.monotonic(), self._context(rule, ("test",)))
                 self._event("tested", f"Test run of {rule.name}; running its actions.", rule.name)
                 self.thread = threading.Thread(
                     target=self._test, args=(jobs,), name="sentry-mode-test"
@@ -392,6 +517,9 @@ class Sentry:
             with self.guard:
                 was_armed = self.armed
                 self.armed = False
+                if was_armed:
+                    # Anything still in flight from this arming is now from an old one.
+                    self.arm_epoch += 1
                 self.cancelled.set()
                 self._discard_jobs()
             if self.thread is not None:
@@ -419,6 +547,7 @@ class Sentry:
                 return
 
     def observe(self, detections: list[Detection], captured: float):
+        """Detections from this node's camera, one sample at a time."""
         with self.guard:
             if not self.armed or captured <= max(self.last_sample, self.armed_at):
                 return
@@ -429,70 +558,225 @@ class Sentry:
                 for state in self.states.values():
                     state.hits, state.absent_since = 0, None
             self.last_sample = captured
-            for rule in self.config.rules:
-                if not rule.enabled:
+            for rule in self._watching(VisionTrigger):
+                trigger = rule.trigger
+                assert isinstance(trigger, VisionTrigger)
+                if trigger.source_id != PRIMARY_CAMERA:
                     continue
-                state = self.states[rule.name]
-                matches = [d for d in detections if self._matches(rule, d)]
-                if len(matches) < rule.min_count:
-                    state.hits = 0
-                    if state.absent_since is None:
-                        state.absent_since = captured
-                    if (
-                        state.latched
-                        and captured - state.absent_since >= rule.rearm_after_absence_seconds
-                    ):
-                        state.latched = False
-                        self._event(
-                            "rearmed",
-                            "Object absent long enough; ready for another appearance.",
-                            rule.name,
-                        )
-                    continue
-                state.absent_since = None
-                state.hits = min(rule.consecutive_detections, state.hits + 1)
-                if state.hits == 1 and not state.latched:
-                    self._event(
-                        "detected", f"{rule.object}: {len(matches)} matching object(s).", rule.name
-                    )
-                if state.latched or state.hits < rule.consecutive_detections:
-                    continue
-                if captured - state.last_trigger < rule.cooldown_seconds:
-                    continue
-                state.latched, state.last_trigger = True, captured
-                self._event("triggered", f"Confirmed {rule.object} appearance.", rule.name)
-                if self.config.test_mode:
-                    for action in rule.actions:
-                        together = "+ " if action.with_previous else ""
-                        self._event("would_run", together + self._describe(action), rule.name)
-                    continue
-                for job in self._groups(rule, captured):
-                    try:
-                        self.jobs.put_nowait(job)
-                    except queue.Full:
-                        self._event("skipped", "Action queue is full.", rule.name)
+                count = sum(1 for d in detections if detection_matches(trigger, d))
+                state = self.states[rule.id]
+                for kind, message in confirm(rule, state, count, captured):
+                    self._event(kind, message, rule.name)
+                    if kind == "triggered":
+                        self._fire(rule, captured, (f"vision:{trigger.source_id}",), None)
 
-    @staticmethod
-    def _matches(rule: Rule, detection: Detection) -> bool:
-        if detection.label != rule.object or detection.confidence < rule.min_confidence:
-            return False
-        if rule.region is None:
-            return True
-        x1, y1, x2, y2 = detection.box
-        left, top, right, bottom = rule.region
-        return left <= (x1 + x2) / 2 <= right and top <= (y1 + y2) / 2 <= bottom
+    def observe_event(self, event) -> None:
+        """A normalized satellite event, handed over by the satellite service.
+
+        Only events the door marked eligible get here. The event is still checked again
+        against this arming: it must be fresh by the hub's own clock, and it must not be
+        older than the moment Sentry was armed.
+        """
+        with self.guard:
+            if not self.armed or not getattr(event, "eligible", False):
+                return
+            now = time.monotonic()
+            if event.received_monotonic < self.armed_at:
+                return
+            if now - event.received_monotonic > self.config.action_ttl_seconds:
+                self._event("expired", f"An event from {event.ref.id} arrived too late to act on.")
+                return
+            for rule in self._watching(SensorEventTrigger, ThresholdTrigger):
+                trigger = rule.trigger
+                state = self.states[rule.id]
+                if isinstance(trigger, SensorEventTrigger):
+                    fired = sensor_fires(trigger, event)
+                else:
+                    assert isinstance(trigger, ThresholdTrigger)
+                    fired = threshold_fires(trigger, state, event)
+                if not fired:
+                    continue
+                if not cooled(state, rule.cooldown_seconds, event.received_monotonic):
+                    self._event("skipped", "Still cooling down from the last time.", rule.name)
+                    continue
+                state.last_trigger = event.received_monotonic
+                self._event(
+                    "triggered", f"{event.kind} from {event.ref.id}: {event.value!r}.", rule.name
+                )
+                self._fire(rule, event.received_monotonic, (event.event_id,), event.zone)
+
+    def _watching(self, *kinds) -> list[RuleV2]:
+        """Enabled, unsuspended rules armed in this run whose trigger is one of `kinds`."""
+        return [
+            rule
+            for rule in self.config.rules
+            if rule.enabled
+            and rule.id in self.states
+            and rule.id not in self.suspended
+            and isinstance(rule.trigger, kinds)
+        ]
+
+    def _context(
+        self, rule: RuleV2, origin: tuple[str, ...], zone: str | None = None
+    ) -> ActionContext:
+        sources = sorted(
+            {
+                source
+                for action in rule.actions
+                for source in (
+                    getattr(action, "source_id", None),
+                    getattr(action, "audio_source_id", None)
+                    if not isinstance(action, VideoAction) or action.audio
+                    else None,
+                )
+                if source
+            }
+        )
+        return ActionContext.new(
+            rule_id=rule.id,
+            rule_name=rule.name,
+            rule_revision=self.revision,
+            arm_epoch=self.arm_epoch,
+            zone=zone,
+            origin=origin,
+            sources=tuple(sources),
+        )
+
+    def _fire(self, rule: RuleV2, created: float, origin: tuple[str, ...], zone) -> None:
+        """Queue a rule's whole sequence, or none of it. The caller holds the guard."""
+        if self.config.test_mode:
+            for action in rule.actions:
+                together = "+ " if action.with_previous else ""
+                self._event("would_run", together + self._describe(action), rule.name)
+            return
+        jobs = self._groups(rule, created, self._context(rule, origin, zone))
+        free = self.jobs.maxsize - self.jobs.qsize()
+        if len(jobs) > free:
+            # Half a sequence is worse than none: a greeting without the photo it was
+            # meant to accompany, or a wait with nothing after it.
+            self._event(
+                "skipped",
+                f"Action queue is full; the whole sequence of {len(jobs)} steps was skipped.",
+                rule.name,
+            )
+            return
+        for job in jobs:
+            self.jobs.put_nowait(job)
+
+    def simulate(self, rule: Rule | RuleV2, samples: list[dict]) -> dict:
+        """What a rule would do with these observations, on a state of its own.
+
+        Nothing is executed and nothing about the armed engine changes: the rule gets a
+        fresh state, the observations are played through the same triggers as a live
+        run, and the answer lists what would have been queued at each moment.
+        """
+        if isinstance(rule, Rule):
+            rule = rule_to_v2(rule, slug(rule.name))
+        state = RuleState()
+        steps = []
+        trigger = rule.trigger
+        for index, sample in enumerate(samples[:500]):
+            at = float(sample.get("at", index))
+            fired = False
+            notes: list[tuple[str, str]] = []
+            if isinstance(trigger, VisionTrigger):
+                detections = [
+                    Detection(d["label"], float(d["confidence"]), tuple(d["box"]))
+                    for d in sample.get("detections", [])
+                ]
+                count = sum(1 for d in detections if detection_matches(trigger, d))
+                notes = confirm(rule, state, count, at)
+                fired = any(kind == "triggered" for kind, _ in notes)
+            elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger)):
+                observed = Simulated(
+                    ref=SourceRef.parse(sample.get("source_id", trigger.source_id)),
+                    kind=sample.get("kind", trigger.kind),
+                    value=sample.get("value"),
+                    quality=sample.get("quality", "valid"),
+                    received_monotonic=at,
+                )
+                if isinstance(trigger, SensorEventTrigger):
+                    hit = sensor_fires(trigger, observed)
+                else:
+                    hit = threshold_fires(trigger, state, observed)
+                if hit and cooled(state, rule.cooldown_seconds, at):
+                    state.last_trigger, fired = at, True
+                    notes = [("triggered", "The trigger fired.")]
+                elif hit:
+                    notes = [("skipped", "Still cooling down from the last time.")]
+            else:
+                raise ValueError(f"{trigger.type} triggers cannot be simulated yet.")
+            steps.append(
+                {
+                    "at": at,
+                    "fired": fired,
+                    "notes": [{"kind": kind, "message": message} for kind, message in notes],
+                    "phase": state.phase if isinstance(trigger, ThresholdTrigger) else None,
+                    "would_run": [self._describe(action) for action in rule.actions]
+                    if fired
+                    else [],
+                }
+            )
+        return {"rule_id": rule.id, "steps": steps, "executed": False}
 
     def _healthy(self) -> bool:
-        state = self.video.status()
-        detection = state["detection"]
-        if state["capture_running"] and detection["enabled"] and not detection["error"]:
+        """Check what this arming depends on, and act on a failure as the policy says.
+
+        `global` stops everything, as Sentry always did. `isolated` stops only the rules
+        that need what failed, and keeps the others armed as long as any are left.
+        """
+        plan = self.plan
+        failures: dict[str, str] = {}
+        if plan is None or plan.camera:
+            state = self.video.status()
+            detection = state["detection"]
+            needs_detector = plan is None or plan.detector
+            if not state["capture_running"] or (
+                needs_detector and (not detection["enabled"] or detection["error"])
+            ):
+                failures[PRIMARY_CAMERA] = (
+                    state["error"] or detection["error"] or "Camera or detector stopped."
+                )
+        for source_id in plan.watched if plan else ():
+            record = self.sources.get(source_id)
+            if record is None or record.state in (SourceState.DISABLED, SourceState.FAILED):
+                failures[source_id] = f"{source_id} is no longer available."
+        if not failures:
             return True
+        if self.config.fault_policy == "isolated" and plan is not None:
+            return self._isolate(plan, failures)
         with self.guard:
-            self.error = state["error"] or detection["error"] or "Camera or detector stopped."
+            self.error = next(iter(failures.values()))
             self.armed = False
             self.cancelled.set()
             self._discard_jobs()
             self._event("fault", self.error)
+        self.video.set_sentry(False)
+        return False
+
+    def _isolate(self, plan: Plan, failures: dict[str, str]) -> bool:
+        with self.guard:
+            for source_id, message in failures.items():
+                for rule_id in plan.rules_needing(source_id) - set(self.suspended):
+                    self.suspended[rule_id] = message
+                    rule = next(r for r in self.config.rules if r.id == rule_id)
+                    self._event("fault", f"Rule paused: {message}", rule.name)
+            left = set(self.states) - set(self.suspended)
+            if left:
+                if PRIMARY_CAMERA in failures and plan.camera:
+                    # Nothing left needs the camera; let it go rather than retry it.
+                    self.plan = Plan(
+                        watched=plan.watched,
+                        needs=plan.needs,
+                        min_confidence=plan.min_confidence,
+                    )
+                    self.video.set_sentry(False)
+                return True
+            self.error = "; ".join(failures.values())
+            self.armed = False
+            self.cancelled.set()
+            self._discard_jobs()
+            self._event("fault", "Every armed rule depends on something that failed.")
         self.video.set_sentry(False)
         return False
 
@@ -516,6 +800,9 @@ class Sentry:
         """
         deadline = job.created + job.delay + self.config.action_ttl_seconds
         if self.cancelled.is_set():
+            return
+        if job.context is not None and job.context.arm_epoch != self.arm_epoch:
+            self._event("cancelled", "Action belonged to an earlier arming.", job.rule)
             return
         if len(job.steps) == 1:
             self._step(job.rule, job.steps[0], deadline)
@@ -831,3 +1118,44 @@ class Sentry:
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait()
+
+
+def confirm(rule: RuleV2, state: RuleState, count: int, captured: float) -> list[tuple[str, str]]:
+    """One camera sample through a vision rule. Returns the events it produced.
+
+    The rule fires after enough consecutive samples with enough matching objects, stays
+    latched while they remain, and becomes ready again only after a real absence.
+    """
+    trigger = rule.trigger
+    assert isinstance(trigger, VisionTrigger)
+    notes: list[tuple[str, str]] = []
+    if count < trigger.min_count:
+        state.hits = 0
+        if state.absent_since is None:
+            state.absent_since = captured
+        if state.latched and captured - state.absent_since >= trigger.rearm_after_absence_seconds:
+            state.latched = False
+            notes.append(("rearmed", "Object absent long enough; ready for another appearance."))
+        return notes
+    state.absent_since = None
+    state.hits = min(trigger.consecutive_detections, state.hits + 1)
+    if state.hits == 1 and not state.latched:
+        notes.append(("detected", f"{trigger.object}: {count} matching object(s)."))
+    if state.latched or state.hits < trigger.consecutive_detections:
+        return notes
+    if not cooled(state, rule.cooldown_seconds, captured):
+        return notes
+    state.latched, state.last_trigger = True, captured
+    notes.append(("triggered", f"Confirmed {trigger.object} appearance."))
+    return notes
+
+
+@dataclass(frozen=True)
+class Simulated:
+    """An observation made up for a simulation, shaped like a normalized event."""
+
+    ref: SourceRef
+    kind: str
+    value: object
+    quality: str
+    received_monotonic: float

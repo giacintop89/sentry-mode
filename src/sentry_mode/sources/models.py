@@ -20,6 +20,12 @@ The rule is a pattern rather than a validator so that it reaches the generated J
 schema, where the satellites can hold themselves to exactly the same names.
 """
 
+PRIMARY_CAMERA = "legacy-primary"
+PRIMARY_MICROPHONE = "legacy-microphone"
+PRIMARY_SPEAKER = "legacy-speaker"
+"""This node's own devices. They live here, beside the grammar, so that anything that
+needs the names can have them without loading the node's whole configuration."""
+
 
 class SourceKind(str, Enum):
     """What a source produces, which decides what a rule may ask of it."""

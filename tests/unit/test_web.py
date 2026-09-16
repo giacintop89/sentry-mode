@@ -1110,3 +1110,72 @@ def test_a_hub_with_satellites_off_never_loads_them(tmp_path):
         [sys.executable, "-c", script], capture_output=True, text=True, check=True
     ).stdout.strip()
     assert loaded == "['sentry_mode.satellites', 'sentry_mode.satellites.config']"
+
+
+PIR_RULE = {
+    "id": "pir-hello",
+    "name": "PIR hello",
+    "trigger": {"type": "sensor_event", "source_id": "zero-entrance.pir", "kind": "motion.pir"},
+    "actions": [{"type": "tts", "text": "Hello"}],
+}
+
+
+def test_second_version_rules_are_served_and_hidden_from_the_first_editor(web):
+    controls, base = web
+    code, data, _ = request(base, "/api/sentry/v2/config")
+    assert code == 200 and data["schema_version"] == 2 and data["stored_schema_version"] == 1
+    assert data["config"]["rules"][0]["id"] == "person-at-entrance"
+    config = {**data["config"], "rules": [PIR_RULE]}
+    payload = {"config": config, "revision": data["revision"]}
+    assert request(base, "/api/sentry/v2/config", "POST", {}, payload)[0] == 403
+    code, saved, _ = request(base, "/api/sentry/v2/config", "POST", body=payload)
+    assert code == 200 and saved["stored_schema_version"] == 2
+    assert "switched off" in saved["plan"]["problems"][0]["message"]
+
+    code, refused, _ = request(base, "/api/sentry/config")
+    assert code == 409 and refused["code"] == "schema_upgrade_required"
+    assert refused["reasons"] == ["PIR hello is set off by sensor event"]
+    legacy = {"config": {"rules": []}, "revision": saved["revision"]}
+    code, refused, _ = request(base, "/api/sentry/config", "POST", body=legacy)
+    assert code == 409 and refused["code"] == "schema_upgrade_required"
+    assert controls.sentry.config.rules[0].id == "pir-hello"
+    # The status the first editor polls keeps its shape.
+    assert request(base, "/api/sentry/status")[1]["rules"][0]["name"] == "PIR hello"
+
+    code, error, _ = request(base, "/api/sentry/start", "POST")
+    assert code == 400 and "satellites are switched off" in error["error"]
+
+
+def test_a_rule_can_be_simulated_without_running_anything(web):
+    controls, base = web
+    body = {"rule": PIR_RULE, "samples": [{"at": 0, "value": True}, {"at": 1, "value": False}]}
+    assert request(base, "/api/events/simulate", "POST", {}, body)[0] == 403
+    code, result, _ = request(base, "/api/events/simulate", "POST", body=body)
+    assert code == 200 and result["executed"] is False
+    assert [step["fired"] for step in result["steps"]] == [True, False]
+    assert result["steps"][0]["would_run"] == ["TTS: Hello"]
+    assert request(base, "/api/events/simulate", "POST", body={"rule": PIR_RULE})[0] == 400
+    bad = {"rule": {**PIR_RULE, "id": "Not An Id"}, "samples": []}
+    assert request(base, "/api/events/simulate", "POST", body=bad)[0] == 400
+
+
+def test_a_second_version_rule_test_refuses_satellite_sources_while_they_are_off(web):
+    controls, base = web
+    with patch("sentry_mode.sentry.engine.speak"):
+        code, error, _ = request(base, "/api/sentry/v2/rules/test", "POST", body=PIR_RULE)
+        # The actions only speak, so nothing remote is needed to run them.
+        assert code == 200, error
+        controls.sentry.thread.join(timeout=3)
+    rule = {**PIR_RULE, "actions": [{"type": "photo", "source_id": "zero-entrance.camera"}]}
+    code, error, _ = request(base, "/api/sentry/v2/rules/test", "POST", body=rule)
+    assert code == 400 and "switched off" in error["error"]
+
+
+def test_the_engine_hears_the_satellites_through_the_dashboard(tmp_path):
+    with patch("sentry_mode.satellites.service.build") as build:
+        controls = dashboard(tmp_path, enabled=True)
+    try:
+        assert build.call_args.kwargs["on_event"] == controls.sentry.observe_event
+        assert controls.sentry.sources is controls.sources
+    finally:
+        controls.video.close()

@@ -1,7 +1,6 @@
 """Settings for the satellite side of the node, off until there is something to talk to."""
 
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -87,7 +86,10 @@ class SessionsConfig(Section):
 
 
 class SatellitesConfig(Section):
-    """Whether this node listens to other nodes at all, and what it does when one misbehaves.
+    """Whether this node listens to other nodes at all.
+
+    What Sentry does when a source fails is a property of the rules, so it lives in the
+    rules document as `fault_policy`.
 
     Everything the media path needs arrives with the increments that use it. A node with
     `enabled: false` imports none of this, contacts nothing, and behaves exactly as it did
@@ -97,7 +99,6 @@ class SatellitesConfig(Section):
     enabled: bool = False
     store_path: Path = Path(".local/satellites.sqlite3")
     nodes_file: Path = Path(".local/satellite-nodes.json")
-    fault_policy: Literal["isolated", "global"] = "isolated"
     mqtt: MqttConfig = Field(default_factory=MqttConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)

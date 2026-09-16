@@ -137,6 +137,9 @@ reaches a rule. Everything else is kept with its reason:
 Heartbeats are not written down. The latest one from each node replaces the one before
 and is shown with the node's status.
 
+The events that do count are handed to Sentry, where `sensor_event` and `threshold`
+rules can act on them; see [rules, second version](rules-v2.md).
+
 If the disk is full or the file is damaged, the hub keeps running its own cameras and
 rules, reports the journal as unavailable, and stops admitting satellite events it
 cannot keep. Nothing is acknowledged that was not written.
