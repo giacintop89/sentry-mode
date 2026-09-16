@@ -353,7 +353,8 @@ where the voice is heard, not where a rule must answer instantly. No cloud servi
 
 **Save message** keeps the text with its voice, rate and voice modification on the
 **Soundboard**, where each saved message is a card: **Play** speaks it on the node again,
-**Preview** plays it through this browser's own speaker, and × deletes it. Up to 48 messages are saved atomically to `.local/soundboard.json`
+**Download** saves the sample as an mp3, **Preview** plays it through this browser's own
+speaker, and × deletes it. Up to 48 messages are saved atomically to `.local/soundboard.json`
 (private file permissions; override with `soundboard_file` or
 `SENTRY_MODE_SOUNDBOARD_FILE`). Saving the same message twice keeps one card, and a card
 cannot play while other audio is using the speaker.

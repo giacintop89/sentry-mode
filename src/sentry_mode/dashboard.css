@@ -206,14 +206,17 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .sound-card::before{content:'';position:absolute;z-index:-1;inset:2px;background:linear-gradient(var(--card-accent),var(--card-accent)) 12px 42px/2px 32% no-repeat,linear-gradient(var(--card-accent),var(--card-accent)) right 12px bottom 38px/2px 22% no-repeat,linear-gradient(var(--card-accent),var(--card-accent)) right 32px bottom 12px/54px 2px no-repeat,var(--card-fill);clip-path:polygon(25px 0,calc(100% - 71px) 0,calc(100% - 59px) 12px,100% 12px,100% calc(100% - 25px),calc(100% - 25px) 100%,0 100%,0 25px)}
 .sound-card:has(.sound-play:hover:not(:disabled)){--card-fill:#0f2a2e}
 .sound-card:has(.sound-play:active:not(:disabled)),.sound-card.playing{--card-fill:#153a40}
-.sound-card:has(.sound-play:focus-visible),.sound-card:has(.sound-preview:focus-visible){--card-accent:#c9f6fb}
+.sound-card:has(.sound-play:focus-visible),.sound-card:has(.sound-download:focus-visible),.sound-card:has(.sound-preview:focus-visible){--card-accent:#c9f6fb}
 .sound-title{font-size:20.667px;font-weight:700;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow-wrap:anywhere}
 .sound-meta{font-size:15.667px;color:var(--card-accent);overflow-wrap:anywhere;line-height:1.4}
-.sound-card .sound-play,.sound-card .sound-preview{min-height:0;padding:5px 22px 5px 10px;border:0;border-radius:0;background:var(--card-accent);color:#06110b;font-weight:bold;font-size:15.667px;letter-spacing:.5px;clip-path:polygon(0 0,100% 0,calc(100% - 12px) 100%,0 100%)}
-.sound-card .sound-play{margin-top:auto}
+/* Three tags along the foot of the card: one aimed at the node, one at this device, and
+   between them the file itself, cut on both sides so it reads as the piece in the middle. */
+.sound-actions{display:flex;align-items:center;gap:10px;width:100%;margin-top:auto}
+.sound-card .sound-play,.sound-card .sound-download,.sound-card .sound-preview{min-height:0;padding:5px 22px 5px 10px;border:0;border-radius:0;background:var(--card-accent);color:#06110b;font-weight:bold;font-size:15.667px;letter-spacing:.5px;text-decoration:none;white-space:nowrap;clip-path:polygon(0 0,100% 0,calc(100% - 12px) 100%,0 100%)}
+.sound-card .sound-download{margin:0 auto;padding:5px 20px;clip-path:polygon(12px 0,100% 0,calc(100% - 12px) 100%,0 100%)}
 .sound-card .sound-play:disabled{opacity:1;cursor:progress}
-.sound-card .sound-play:hover:not(:disabled),.sound-card .sound-preview:hover:not(:disabled){background:#c9f6fb}
-.sound-card .sound-preview{position:absolute;right:26px;bottom:32px;transform:rotate(180deg)}
+.sound-card .sound-play:hover:not(:disabled),.sound-card .sound-download:hover,.sound-card .sound-preview:hover:not(:disabled){background:#c9f6fb}
+.sound-card .sound-preview{transform:rotate(180deg)}
 .sound-card .sound-preview span{display:block;transform:rotate(180deg)}
 .sound-card .sound-delete{position:absolute;top:18px;right:14px;width:36px;min-height:36px;height:36px;padding:0;border:1px solid #2f6a73;border-radius:0;background:#091910;color:var(--card-accent);font-size:20.667px;line-height:1}
 .sound-card .sound-delete:hover:not(:disabled){background:#153a40;border-color:var(--card-accent);color:#c9f6fb}
@@ -229,7 +232,7 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
   body[data-view=voice] .comms-panel{height:auto;overflow:visible}
   #panel-push-to-talk{grid-column:1;grid-row:1}#panel-speech{grid-column:2;grid-row:1}#panel-soundboard{grid-column:1/-1;grid-row:2}
 }
-@media(max-width:540px){.soundboard-grid{grid-template-columns:minmax(0,1fr)}.sound-card{min-height:160px;padding:58px 24px 28px 22px}.sound-card .sound-preview{right:22px;bottom:28px}.comms-panel .speech-actions button{padding-inline:8px;white-space:nowrap}}
+@media(max-width:540px){.soundboard-grid{grid-template-columns:minmax(0,1fr)}.sound-card{min-height:160px;padding:58px 24px 28px 22px}.sound-actions{gap:8px}.comms-panel .speech-actions button{padding-inline:8px;white-space:nowrap}}
 
 /* Monitoring toolbar: status, settings and arm controls on one line, stacking on phones. */
 .sentry-control{display:grid;grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"status settings arm" "messages messages messages";align-items:center;gap:6px 22px;padding:12px 18px}
@@ -383,4 +386,11 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
 }
 @media(max-width:400px){
   .workspace-tabs button{padding:11px 3px;font-size:13.667px}
+}
+
+/* Three tags in a row are wider than the narrowest phone: the slant needs its own room,
+   so only the flat side of each tag gives up padding. */
+@media(max-width:400px){
+  .sound-card .sound-play,.sound-card .sound-preview{padding-inline:6px 20px}
+  .sound-card .sound-download{padding-inline:16px}
 }

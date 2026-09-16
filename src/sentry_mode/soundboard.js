@@ -27,6 +27,11 @@
     }
     return parts.join(' · ');
   }
+  // A saved file keeps the words it was made from, so a download is recognisable later.
+  function fileName(message) {
+    const slug = message.text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    return 'sentry-mode-' + (slug.slice(0, 40).replace(/-$/, '') || 'message') + '.mp3';
+  }
   function render() {
     grid.replaceChildren();
     empty.hidden = messages.length > 0;
@@ -44,6 +49,10 @@
       play.textContent = playing === message.id ? 'PLAYING…' : 'PLAY';
       play.setAttribute('aria-label', 'Play “' + message.text + '” on the node');
       play.addEventListener('click', () => playMessage(message));
+      const save = document.createElement('a');
+      save.className = 'sound-download'; save.textContent = 'DOWNLOAD';
+      save.href = '/soundboard/' + message.id + '.mp3'; save.download = fileName(message);
+      save.setAttribute('aria-label', 'Download “' + message.text + '” as an mp3');
       const listen = document.createElement('button');
       listen.type = 'button'; listen.className = 'sound-preview';
       const label = document.createElement('span');
@@ -56,7 +65,10 @@
       remove.textContent = '×'; remove.disabled = busy;
       remove.setAttribute('aria-label', 'Delete “' + message.text + '” from the soundboard');
       remove.addEventListener('click', () => deleteMessage(message));
-      card.append(title, meta, play, listen, remove);
+      const actions = document.createElement('div');
+      actions.className = 'sound-actions';
+      actions.append(play, save, listen);
+      card.append(title, meta, actions, remove);
       if (playing === message.id) card.classList.add('playing');
       grid.append(card);
     }
