@@ -45,6 +45,26 @@ equivalent, and its bandwidth has to be measured rather than assumed: at 30 kB p
 and 10 fps it is about 2.4 Mbit/s before overhead, which is an arithmetic example and not a
 measurement of this board.
 
+## Measured so far
+
+The camera is fitted and encodes. On 16 September 2026, `zero_w_qualify.py --video 10`
+recorded 10 s at 640x480/10 fps through `rpicam-vid`: **1028 KiB, 0.76 Mbit/s**, with the
+calling process burning 0.01 s of CPU because the work happens in the GPU block. Startup
+cost about one second before the first frame.
+
+That rate is comfortable for 2.4 GHz Wi-Fi, and it is the only part of the pipeline that
+exists: `ffmpeg` is not installed on the node, no transport has been chosen, and nothing
+has measured CPU, memory or Wi-Fi under an actual stream. The capability stays
+`unqualified`.
+
+## A local-device setting is not a remote one
+
+`camera.fourcc` (default `MJPG`) and `camera.exposure` arrived on the hub in `5ccc285` and
+are UVC negotiations against a local device. A network source cannot honour them, so the
+source registry must not offer them for a remote camera, and migrating a `legacy-primary`
+whose `device` is a URL must not apply them. This is the same rule as above seen from the
+other end: the receiver does not steer the encoder.
+
 ## Measurements to record
 
 | Field | Value | Notes |
