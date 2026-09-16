@@ -1,0 +1,110 @@
+{
+  "config": {
+    "detection_fps": 4.0,
+    "test_mode": false,
+    "action_ttl_seconds": 15,
+    "rules": [
+      {
+        "name": "Person at entrance",
+        "enabled": true,
+        "object": "person",
+        "min_confidence": 0.7,
+        "min_count": 1,
+        "consecutive_detections": 2,
+        "rearm_after_absence_seconds": 10.0,
+        "cooldown_seconds": 30.0,
+        "region": null,
+        "actions": [
+          {
+            "with_previous": false,
+            "type": "telegram",
+            "text": "Sentry detected a person at the entrance.",
+            "silent": false
+          },
+          {
+            "with_previous": true,
+            "type": "video",
+            "duration_seconds": 10,
+            "audio": true
+          }
+        ]
+      },
+      {
+        "name": "Vehicle at gate",
+        "enabled": true,
+        "object": "car",
+        "min_confidence": 0.6,
+        "min_count": 1,
+        "consecutive_detections": 3,
+        "rearm_after_absence_seconds": 15.0,
+        "cooldown_seconds": 60.0,
+        "region": [0.1, 0.2, 0.9, 0.95],
+        "actions": [
+          {
+            "with_previous": false,
+            "type": "photo",
+            "count": 3,
+            "interval_seconds": 2.0
+          },
+          {
+            "with_previous": false,
+            "type": "wait",
+            "seconds": 1.5
+          },
+          {
+            "with_previous": false,
+            "type": "tts",
+            "text": "Please wait at the gate.",
+            "voice": "en",
+            "rate": 175,
+            "effects": {
+              "preset": "natural",
+              "pitch": 0.0,
+              "volume": 60
+            }
+          },
+          {
+            "with_previous": true,
+            "type": "tune",
+            "tune": "chime",
+            "repeat": 1,
+            "volume": 60,
+            "pitch": 0.0
+          },
+          {
+            "with_previous": false,
+            "type": "sound",
+            "sound": "gate-warning-1a2b3c4d",
+            "repeat": 1,
+            "volume": 80
+          },
+          {
+            "with_previous": false,
+            "type": "audio",
+            "duration_seconds": 8
+          },
+          {
+            "with_previous": false,
+            "type": "ssh",
+            "command_id": "gate-light"
+          }
+        ]
+      }
+    ],
+    "ssh_commands": {
+      "gate-light": {
+        "host": "gate-node.invalid",
+        "user": "sentry",
+        "port": 22,
+        "command": "/usr/local/bin/gate-light on",
+        "identity_file": "/home/sentry/.ssh/id_ed25519_gate",
+        "timeout_seconds": 5
+      }
+    },
+    "telegram": {
+      "bot_token": "",
+      "chat_id": ""
+    }
+  },
+  "revision": 39
+}

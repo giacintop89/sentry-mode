@@ -1,0 +1,12 @@
+# V1 baseline: the deployed shape, camera pinned by stable /dev/v4l/by-id path.
+# Device strings are examples with no real serial; no secrets belong in fixtures.
+web_frame_origins:
+- http://127.0.0.1:8092
+- https://127.0.0.1:8445
+camera:
+  device: /dev/v4l/by-id/usb-046d_Logitech_StreamCam_0000000E-video-index0
+microphone:
+  device: alsa_input.usb-046d_Logitech_StreamCam_0000000E-02.analog-stereo
+speaker:
+  device: bluez_output.00_00_5E_00_53_00.1
+  volume: 75

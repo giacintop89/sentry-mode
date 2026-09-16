@@ -37,3 +37,13 @@ Dated design documents, kept as written; they describe proposals, not current be
 
 - [Low-latency implementation plan](sentry-mode-low-latency-implementation-plan.md)
 - [Vision node self-centering functional plan](vision-node-self-centering-functional-plan.md)
+- [Zero W satellites: functional plan](sentry-mode-zero-w-functional-plan.md)
+- [Zero W satellites: implementation plan](sentry-mode-zero-w-implementation-plan.md)
+
+## Decisions
+
+Records of what was measured and what was fixed; a decision here binds the code.
+
+- [Baseline before the satellite work](adr/zero-w-baseline.md) — the regression and fixtures to compare against.
+- [Zero W runtime](adr/zero-w-runtime.md) — OS, packages and peripherals; unqualified until measured.
+- [Satellite video profile](adr/satellite-video-profile.md) — the encode and transport decision; pending.

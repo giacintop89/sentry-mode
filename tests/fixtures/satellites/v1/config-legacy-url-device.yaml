@@ -1,0 +1,12 @@
+# V1 baseline: camera.device already holding a network URL.
+# The functional plan calls this out: legacy-primary may not be a local device,
+# so migration must preserve the string exactly instead of assuming an index.
+camera:
+  enabled: true
+  device: http://satellite.invalid:8080/?action=stream
+  width: 640
+  height: 480
+  fps: 10
+detection:
+  enabled: true
+  max_fps: 2

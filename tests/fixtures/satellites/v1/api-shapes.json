@@ -1,0 +1,266 @@
+{
+  "/api/audio/list": {
+    "configured": {
+      "microphone": "str",
+      "speaker": "str"
+    },
+    "microphones": [
+      {
+        "backend": "str",
+        "description": "str",
+        "name": "str"
+      }
+    ],
+    "speakers": [
+      {
+        "backend": "str",
+        "description": "str",
+        "name": "str"
+      }
+    ]
+  },
+  "/api/camera/list": {
+    "configured": "int",
+    "devices": [
+      "str"
+    ]
+  },
+  "/api/captures": {
+    "captures": []
+  },
+  "/api/config": {
+    "camera": {
+      "device": "int",
+      "enabled": "bool",
+      "exposure": "int",
+      "fourcc": "str",
+      "fps": "float",
+      "height": "int",
+      "width": "int"
+    },
+    "captures_directory": "str",
+    "detection": {
+      "confidence": "float",
+      "enabled": "bool",
+      "max_fps": "float",
+      "model": "str"
+    },
+    "logging": {
+      "level": "str"
+    },
+    "microphone": {
+      "device": "str",
+      "enabled": "bool"
+    },
+    "node": {
+      "name": "str"
+    },
+    "sentry": {
+      "action_ttl_seconds": "int",
+      "detection_fps": "float",
+      "rules": [
+        {
+          "actions": [
+            {
+              "effects": {
+                "pitch": "float",
+                "preset": "str",
+                "volume": "null"
+              },
+              "rate": "int",
+              "text": "str",
+              "type": "str",
+              "voice": "str",
+              "with_previous": "bool"
+            }
+          ],
+          "consecutive_detections": "int",
+          "cooldown_seconds": "float",
+          "enabled": "bool",
+          "min_confidence": "float",
+          "min_count": "int",
+          "name": "str",
+          "object": "str",
+          "rearm_after_absence_seconds": "float",
+          "region": "null"
+        }
+      ],
+      "ssh_commands": {},
+      "telegram": {
+        "bot_token": "str",
+        "chat_id": "str"
+      },
+      "test_mode": "bool"
+    },
+    "sentry_state_file": "str",
+    "soundboard_directory": "str",
+    "soundboard_file": "str",
+    "sounds_directory": "str",
+    "speaker": {
+      "device": "str",
+      "enabled": "bool",
+      "pipewire_latency_ms": "int",
+      "volume": "int"
+    },
+    "speech": {
+      "enabled": "bool",
+      "engine": "str",
+      "kokoro_directory": "str",
+      "lead_in_ms": "int",
+      "rate": "int",
+      "speakers": {
+        "en": "str",
+        "it": "str"
+      },
+      "tail_ms": "int",
+      "talk_gain_db": "int",
+      "voice": "str"
+    },
+    "web_frame_origins": []
+  },
+  "/api/hardware": {
+    "camera": "str",
+    "camera_exposure": "int",
+    "camera_fourcc": "str",
+    "camera_fps": "int",
+    "camera_height": "int",
+    "camera_width": "int",
+    "cameras": [
+      "str"
+    ],
+    "microphone": "str",
+    "microphones": [
+      {
+        "backend": "str",
+        "description": "str",
+        "name": "str"
+      }
+    ],
+    "output_level": {
+      "level": "int",
+      "reason": "null",
+      "supported": "bool"
+    },
+    "saved_to": "null",
+    "speaker": "str",
+    "speaker_volume": "int",
+    "speakers": [
+      {
+        "backend": "str",
+        "description": "str",
+        "name": "str"
+      }
+    ]
+  },
+  "/api/runtime": {
+    "error": "null",
+    "running": "bool"
+  },
+  "/api/sentry/config": {
+    "config": {
+      "action_ttl_seconds": "int",
+      "detection_fps": "float",
+      "rules": [
+        {
+          "actions": [
+            {
+              "effects": {
+                "pitch": "float",
+                "preset": "str",
+                "volume": "null"
+              },
+              "rate": "int",
+              "text": "str",
+              "type": "str",
+              "voice": "str",
+              "with_previous": "bool"
+            }
+          ],
+          "consecutive_detections": "int",
+          "cooldown_seconds": "float",
+          "enabled": "bool",
+          "min_confidence": "float",
+          "min_count": "int",
+          "name": "str",
+          "object": "str",
+          "rearm_after_absence_seconds": "float",
+          "region": "null"
+        }
+      ],
+      "ssh_commands": {},
+      "telegram": {
+        "bot_token": "str",
+        "chat_id": "str"
+      },
+      "test_mode": "bool"
+    },
+    "error": "null",
+    "objects": [
+      "str"
+    ],
+    "revision": "int",
+    "telegram_token_configured": "bool"
+  },
+  "/api/sentry/status": {
+    "active_action": "null",
+    "armed": "bool",
+    "error": "null",
+    "events": [],
+    "pending_actions": "int",
+    "revision": "int",
+    "rules": [
+      {
+        "confirmed": "bool",
+        "enabled": "bool",
+        "hits": "int",
+        "name": "str"
+      }
+    ],
+    "test_mode": "bool"
+  },
+  "/api/soundboard": {
+    "error": "null",
+    "limit": "int",
+    "messages": []
+  },
+  "/api/sounds": {
+    "limit": "int",
+    "max_seconds": "int",
+    "sounds": []
+  },
+  "/api/streams": {
+    "audio": "bool",
+    "video": "bool"
+  },
+  "/api/talk/config": {
+    "https_port": "null",
+    "local_ca": "bool"
+  },
+  "/api/video/status": {
+    "capture_running": "bool",
+    "capture_size": "null",
+    "detection": {
+      "available": "bool",
+      "enabled": "bool",
+      "error": "null",
+      "inference_ms": "null",
+      "max_fps": "int",
+      "model": "str",
+      "objects": []
+    },
+    "encoded_frames": "int",
+    "error": "null",
+    "fps": "int",
+    "max_width": "int",
+    "monitoring": "bool",
+    "reconnects": "int",
+    "recording": {
+      "active": "bool",
+      "max_seconds": "int",
+      "result": "null",
+      "started": "null"
+    },
+    "running": "bool",
+    "viewers": "int"
+  }
+}
