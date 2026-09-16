@@ -201,8 +201,8 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .comms-panel .speech-actions #save-message{white-space:nowrap}
 .comms-panel .speech-actions button{width:100%}
 .soundboard-empty{font-size:15.667px}
-.soundboard-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
-.sound-card{--card-accent:#79e5f2;--card-fill:#091910;position:relative;isolation:isolate;min-width:0;min-height:190px;display:flex;flex-direction:column;align-items:flex-start;gap:12px;padding:60px 36px 32px 26px;color:#baffc8;background:var(--card-accent);clip-path:polygon(26px 0,calc(100% - 72px) 0,calc(100% - 60px) 12px,100% 12px,100% calc(100% - 26px),calc(100% - 26px) 100%,0 100%,0 26px)}
+.soundboard-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:16px}
+.sound-card{--card-accent:#79e5f2;--card-fill:#091910;position:relative;isolation:isolate;min-width:0;min-height:190px;display:flex;flex-direction:column;align-items:flex-start;gap:12px;padding:60px 26px 32px 26px;color:#baffc8;background:var(--card-accent);clip-path:polygon(26px 0,calc(100% - 72px) 0,calc(100% - 60px) 12px,100% 12px,100% calc(100% - 26px),calc(100% - 26px) 100%,0 100%,0 26px)}
 .sound-card::before{content:'';position:absolute;z-index:-1;inset:2px;background:linear-gradient(var(--card-accent),var(--card-accent)) 12px 42px/2px 32% no-repeat,linear-gradient(var(--card-accent),var(--card-accent)) right 12px bottom 38px/2px 22% no-repeat,linear-gradient(var(--card-accent),var(--card-accent)) right 32px bottom 12px/54px 2px no-repeat,var(--card-fill);clip-path:polygon(25px 0,calc(100% - 71px) 0,calc(100% - 59px) 12px,100% 12px,100% calc(100% - 25px),calc(100% - 25px) 100%,0 100%,0 25px)}
 .sound-card:has(.sound-play:hover:not(:disabled)){--card-fill:#0f2a2e}
 .sound-card:has(.sound-play:active:not(:disabled)),.sound-card.playing{--card-fill:#153a40}
@@ -211,9 +211,9 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .sound-meta{font-size:15.667px;color:var(--card-accent);overflow-wrap:anywhere;line-height:1.4}
 /* Three tags along the foot of the card: one aimed at the node, one at this device, and
    between them the file itself, cut on both sides so it reads as the piece in the middle. */
-.sound-actions{display:flex;align-items:center;gap:10px;width:100%;margin-top:auto}
-.sound-card .sound-play,.sound-card .sound-download,.sound-card .sound-preview{min-height:0;padding:5px 22px 5px 10px;border:0;border-radius:0;background:var(--card-accent);color:#06110b;font-weight:bold;font-size:15.667px;letter-spacing:.5px;text-decoration:none;white-space:nowrap;clip-path:polygon(0 0,100% 0,calc(100% - 12px) 100%,0 100%)}
-.sound-card .sound-download{margin:0 auto;padding:5px 20px;clip-path:polygon(12px 0,100% 0,calc(100% - 12px) 100%,0 100%)}
+.sound-actions{display:flex;align-items:center;gap:8px;width:100%;margin-top:auto}
+.sound-card .sound-play,.sound-card .sound-download,.sound-card .sound-preview{min-height:0;padding:5px 16px 5px 5px;border:0;border-radius:0;background:var(--card-accent);color:#06110b;font-weight:bold;font-size:13.667px;letter-spacing:.5px;text-decoration:none;white-space:nowrap;clip-path:polygon(0 0,100% 0,calc(100% - 10px) 100%,0 100%)}
+.sound-card .sound-download{margin:0 auto;padding:5px 10px;clip-path:polygon(10px 0,100% 0,calc(100% - 10px) 100%,0 100%)}
 .sound-card .sound-play:disabled{opacity:1;cursor:progress}
 .sound-card .sound-play:hover:not(:disabled),.sound-card .sound-download:hover,.sound-card .sound-preview:hover:not(:disabled){background:#c9f6fb}
 .sound-card .sound-preview{transform:rotate(180deg)}
@@ -222,7 +222,7 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .sound-card .sound-delete:hover:not(:disabled){background:#153a40;border-color:var(--card-accent);color:#c9f6fb}
 .soundboard-panel .result{margin-top:12px}
 @media(min-width:1101px){
-  body[data-view=voice] .comms-column{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) minmax(0,1fr)}
+  body[data-view=voice] .comms-column{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) minmax(0,1.15fr)}
 }
 /* Between phone and desktop three panels do not fit one screen: the voice
    view grows past it and scrolls as a page, so no panel hides its controls. */
@@ -232,7 +232,7 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
   body[data-view=voice] .comms-panel{height:auto;overflow:visible}
   #panel-push-to-talk{grid-column:1;grid-row:1}#panel-speech{grid-column:2;grid-row:1}#panel-soundboard{grid-column:1/-1;grid-row:2}
 }
-@media(max-width:540px){.soundboard-grid{grid-template-columns:minmax(0,1fr)}.sound-card{min-height:160px;padding:58px 24px 28px 22px}.sound-actions{gap:8px}.comms-panel .speech-actions button{padding-inline:8px;white-space:nowrap}}
+@media(max-width:540px){.soundboard-grid{grid-template-columns:minmax(0,1fr)}.sound-card{min-height:160px;padding:58px 22px 28px 22px}.comms-panel .speech-actions button{padding-inline:8px;white-space:nowrap}}
 
 /* Monitoring toolbar: status, settings and arm controls on one line, stacking on phones. */
 .sentry-control{display:grid;grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"status settings arm" "messages messages messages";align-items:center;gap:6px 22px;padding:12px 18px}
@@ -386,11 +386,4 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
 }
 @media(max-width:400px){
   .workspace-tabs button{padding:11px 3px;font-size:13.667px}
-}
-
-/* Three tags in a row are wider than the narrowest phone: the slant needs its own room,
-   so only the flat side of each tag gives up padding. */
-@media(max-width:400px){
-  .sound-card .sound-play,.sound-card .sound-preview{padding-inline:6px 20px}
-  .sound-card .sound-download{padding-inline:16px}
 }
