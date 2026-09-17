@@ -72,6 +72,26 @@ void put_who(Writer& writer, const char* node_id, const char* boot_id) {
 
 }  // namespace
 
+const char* name_of(Woke woke) {
+  switch (woke) {
+    case Woke::kPower:
+      return "power";
+    case Woke::kBrownout:
+      return "brownout";
+    case Woke::kButton:
+      return "button";
+    case Woke::kWatchdog:
+      return "watchdog";
+    case Woke::kSoftware:
+      return "software";
+    case Woke::kDebugger:
+      return "debugger";
+    case Woke::kUnknown:
+    default:
+      return "unknown";
+  }
+}
+
 const char* name_of(Outcome outcome) {
   switch (outcome) {
     case Outcome::kReceived:
@@ -273,6 +293,10 @@ size_t write_health(const Health& health, char* buffer, size_t capacity) {
   if (health.board.has_free_heap) {
     writer.key("memory_available_kb");
     writer.integer(health.board.memory_available_kb);
+  }
+  if (health.board.woke != Woke::kUnknown) {
+    writer.key("reset");
+    writer.string(name_of(health.board.woke));
   }
   writer.object_close();
   writer.object_close();

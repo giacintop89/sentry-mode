@@ -23,6 +23,12 @@
     if (seconds === null || seconds === undefined) return '—';
     return span(seconds) + ' ago';
   }
+  // Why the board is running this time, in words rather than in the wire's. A node that
+  // did not say is left out: silence is not a clean start, and showing one would be
+  // inventing the most reassuring of the answers it could have given.
+  const RESET = {power: 'came back on power', brownout: 'came back after a brown-out',
+    button: 'came back on the reset button', watchdog: 'came back on the watchdog',
+    software: 'came back on a software reboot', debugger: 'came back on a debugger'};
   function reading(source) {
     const last = source.last;
     if (!last) return source.error ? 'Unavailable' : '—';
@@ -51,8 +57,8 @@
     f(item, 'freshness').textContent = freshness;
     f(item, 'freshness').classList.toggle('armed', freshness === 'fresh');
     const platform = node.platform || {};
-    const kind = platform.name && (platform.name + (platform.experimental ? ' (experimental)' : ''));
-    const meta = [node.zone && 'zone ' + node.zone, node.profile, kind, node.agent_version && 'agent ' + node.agent_version,
+    const machine = platform.name && (platform.name + (platform.experimental ? ' (experimental)' : ''));
+    const meta = [node.zone && 'zone ' + node.zone, node.profile, machine, node.agent_version && 'agent ' + node.agent_version,
       node.config_revision ? 'configuration ' + node.config_revision : 'installed configuration',
       node.last_seen ? 'heard ' + ago(Date.now() / 1000 - node.last_seen) : 'not heard yet',
       node.clock_status && 'clock ' + node.clock_status];
@@ -68,6 +74,7 @@
       board.memory_available_kb != null && board.memory_available_kb + ' kB free',
       board.load1 != null && 'load ' + board.load1.toFixed(2),
       board.throttled,
+      board.reset && (RESET[board.reset] || 'came back: ' + board.reset),
       comings.restarts ? comings.restarts + ' restart' + (comings.restarts === 1 ? '' : 's')
         + (comings.restarted_seconds_ago != null ? ', last ' + ago(comings.restarted_seconds_ago) : '') : null,
       queue.events != null && queue.events + ' queued',

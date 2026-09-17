@@ -96,7 +96,7 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
     set(SENTRY_NET src/device/net_wired.cpp)
   endif()
   add_executable(sentry_firmware src/device/main.cpp ${SENTRY_NET} src/device/onewire.cpp
-                                 src/device/flash_vault.cpp)
+                                 src/device/flash_vault.cpp src/device/reset_reason.cpp)
   # lwipopts.h lives beside them, because what of lwIP this firmware compiles in is part of
   # the firmware and not of whoever builds it.
   target_include_directories(sentry_firmware PRIVATE src/device)

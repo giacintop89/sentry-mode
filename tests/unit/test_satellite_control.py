@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from sentry_mode.satellites.control import (
     MESSAGES,
+    RESETS,
     CommandAck,
     HealthReport,
     HubCommand,
@@ -105,6 +106,23 @@ def test_a_board_that_cannot_measure_itself_says_so_rather_than_saying_zero():
     assert report.board.temperature_c is None
     assert report.board.load1 is None
     assert report.clock_status.value == "unsynced"
+
+
+def test_a_board_says_why_it_came_back_in_words_the_hub_knows():
+    """A restart is evidence, and which restart it was decides who has to fix it.
+
+    The vocabulary is closed on purpose even though health is the open channel: a node
+    that cannot tell leaves the field out, and a node that writes a word of its own has
+    written something no page can turn into an answer.
+    """
+    said = load(CONTROL / "fixtures/valid/health-a-board-that-says-why-it-came-back.json")
+    assert HealthReport.model_validate(said).board.reset == "watchdog"
+    for word in RESETS:
+        assert HealthReport.model_validate({**said, "board": {**said["board"], "reset": word}})
+    assert "unknown" not in RESETS
+    # The agent does not say, and that is not the same as a clean start.
+    silent = load(CONTROL / "fixtures/valid/health-heartbeat.json")
+    assert HealthReport.model_validate(silent).board.reset is None
 
 
 def test_health_keeps_a_counter_it_has_never_heard_of():

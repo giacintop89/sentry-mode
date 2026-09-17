@@ -66,10 +66,15 @@ Action = Literal[
     "audio_stop",
 ]
 Outcome = Literal["received", "applied", "failed"]
+Reset = Literal["power", "brownout", "button", "watchdog", "software", "debugger"]
+"""Why a board is running again, in the words a board can honestly use. There is no
+`unknown`: a node that cannot tell leaves the field out, and a list that offered the word
+would invite a firmware to write it where saying nothing is the truthful answer."""
 
 CAPABILITIES: tuple[str, ...] = get_args(Capability)
 ACTIONS: tuple[str, ...] = get_args(Action)
 OUTCOMES: tuple[str, ...] = get_args(Outcome)
+RESETS: tuple[str, ...] = get_args(Reset)
 GRANTS = ("grant", "renew", "revoke")
 MEDIA = tuple(
     f"{kind}_{what}" for kind in ("video", "audio") for what in ("start", "renew", "stop")
@@ -177,6 +182,11 @@ class Board(Open):
     load1: float | None = Field(default=None, ge=0)
     memory_available_kb: int | None = Field(default=None, ge=0)
     throttled: str | None = Field(default=None, max_length=32)
+    reset: Reset | None = None
+    """Why the node is running this time, when its chip can tell. A board that keeps
+    coming back the same way is a board with something wrong with it, and which way it
+    is decides who has to fix it. Absent means the node did not say, which is not the
+    same as a clean start and must never be shown as one."""
 
 
 class HealthReport(Wire):
@@ -324,6 +334,7 @@ __all__ = [
     "MAX_SOURCES",
     "MESSAGES",
     "OUTCOMES",
+    "RESETS",
     "Board",
     "CommandAck",
     "ConfiguredSource",

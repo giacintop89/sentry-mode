@@ -683,6 +683,52 @@ turn, so a `gpio` source answers from the debounced input: the same value if not
 moved, an age of zero because it was just read, and a quality that stops saying `unknown`
 once the sensor has had its settling time.
 
+### Why it came back
+
+A restart is evidence. A board that comes back because somebody unplugged it and a board
+that comes back because its own loop stopped turning look the same from the hub — it is
+there again — and they are not the same thing to whoever has to fix it. The chip knows
+which it was, in a register that survives the reset, and the firmware read it only to print
+it on a serial line that nobody is holding.
+
+It is now read once at the top of `main()`, before the watchdog is turned on again, and
+carried in every heartbeat:
+
+```
+"board": {"uptime_seconds": 8.0, "temperature_c": 36.4, "memory_available_kb": 352,
+          "reset": "watchdog"}
+```
+
+The words are `power`, `brownout`, `button`, `watchdog`, `software` and `debugger`. A chip
+that cannot tell leaves the field out: there is deliberately no `unknown` in the contract,
+because a firmware given the word would write it where saying nothing is the truthful
+answer, and a page showing it would report an answer nobody gave.
+
+Two of them are read from the watchdog and the rest from one register, which is in a
+different place with different bits on the two chips — `VREG_AND_CHIP_RESET` on RP2040,
+`POWMAN_CHIP_RESET` on RP2350, in `src/device/reset_reason.cpp`. The RP2350 can tell a
+brown-out from a power-on and an RP2040 cannot, so an RP2040 that browns out says `power`,
+which is what it knows rather than what happened.
+
+Run on the board, against the running hub:
+
+```
+# heap_free=352kB uptime=50s reset=power          (after the firmware was copied on)
+# not feeding the watchdog; this board should reset in about 8000 ms
+# heap_free=352kB uptime=8s reset=watchdog        (8 seconds later, by itself)
+```
+
+and on the hub, without a cable, a few seconds after that:
+
+```
+{"uptime_seconds": 36.2, "temperature_c": 36.4, "memory_available_kb": 352,
+ "reset": "watchdog"}   1 restart, last 39.3 s ago
+```
+
+`button`, `brownout`, `software` and `debugger` have not been produced on a board: nothing
+here presses the RUN pin, sags the supply or reboots itself, and they are written down as
+the chip's own bits rather than as something that has been seen.
+
 ## What is in here
 
 | Path | What it is |
@@ -705,6 +751,7 @@ once the sensor has had its settling time.
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
 | `tools/emit.cpp`, `tools/unpack.cpp`, `tools/mqtt_emit.cpp`, `tools/client_run.cpp` | Write events, packets, a whole connection and configuration slots for the cross-checks above. |
 | `src/device/onewire.h`, `src/device/onewire.cpp` | The 1-Wire bus, bit-banged on one pin: the reset, the slots, and interrupts off for the microseconds that decide what a bit was. The only part of this firmware that cannot be tested off a board. |
+| `src/device/reset_reason.h`, `src/device/reset_reason.cpp` | Why the board is running this time, read from the watchdog and from one register that is in a different place on the two chips. Answers `unknown` rather than guessing. |
 | `src/device/main.cpp` | The one program that runs on a board: USB serial, the LED, the die temperature, and the same event writer as everything else. |
 | `include/sentry/spool.h`, `src/core/spool.cpp` | The queue for an outage: which readings collapse into a newer one, which are never dropped for them, and what is counted when something is given up. |
 | `include/sentry/input.h`, `src/core/input.cpp` | What a wire may mean: the baseline that is not an intrusion, the settling window a PIR needs, the debounce, and the polarity software cannot guess. |
@@ -723,11 +770,10 @@ fails here, in a second, rather than at link time on a target with neither.
 
 ## What is not here, and what it waits on
 
-- Why this board reset, anywhere but on the cable. `status` and the boot line say
-  `reset=watchdog` or `reset=power`, and the health message the hub reads says neither:
-  there is no field for it in the version 1 contract, and inventing one here would be a
-  change to something the Linux agent also writes. The hub can see that a node restarted —
-  it counts boot ids — but not what restarted it.
+- Four of the six reasons a board can come back. `power` and `watchdog` have been
+  produced on the board and read on the hub; `button`, `brownout`, `software` and
+  `debugger` are read from bits nothing here has set. An RP2040 cannot tell a brown-out
+  from a power-on at all, and says `power` for both.
 - Keeping the time, as opposed to getting it once. There is a rule now: three of lwIP's
   hourly polls with no answer and the node stops calling what it stamps `synced`, without
   stopping stamping — the offset is still the best estimate it has, and `unknown` is the

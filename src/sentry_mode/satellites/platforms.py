@@ -85,7 +85,7 @@ PICO_W = Platform(
     streams=(),
     manual_tests=False,
     experimental=True,
-    board_fields=("uptime_seconds", "temperature_c", "memory_available_kb"),
+    board_fields=("uptime_seconds", "temperature_c", "memory_available_kb", "reset"),
 )
 
 PICO_2W = PICO_W.model_copy(

@@ -50,6 +50,7 @@
 #include "hardware/adc.h"
 #include "hardware/watchdog.h"
 #include "net.h"
+#include "reset_reason.h"
 #include "pico/rand.h"
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -119,10 +120,10 @@ sentry::Provisioning provisioning;
 sentry::Credentials credentials;
 bool provisioned = false;
 uint32_t answers_seen = 0;
-// Whether the last reset was the watchdog's doing, read once before it is turned on again.
-// A board that keeps coming back this way is a board with something wrong with it, and the
-// hub cannot see the difference unless it is told.
-bool woke_from_watchdog = false;
+// Why the board is running, read once before the watchdog is turned on again. A board that
+// keeps coming back the same way is a board with something wrong with it, and the hub
+// cannot see the difference unless it is told; the serial line is not a place a hub looks.
+sentry::Woke woke = sentry::Woke::kUnknown;
 // A board that was provisioned, given its credentials and told what to run comes back
 // without anybody at the cable: it joins, waits to be told the time, and connects. Nothing
 // here decides to do that on its own — it is what it was doing when the power went off.
@@ -881,6 +882,7 @@ bool write_a_health_report() {
   health.board.temperature_c = last_temperature;
   health.board.has_free_heap = true;
   health.board.memory_available_kb = free_heap_kb();
+  health.board.woke = woke;
   health.sources = sources;
   health.source_count = running.size();
 
@@ -1351,7 +1353,7 @@ void say_status() {
   std::printf("# heap_free=%lldkB uptime=%llus reset=%s\n",
               static_cast<long long>(free_heap_kb()),
               static_cast<unsigned long long>(now_us() / 1000000),
-              woke_from_watchdog ? "watchdog" : "power");
+              sentry::name_of(woke));
   std::printf("# credentials=%s socket=%s mqtt=%s queued=%lu coalesced=%lu dropped=%lu\n",
               credentials.complete() ? "yes" : "no", socket_state, mqtt_state,
               static_cast<unsigned long>(spool.size()),
@@ -1710,7 +1712,7 @@ int main() {
   stdio_init_all();
 
   // Read before anything turns it on again, because turning it on is what clears it.
-  woke_from_watchdog = watchdog_caused_reboot();
+  woke = device::woke_because();
 
   name_this_board();
 
@@ -1741,7 +1743,7 @@ int main() {
   sleep_ms(2000);
   std::printf("# ready %s node=%s boot=%s connection=%s wireless=%s reset=%s\n", PICO_BOARD,
               node_id, boot_id, connection_id, wireless ? "up" : "no",
-              woke_from_watchdog ? "watchdog" : "power");
+              sentry::name_of(woke));
   std::fflush(stdout);
 
   if (it_can_carry_on_by_itself()) {

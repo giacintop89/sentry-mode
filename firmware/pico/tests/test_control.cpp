@@ -16,6 +16,8 @@ using sentry::Outcome;
 using sentry::SourceHealth;
 using sentry::State;
 using sentry::Value;
+using sentry::Woke;
+using sentry::name_of;
 using sentry::Quality;
 using sentry::write_ack;
 using sentry::write_goodbye;
@@ -191,6 +193,42 @@ TEST(what_the_board_can_measure_it_reports) {
   CHECK(written.find(R"("memory_available_kb":58)") != std::string::npos);
   CHECK(written.find(R"("pir-1":{"readings":12,"driver":"gpio"})") != std::string::npos);
   CHECK(written.find(R"("error":"no sensor answered on the bus")") != std::string::npos);
+}
+
+TEST(a_board_says_why_it_is_running_again_when_the_chip_told_it) {
+  Health health = a_health();
+  health.board.woke = Woke::kWatchdog;
+  char buffer[2048];
+  size_t size = write_health(health, buffer, sizeof(buffer));
+  CHECK(size > 0);
+  CHECK(std::string(buffer, size).find(R"("reset":"watchdog")") != std::string::npos);
+}
+
+TEST(a_board_that_cannot_tell_why_it_restarted_does_not_guess) {
+  // `unknown` is written by not being there. A chip that cannot tell should not be made to
+  // pick one, because the guess is what somebody would then go and debug.
+  Health health = a_health();
+  health.board.woke = Woke::kUnknown;
+  char buffer[2048];
+  size_t size = write_health(health, buffer, sizeof(buffer));
+  CHECK(size > 0);
+  CHECK(std::string(buffer, size).find("reset") == std::string::npos);
+}
+
+TEST(every_reason_a_board_can_come_back_has_a_name) {
+  const Woke every[] = {Woke::kPower,    Woke::kBrownout, Woke::kButton,
+                        Woke::kWatchdog, Woke::kSoftware, Woke::kDebugger};
+  for (const Woke one : every) {
+    Health health = a_health();
+    health.board.woke = one;
+    char buffer[2048];
+    size_t size = write_health(health, buffer, sizeof(buffer));
+    CHECK(size > 0);
+    std::string written(buffer, size);
+    CHECK(written.find(std::string(R"("reset":")") + name_of(one) + R"(")") !=
+          std::string::npos);
+    CHECK(std::string(name_of(one)) != "unknown");
+  }
 }
 
 TEST(a_source_reports_what_it_last_read_the_way_the_event_said_it) {

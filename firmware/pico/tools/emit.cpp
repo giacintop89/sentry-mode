@@ -147,6 +147,7 @@ int control() {
   health.board.temperature_c = 24.5;
   health.board.has_free_heap = true;
   health.board.memory_available_kb = 58;
+  health.board.woke = sentry::Woke::kWatchdog;
   health.sources = reported;
   health.source_count = 2;
   emit_control("health", buffer, sentry::write_health(health, buffer, sizeof(buffer)));

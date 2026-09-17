@@ -74,6 +74,14 @@ struct QueueHealth {
   bool granted = false;
 };
 
+// Why the board is running this time. A board that keeps coming back the same way is a
+// board with something wrong with it, and that is not visible to anyone who is not holding
+// a serial cable unless the board says it. `kUnknown` is said by leaving the field out: a
+// chip that cannot tell should not be made to pick one.
+enum class Woke { kUnknown, kPower, kBrownout, kButton, kWatchdog, kSoftware, kDebugger };
+
+const char* name_of(Woke woke);
+
 // Every measurement is optional, and a board that cannot measure something says nothing
 // about it. Absent is unknown; zero is a measurement, and writing one for the other is how
 // a dashboard ends up showing a temperature nobody took.
@@ -84,6 +92,7 @@ struct BoardHealth {
   double temperature_c = 0.0;
   bool has_free_heap = false;
   int64_t memory_available_kb = 0;
+  Woke woke = Woke::kUnknown;
 };
 
 struct SourceHealth {

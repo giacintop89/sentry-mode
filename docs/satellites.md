@@ -114,6 +114,15 @@ back as a different boot. A link that keeps dropping and a board that keeps rese
 look like a node that is there again, and they are not the same thing to whoever has to fix
 it: the only thing that tells them apart is whether the boot id changed.
 
+A microcontroller can say more than that: its chip records what reset it, and the firmware
+reads that before it starts the watchdog again, so the heartbeat carries `power`,
+`brownout`, `button`, `watchdog`, `software` or `debugger` and the card shows it in words.
+A node that cannot tell leaves the field out and the card says nothing, rather than showing
+the most reassuring of the answers it could have given; the Linux agent does not report it
+at all. Which reset it was decides who has to look: a board that keeps coming back on the
+watchdog has a fault in it, and one that keeps coming back on a brown-out has a power
+supply problem that no change to this hub will fix.
+
 ## The broker
 
 Copy `deploy/satellites/mosquitto.conf.example` to `/etc/mosquitto/conf.d/`, and generate

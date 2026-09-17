@@ -67,6 +67,26 @@
           ],
           "default": null,
           "title": "Throttled"
+        },
+        "reset": {
+          "anyOf": [
+            {
+              "enum": [
+                "power",
+                "brownout",
+                "button",
+                "watchdog",
+                "software",
+                "debugger"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reset"
         }
       },
       "title": "Board",

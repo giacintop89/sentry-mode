@@ -14,6 +14,7 @@ import pytest
 from sentry_mode.satellites import platforms
 from sentry_mode.satellites.api import ConfigureRequest, overview
 from sentry_mode.satellites.config import SatellitesConfig
+from sentry_mode.satellites.control import Board
 from sentry_mode.satellites.identity import NodeRegistry
 from sentry_mode.satellites.mqtt import Message
 from sentry_mode.satellites.service import SatelliteService
@@ -77,7 +78,11 @@ def test_every_platform_is_named_after_itself_and_can_drive_something():
         assert one.name == name
         assert one.drivers
         assert set(one.drivers) <= set(platforms.LINUX.drivers)
-        assert set(one.board_fields) <= set(platforms.LINUX.board_fields)
+        # A field a board is allowed to report has to be one the heartbeat has a place
+        # for. A board may report fewer than the agent does, and — a microcontroller knows
+        # why it restarted and a Linux machine does not bother to say — it may report one
+        # the agent never sends.
+        assert set(one.board_fields) <= set(Board.model_fields)
 
 
 def test_a_node_registered_before_any_of_this_is_what_it_has_always_been():
@@ -186,6 +191,14 @@ def test_a_board_is_only_shown_the_numbers_it_could_have_taken():
     }
     assert platforms.visible_board(platforms.LINUX, board) == board
     assert platforms.visible_board(PICO, {}) == {}
+
+
+def test_a_board_that_can_say_why_it_restarted_is_shown_saying_it():
+    # The agent does not report it and a microcontroller does, so the page shows it for one
+    # kind of node and not the other rather than showing a blank for both.
+    board = {"uptime_seconds": 61.0, "reset": "watchdog"}
+    assert platforms.visible_board(PICO, board)["reset"] == "watchdog"
+    assert "reset" not in platforms.visible_board(platforms.LINUX, board)
 
 
 def test_the_page_is_told_what_kinds_of_satellite_exist():

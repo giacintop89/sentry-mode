@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -1263,6 +1264,23 @@ def test_the_views_fold_into_two_rows_on_a_phone_when_there_are_six():
     assert ":not([hidden])" in folded[0] and "33.333%" in folded[0]
     script = (Path(__file__).resolve().parents[2] / "src/sentry_mode/dashboard.js").read_text()
     assert "/api/satellites" in script and "data-satellites-link" in script
+
+
+def test_every_script_this_hub_ships_can_be_parsed():
+    """A page whose script does not parse shows nothing, and says nothing about why.
+
+    `const kind` declared twice in one function is a syntax error rather than a warning:
+    the browser refuses the whole file and the page renders empty. Every other test here
+    reads a script as text and looks for a string in it, which a broken file passes.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("no node here to parse the scripts with")
+    scripts = sorted((Path(__file__).resolve().parents[2] / "src/sentry_mode").glob("*.js"))
+    assert scripts
+    for script in scripts:
+        done = subprocess.run([node, "--check", str(script)], capture_output=True, text=True)
+        assert done.returncode == 0, f"{script.name}: {done.stderr.strip()}"
 
 
 def test_configuring_a_satellite_needs_them_switched_on_and_a_same_origin_request(web):
