@@ -35,6 +35,7 @@ pico-device:
 	cmake --build build/$(PICO_BOARD)
 	$(BIN)/python firmware/pico/tools/image_check.py --build-dir build/$(PICO_BOARD) \
 		--provisioning .local/pico-provisioning.json
+	$(BIN)/python firmware/pico/tools/stack_check.py --build-dir build/$(PICO_BOARD)
 	@echo "flash: hold BOOTSEL, then copy build/$(PICO_BOARD)/sentry_firmware.uf2 onto $(if $(filter pico2 pico2_w,$(PICO_BOARD)),RP2350,RPI-RP2)"
 # What goes out with an image: the commit, the SDK under it, the hash of the file, what the
 # hub will let a node of that kind be asked for, and what this firmware still does not do.

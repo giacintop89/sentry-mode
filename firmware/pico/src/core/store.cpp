@@ -37,15 +37,15 @@ uint32_t crc32(const char* data, size_t size) {
   return crc32_over(0xFFFFFFFFu, data, size) ^ 0xFFFFFFFFu;
 }
 
-size_t write_record(const char* payload, size_t size, uint32_t sequence, char* out,
-                    size_t capacity) {
+size_t write_record(const char* payload, size_t size, uint32_t sequence, uint8_t kind,
+                    char* out, size_t capacity) {
   if (out == nullptr || (payload == nullptr && size > 0)) return 0;
   if (size > kMaxRecordBytes) return 0;
   if (capacity < kRecordHeaderBytes + size) return 0;
   put_u32(out, kRecordMagic);
   out[4] = static_cast<char>(kRecordVersion & 0xFF);
   out[5] = static_cast<char>((kRecordVersion >> 8) & 0xFF);
-  out[6] = 0;
+  out[6] = static_cast<char>(kind);
   out[7] = 0;
   put_u32(out + 8, static_cast<uint32_t>(size));
   put_u32(out + 12, sequence);
@@ -57,13 +57,14 @@ size_t write_record(const char* payload, size_t size, uint32_t sequence, char* o
   return kRecordHeaderBytes + size;
 }
 
-bool read_record(const char* bytes, size_t size, Record& out) {
+bool read_record(const char* bytes, size_t size, uint8_t kind, Record& out) {
   if (bytes == nullptr || size < kRecordHeaderBytes) return false;
   if (get_u32(bytes) != kRecordMagic) return false;
   uint16_t version = static_cast<uint16_t>(
       static_cast<unsigned char>(bytes[4]) |
       (static_cast<uint32_t>(static_cast<unsigned char>(bytes[5])) << 8));
   if (version != kRecordVersion) return false;
+  if (static_cast<uint8_t>(bytes[6]) != kind) return false;
   uint32_t length = get_u32(bytes + 8);
   if (length > kMaxRecordBytes) return false;
   if (kRecordHeaderBytes + length > size) return false;  // the write stopped short
@@ -78,6 +79,7 @@ bool read_record(const char* bytes, size_t size, Record& out) {
   if (running != get_u32(bytes + 16)) return false;
 
   out.version = version;
+  out.kind = kind;
   out.sequence = get_u32(bytes + 12);
   out.payload = length > 0 ? bytes + kRecordHeaderBytes : nullptr;
   out.size = length;
@@ -85,11 +87,11 @@ bool read_record(const char* bytes, size_t size, Record& out) {
 }
 
 Slot choose(const char* first, size_t first_size, const char* second, size_t second_size,
-            Record& out) {
+            uint8_t kind, Record& out) {
   Record one;
   Record two;
-  bool one_ok = read_record(first, first_size, one);
-  bool two_ok = read_record(second, second_size, two);
+  bool one_ok = read_record(first, first_size, kind, one);
+  bool two_ok = read_record(second, second_size, kind, two);
   if (!one_ok && !two_ok) return Slot::kNeither;
   if (one_ok && !two_ok) {
     out = one;

@@ -7,6 +7,9 @@
 #include "hardware/sync.h"
 #include "hardware/watchdog.h"
 #include "pico/stdlib.h"
+#if CYW43_ENABLE_BLUETOOTH
+#include "pico/btstack_flash_bank.h"
+#endif
 #include "sentry/store.h"
 
 namespace vault {
@@ -17,6 +20,28 @@ namespace {
 // somebody else's sector.
 static_assert(sentry::kVaultSlotBytes == FLASH_SECTOR_SIZE, "a slot is one erase sector");
 static_assert(sentry::kVaultSlotBytes % FLASH_PAGE_SIZE == 0, "a slot is whole pages");
+
+// The tail of the flash this firmware does not get to use, whatever the board.
+//
+// Two sectors of it are the SDK's flash bank, where BTstack keeps the keys of anything
+// this node has paired with: on a board with a radio that is written behind this code's
+// back, and its default address is the end of the part. One more is the last sector, which
+// on an RP2350 the SDK itself steps over — `PICO_FLASH_BANK_STORAGE_OFFSET` is a sector
+// lower there than on an RP2040 — and which was watched being erased on this hardware: a
+// configuration written to it, read back and verified, was gone after a UF2 was copied on
+// over BOOTSEL, while the record in the other slot came through. The node booted on that
+// older record, which is what two slots are for; it is not what they are for.
+//
+// Three sectors on a part with a thousand of them. The alternative was a vault whose last
+// slot is a sector three different things believe they own.
+inline constexpr uint32_t kTailNotOurs = 3 * FLASH_SECTOR_SIZE;
+
+#if CYW43_ENABLE_BLUETOOTH
+// And on a board where that bank is real, the SDK's own address for it is checked against
+// where this vault ends, rather than trusted to stay where it was when this was written.
+static_assert(PICO_FLASH_SIZE_BYTES - kTailNotOurs <= PICO_FLASH_BANK_STORAGE_OFFSET,
+              "the vault would sit on the sectors BTstack keeps its pairing keys in");
+#endif
 
 // One sector, built in RAM before any of it is written. It is static because the main loop
 // runs on a four kilobyte stack and this is four kilobytes.
@@ -30,8 +55,12 @@ const char* slot_at(sentry::Held held, sentry::Slot slot) {
 
 // Which slot this node is booting from, and what is in it.
 sentry::Slot in_use(sentry::Held held, sentry::Record& record) {
+  // Named in the question as well as in the record: a slot that holds something else — an
+  // older layout's certificate where this one keeps a key — is not an answer to this.
+  const uint8_t kind = static_cast<uint8_t>(held);
   return sentry::choose(slot_at(held, sentry::Slot::kFirst), sentry::kVaultSlotBytes,
-                        slot_at(held, sentry::Slot::kSecond), sentry::kVaultSlotBytes, record);
+                        slot_at(held, sentry::Slot::kSecond), sentry::kVaultSlotBytes, kind,
+                        record);
 }
 
 // Erase and program, with nothing else running. The flash cannot be read while it is being
@@ -55,10 +84,11 @@ void erase_one_sector(uint32_t offset) {
 }  // namespace
 
 uint32_t begins_at() {
-  // The end of the part. Whatever the program grew to, it is not here: the linker lays the
-  // image out from the beginning, and a firmware that reached this far would be a firmware
-  // more than a megabyte larger than this one.
-  return static_cast<uint32_t>(PICO_FLASH_SIZE_BYTES - sentry::kVaultBytes);
+  // Near the end of the part, but not at it. Whatever the program grew to, it is not here:
+  // the linker lays the image out from the beginning, and a firmware that reached this far
+  // would be a firmware more than a megabyte larger than this one. What *is* at the very
+  // end is somebody else's, which cost a configuration to find out — see `kTailNotOurs`.
+  return static_cast<uint32_t>(PICO_FLASH_SIZE_BYTES - sentry::kVaultBytes - kTailNotOurs);
 }
 
 size_t load(sentry::Held held, char* out, size_t capacity) {
@@ -86,7 +116,10 @@ bool save(sentry::Held held, const char* bytes, size_t size) {
   // Everything outside the record is left as an erased sector reads, so what follows a
   // short record is not the tail of whatever was there before.
   std::memset(page, 0xFF, sizeof(page));
-  if (sentry::write_record(bytes, size, sequence, page, sizeof(page)) == 0) return false;
+  if (sentry::write_record(bytes, size, sequence, static_cast<uint8_t>(held), page,
+                           sizeof(page)) == 0) {
+    return false;
+  }
 
   watchdog_update();
   write_one_sector(begins_at() + static_cast<uint32_t>(sentry::offset_of(held, next)), page);
@@ -95,7 +128,8 @@ bool save(sentry::Held held, const char* bytes, size_t size) {
   // Read it back through the same path the boot will: a write that the part accepted and
   // did not keep is a write that has not happened.
   sentry::Record written;
-  return sentry::read_record(slot_at(held, next), sentry::kVaultSlotBytes, written) &&
+  return sentry::read_record(slot_at(held, next), sentry::kVaultSlotBytes,
+                             static_cast<uint8_t>(held), written) &&
          written.sequence == sequence && written.size == size;
 }
 
@@ -109,7 +143,8 @@ bool tear(sentry::Held held) {
   std::memset(pretend, 'x', sizeof(pretend));
   std::memset(page, 0xFF, sizeof(page));
   const uint32_t sequence = (current == sentry::Slot::kNeither ? 1 : record.sequence + 1) + 1000;
-  if (sentry::write_record(pretend, sizeof(pretend), sequence, page, sizeof(page)) == 0) {
+  if (sentry::write_record(pretend, sizeof(pretend), sequence, static_cast<uint8_t>(held), page,
+                           sizeof(page)) == 0) {
     return false;
   }
   const uint32_t offset = begins_at() + static_cast<uint32_t>(sentry::offset_of(held, next));
@@ -126,7 +161,8 @@ bool tear(sentry::Held held) {
   watchdog_update();
   sentry::Record torn;
   // It has to be unreadable, or this proves nothing.
-  return !sentry::read_record(slot_at(held, next), sentry::kVaultSlotBytes, torn);
+  return !sentry::read_record(slot_at(held, next), sentry::kVaultSlotBytes,
+                              static_cast<uint8_t>(held), torn);
 }
 
 bool forget(sentry::Held held) {

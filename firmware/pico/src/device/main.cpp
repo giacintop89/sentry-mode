@@ -870,7 +870,9 @@ void stop_the_plan() {
 // wire on it. It is built as a configuration and goes through the same door one from the
 // hub goes through, so there is no second way into the plan and nothing to keep in step.
 void run_the_default_plan() {
-  sentry::Source source;
+  // Static because a source is nearly two kilobytes and the stack is eight: this runs once,
+  // at boot, and a frame that size is one nobody should have to think about again.
+  static sentry::Source source;
   std::strncpy(source.id, "board-temperature", sizeof(source.id) - 1);
   std::strncpy(source.kind, "board", sizeof(source.kind) - 1);
   sentry::Unplanned why = sentry::Unplanned::kNone;

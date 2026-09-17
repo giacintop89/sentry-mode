@@ -12,6 +12,7 @@
 
 #include "sentry/identity.h"
 #include "sentry/store.h"
+#include "sentry/vault.h"
 
 namespace {
 
@@ -48,7 +49,9 @@ int main(int argc, char** argv) {
   size_t second_size = slurp(argv[2], second, sizeof(second));
 
   sentry::Record record;
-  sentry::Slot chosen = sentry::choose(first, first_size, second, second_size, record);
+  // Both slots here hold a provisioning record, which is the first of the five kinds.
+  sentry::Slot chosen = sentry::choose(first, first_size, second, second_size,
+                                       static_cast<uint8_t>(sentry::Held::kIdentity), record);
   if (chosen == sentry::Slot::kNeither) {
     std::printf("{\"slot\":\"neither\"}\n");
     return 0;

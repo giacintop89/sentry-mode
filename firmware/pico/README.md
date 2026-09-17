@@ -117,7 +117,7 @@ that should not be in it. Four boards are built by the workflow and were built b
 | `pico2_w` | RP2350 | yes | 1.26 MB |
 | `pico_w` | RP2040 | yes | 1.32 MB |
 | `pico2` | RP2350 | no | 356 kB |
-| `pico` | RP2040 | no | 375 kB |
+| `pico` | RP2040 | no | 376 kB |
 
 The wired ones are a quarter of the size because they compile a different network module —
 `net_wired.cpp`, which answers "no radio" and nothing else — and with it no lwIP, no
@@ -571,13 +571,22 @@ command while another is being obeyed — so no function holds one at all. `clea
 `memset` through a `void*` behind two static assertions that say a command is a plain
 structure, because the obvious way to write it is the way that built the temporary.
 
-What is left, measured the same way:
+The same measurement is now part of building for a board. `-fstack-usage` writes a `.su`
+file beside every object, `tools/stack_check.py` reads the ones belonging to this
+firmware's own sources, and `make pico-device` fails when the deepest of them is over
+1,536 bytes — which is where the deepest one is not, by a margin:
 
 ```
-run_the_default_plan()                                                 1920 bytes
-read_provisioning(const char*, size_t, Provisioning&)                   824 bytes
-parse_command(const char*, size_t, const char*, Command&, Refusal&)     696 bytes
+   1112  int main()                                                   (on an RP2040)
+    848  bool sentry::read_provisioning(const char*, size_t, Provisioning&)
+    840  bool vault::tear(sentry::Held)
+deepest frame 1112 bytes of the 1536 one may have, over 267 functions
 ```
+
+`main` is the frame at the bottom of the stack, never nested under anything; it is 456
+bytes on an RP2350 and 1,112 on an RP2040, from the same source. The default plan used to
+be in this list at 1,920 bytes, because it builds a source to hand to `Plan::take`; that
+one is now a `static` in a function that runs once at boot.
 
 On the board, with nine sources pushed down the cable by hand — the hub will not send them,
 so the cable is the only way to ask:
@@ -646,7 +655,7 @@ laid the vault out differently fails to read rather than being taken for one of 
 
 ```
 keeping
-# vault at 0x003f6000, 40960 bytes, 10 slots of 4096
+# vault at 0x003f3000, 40960 bytes, 10 slots of 4096
 #   identity      kept, write 1
 #   authority     kept, write 1
 #   certificate   kept, write 1
@@ -656,6 +665,34 @@ keeping
 
 Names and write counts, never values. The authority would be harmless to print and is not
 printed either, because a rule with an exception in it is a rule somebody edits later.
+
+**The last sector of the flash is not ours.** The vault used to end where the part ends.
+Writing two configurations took the counter to `configuration kept, write 8`; a `.uf2` was
+then copied on over BOOTSEL, exactly as the recovery list above says to, and the board came
+back with `# running what it was left with: revision 101, 1 sources` and `configuration
+kept, write 7`. The newest record was gone and the one in the other slot came through —
+which is what two slots are for, and is not what they are for. The SDK agrees in its own
+way: `PICO_FLASH_BANK_STORAGE_OFFSET` is where BTstack keeps the keys of anything a board
+has paired with, it is two sectors at the end of the part, and on an RP2350 it sits one
+sector lower still than on an RP2040. Three different things believed they owned that
+sector. So the vault moved down three of them — `kTailNotOurs` in `flash_vault.cpp`, from
+`0x003f6000` to `0x003f3000`, three sectors out of a thousand — and on a board with a radio
+a `static_assert` checks the SDK's own address for that bank against where this vault ends,
+rather than trusting it to stay where it was the day this was written. The same test run
+again, on 2026-09-17: `configuration kept, write 4` before the UF2 copy, `write 4` after it,
+and every other counter unchanged.
+
+**A slot is a place, and a place can be given a new meaning.** Moving the vault moved every
+slot three sectors down, which put each kind of record where a different kind used to live.
+The board read them. A PEM out of the wrong slot is still a PEM, and the first boot on the
+new layout reported `authority kept, write 6 / certificate kept, write 5 / key kept, write
+2` — counters from records the previous layout had written for something else. A record now
+carries one byte that says what it is, the reader is told what it expects to find, and a
+mismatch is refused the way a bad checksum is; the record version went to 2 at the same
+time, which is what makes every record from before this unreadable rather than
+reinterpreted. That costs a board its identity once, over a cable, and buys the rule that a
+slot never answers a question about a different slot. On the wired board: ten empty slots
+after the flash, then `write 1` on each as it was provisioned again.
 
 **A board given a new name.** The configuration in flash is addressed to a node, and the
 parser that reads it back at boot is the one the hub's commands go through: a configuration
@@ -908,7 +945,8 @@ device appeared" is not presence, it is a bus going past the window.
 The radio half is `src/device/ble.cpp`: BTstack on the same CYW43 the Wi-Fi is on, scanning
 passively, leaving every advertisement in a queue the loop drains. Nothing is matched there
 and nothing is decided there. BTstack's flash storage is deliberately not initialised —
-this node never bonds, and the sectors that code would take are the vault's.
+this node never bonds, and the two sectors that code would take sit at the end of the
+part, next to the vault — `kTailNotOurs` leaves them alone and a `static_assert` says so.
 
 Measured on the board, with a Raspberry Pi advertising an iBeacon at the other end of the
 room, while the same board kept its broker connection up:
@@ -1355,13 +1393,14 @@ own:
 | `include/sentry/names.h`, `src/protocol/names.cpp` | What a name, a uuid, a kind, a driver and a timestamp are, in one place rather than in whichever file needed one first. |
 | `include/sentry/session.h`, `src/core/session.cpp` | The order a connection comes up in: nothing is announced before the subscription is confirmed, and every connection has an identifier of its own. |
 | `include/sentry/lease.h`, `src/protocol/lease.cpp` | Permission with an end to it, measured on this node's clock, and the memory of the last 64 commands answered. |
-| `include/sentry/store.h`, `src/core/store.cpp` | The framing that lets an interrupted write be recognised as one, and the rule for choosing between the two configuration slots. |
+| `include/sentry/store.h`, `src/core/store.cpp` | The framing that lets an interrupted write be recognised as one, the byte that says what kind of thing a record is, and the rule for choosing between the two slots. |
 | `include/sentry/vault.h`, `src/core/vault.cpp` | Where the five things a node keeps live: two slots each, a whole erase sector apiece, and the most each one may be. |
 | `src/device/flash_vault.h`, `src/device/flash_vault.cpp` | The only file that writes to flash: erase, program, read back through the same path the boot takes, and a `tear` that stops halfway on purpose. |
 | `include/sentry/identity.h`, `src/core/identity.cpp` | The provisioning record — the node id and where the broker is — and the boot id that must differ every boot. |
 | `include/sentry/credentials.h`, `src/core/credentials.cpp` | The authority, the certificate and the key: what each one has to be, taken whole or not at all, and a `forget()` that overwrites the key. |
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
 | `tools/emit.cpp`, `tools/unpack.cpp`, `tools/mqtt_emit.cpp`, `tools/client_run.cpp` | Write events, packets, a whole connection and configuration slots for the cross-checks above. |
+| `tools/stack_check.py` | How deep the deepest frame in this firmware is, read from what `-fstack-usage` leaves beside the objects. Part of every board build, because the stack is eight kilobytes and what is under it is the heap. |
 | `src/device/onewire.h`, `src/device/onewire.cpp` | The 1-Wire bus, bit-banged on one pin: the reset, the slots, and interrupts off for the microseconds that decide what a bit was. The only part of this firmware that cannot be tested off a board. |
 | `src/device/reset_reason.h`, `src/device/reset_reason.cpp` | Why the board is running this time, read from the watchdog and from one register that is in a different place on the two chips. Answers `unknown` rather than guessing. |
 | `src/device/main.cpp` | The one program that runs on a board: USB serial, the LED, the die temperature, and the same event writer as everything else. |
@@ -1372,7 +1411,7 @@ own:
 | `include/sentry/pins.h`, `src/core/pins.cpp` | Which pins a configuration may use and who already has them, refused whole rather than in part. |
 | `include/sentry/presence.h`, `src/core/presence.cpp` | Whether one named device is here: what counts as a sighting, what counts as an arrival, and why a scanner that stopped means unknown rather than absent. The agent's rules, and no radio anywhere in it. |
 | `src/device/ble.h`, `src/device/ble.cpp`, `src/device/ble_none.cpp` | The scanner: BTstack on the CYW43, listening passively and leaving every advertisement in a queue the loop drains. Nothing is matched here. The third file is the whole of it on a board with no radio. |
-| `src/device/btstack_config.h` | What of BTstack is compiled in: a scanner, no bonding, no flash storage — the sectors that would take are the vault's. |
+| `src/device/btstack_config.h` | What of BTstack is compiled in: a scanner, no bonding, no flash storage — the sectors that would take are the ones the vault was moved off. |
 | `include/sentry/acoustic.h`, `src/core/acoustic.cpp` | What a level is and what makes it an event: dB full scale over a block, a threshold with six decibels of hysteresis under it, and the seconds either side. The agent's numbers, and no pin anywhere in it. |
 | `src/device/i2s.pio`, `src/device/i2s.h`, `src/device/i2s.cpp` | The microphone: a state machine clocking a Philips I²S frame and two DMA channels that start each other, so no sound is lost between one block and the next. A block is read once and handed straight back; nothing here keeps audio. |
 | `include/sentry/audio.h`, `src/protocol/audio.cpp` | The shape sound leaves in: the thirty-byte block header, the line the gateway is greeted with, and the reading of its one-line answer. Checked against the published contract and against the hub's own reader. |

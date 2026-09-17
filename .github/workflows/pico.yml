@@ -110,6 +110,12 @@ jobs:
       - name: Nothing in the image that belongs on a board
         run: python firmware/pico/tools/image_check.py --build-dir build/${{ matrix.board }}
 
+      # The stack is eight kilobytes under the top of memory and the heap grows up towards
+      # it, so a frame that does not fit writes into the heap instead of failing. This is
+      # the only place that notices before a board does.
+      - name: No frame too deep for the stack this chip has
+        run: python firmware/pico/tools/stack_check.py --build-dir build/${{ matrix.board }}
+
       # The manifest asks the firmware what each board reserves rather than saying so
       # itself, so the host build of that one tool is part of describing an image.
       - name: What the firmware says about the board it was built for

@@ -22,19 +22,22 @@ import zlib
 from pathlib import Path
 
 MAGIC = b"SENT"
-VERSION = 1
+VERSION = 2
 HEADER_BYTES = 20
+# What a record is, as `vault.h` numbers the five things a node keeps. Everything this
+# script writes is the first of them: the provisioning record, the node's own name.
+KIND_IDENTITY = 0
 MAX_RECORD_BYTES = 4096
 
 
-def frame(payload: bytes, sequence: int) -> bytes:
-    """One record: the header, the payload, and a checksum over both."""
+def frame(payload: bytes, sequence: int, kind: int = KIND_IDENTITY) -> bytes:
+    """One record: the header, what it is, the payload, and a checksum over all of it."""
     if len(payload) > MAX_RECORD_BYTES:
         raise ValueError(f"{len(payload)} bytes is more than a slot holds")
     header = (
         MAGIC
         + VERSION.to_bytes(2, "little")
-        + b"\x00\x00"
+        + bytes([kind, 0])
         + len(payload).to_bytes(4, "little")
         + sequence.to_bytes(4, "little")
         + b"\x00\x00\x00\x00"

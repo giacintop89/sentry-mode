@@ -167,7 +167,13 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
   else()
     target_compile_definitions(sentry_firmware PRIVATE SENTRY_BRIDGED=1)
   endif()
-  target_compile_options(sentry_firmware PRIVATE -Wall -Wextra -Wshadow -Werror)
+  # `-fstack-usage` writes a .su file beside every object saying how deep each function's
+  # frame is. It changes no code; it is here because the stack on these chips is eight
+  # kilobytes under the top of memory with the heap growing up towards it, and a frame that
+  # overruns it writes into the heap rather than failing. `tools/stack_check.py` reads what
+  # this leaves behind, and `make pico-device` fails when a frame is too deep to be one.
+  target_compile_options(sentry_firmware PRIVATE -Wall -Wextra -Wshadow -Werror -fstack-usage)
+  target_compile_options(sentry_protocol PRIVATE -fstack-usage)
   # Over USB, so one cable carries the power and everything this program says. The UART
   # stays off: the pins it would take are pins a source may be configured on.
   pico_enable_stdio_usb(sentry_firmware 1)
