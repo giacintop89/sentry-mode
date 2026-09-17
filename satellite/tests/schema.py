@@ -22,8 +22,10 @@ KNOWN = {
     "exclusiveMinimum",
     "format",
     "items",
+    "maxItems",
     "maxLength",
     "maximum",
+    "minItems",
     "minLength",
     "minimum",
     "pattern",
@@ -105,19 +107,29 @@ def validate(document: object, schema: dict, root: dict | None = None, path: str
         if "exclusiveMaximum" in schema and document >= schema["exclusiveMaximum"]:
             raise Invalid(f"{path}: not below {schema['exclusiveMaximum']}")
 
-    if isinstance(document, list) and "items" in schema:
-        for index, item in enumerate(document):
-            validate(item, schema["items"], root, f"{path}[{index}]")
+    if isinstance(document, list):
+        if "maxItems" in schema and len(document) > schema["maxItems"]:
+            raise Invalid(f"{path}: more than {schema['maxItems']} items")
+        if "minItems" in schema and len(document) < schema["minItems"]:
+            raise Invalid(f"{path}: fewer than {schema['minItems']} items")
+        if "items" in schema:
+            for index, item in enumerate(document):
+                validate(item, schema["items"], root, f"{path}[{index}]")
 
     if isinstance(document, dict):
         properties = schema.get("properties", {})
+        extras = schema.get("additionalProperties")
         for name in schema.get("required", []):
             if name not in document:
                 raise Invalid(f"{path}: {name} is required")
-        if schema.get("additionalProperties") is False:
+        if extras is False:
             extra = sorted(set(document) - set(properties))
             if extra:
                 raise Invalid(f"{path}: does not take {', '.join(extra)}")
         for name, value in document.items():
             if name in properties:
                 validate(value, properties[name], root, f"{path}.{name}")
+            elif isinstance(extras, dict):
+                # A map rather than a record: every other key is held to one shape, which is
+                # how a node's sources or a source's options are written down.
+                validate(value, extras, root, f"{path}.{name}")

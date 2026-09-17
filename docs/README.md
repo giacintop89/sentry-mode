@@ -42,6 +42,7 @@ Dated design documents, kept as written; they describe proposals, not current be
 - [Vision node self-centering functional plan](vision-node-self-centering-functional-plan.md)
 - [Zero W satellites: functional plan](sentry-mode-zero-w-functional-plan.md)
 - [Zero W satellites: implementation plan](sentry-mode-zero-w-implementation-plan.md)
+- [Pico satellites: implementation plan](sentry-mode-pico-implementation-plan.md)
 
 ## Decisions
 
@@ -57,5 +58,6 @@ Records of what was measured and what was fixed; a decision here binds the code.
 - [Shared inference](adr/shared-inference.md) — one model for every camera, leases, and per-camera samples.
 - [Rules, second version](adr/rules-v2.md) — stable rule IDs, what each arming needs, and a way back.
 - [Satellite video profile](adr/satellite-video-profile.md) — H.264 over mutual TLS to the hub's gateway, and what was measured.
+- [Control contracts before the Pico firmware](adr/pico-control-contracts.md) — state, health, commands and acks written down, with nothing on the wire changed.
 - [Satellite audio profile](adr/satellite-audio-profile.md) — numbered PCM blocks through the same gateway, and what a hub must not hear.
 - [Presence](adr/satellite-presence.md) — one known device over BlueZ, what counts as a sighting, and why Wi-Fi stays optional.

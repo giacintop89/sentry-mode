@@ -1,0 +1,182 @@
+{
+  "$defs": {
+    "ConfiguredSource": {
+      "additionalProperties": true,
+      "description": "A source in a `configure` command, spelled the way the node's own file spells it.\n\nIts options are written beside `id` and `kind` rather than under an `options` key: this\nis the node's file, sent over the wire, and the node writes it down as it arrived.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "title": "ConfiguredSource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One instruction on a node's `commands` topic.\n\nThe grammar is closed, and it is closed here for the same reason the agent closes it:\na command can lend a capability for a while, take it back, replace the list of sources\nwith one made of drivers the node already has, or ask a camera or a microphone for a\nstream to a port on the hub. It cannot name a program, a file, a rule or another host.\n\nWhich fields a command carries depends on what it is asking for, and a field that does\nnot belong to the action is refused rather than ignored: a `stop` that carries a token\nis not a stop with something extra, it is a message nobody meant to send.",
+  "properties": {
+    "command_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Command Id",
+      "type": "string"
+    },
+    "action": {
+      "enum": [
+        "grant",
+        "renew",
+        "revoke",
+        "stop",
+        "configure",
+        "video_start",
+        "video_renew",
+        "video_stop",
+        "audio_start",
+        "audio_renew",
+        "audio_stop"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "node_id": {
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+      "title": "Node Id",
+      "type": "string"
+    },
+    "hub_epoch": {
+      "minimum": 0,
+      "title": "Hub Epoch",
+      "type": "integer"
+    },
+    "capability": {
+      "anyOf": [
+        {
+          "enum": [
+            "events",
+            "video",
+            "audio"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Capability"
+    },
+    "grant_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Grant Id"
+    },
+    "duration_seconds": {
+      "default": 0.0,
+      "minimum": 0,
+      "title": "Duration Seconds",
+      "type": "number"
+    },
+    "sequence": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/ConfiguredSource"
+      },
+      "maxItems": 32,
+      "title": "Sources",
+      "type": "array"
+    },
+    "stream_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9_-]{8,64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Stream Id"
+    },
+    "source_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Id"
+    },
+    "port": {
+      "anyOf": [
+        {
+          "maximum": 65535,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Port"
+    },
+    "token": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9_-]{32,128}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Token"
+    }
+  },
+  "required": [
+    "command_id",
+    "action",
+    "node_id",
+    "hub_epoch"
+  ],
+  "title": "Hub command to a satellite, version 1",
+  "type": "object",
+  "$id": "https://sentry-mode.invalid/contracts/satellite/v1/control/command.schema.json"
+}

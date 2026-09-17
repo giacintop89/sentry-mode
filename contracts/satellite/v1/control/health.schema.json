@@ -1,0 +1,333 @@
+{
+  "$defs": {
+    "Board": {
+      "additionalProperties": true,
+      "description": "What the board says about itself. Every measurement is optional on purpose.\n\nA microcontroller has no load average and no available memory in the sense Linux means\nthem. It reports what it can measure and leaves out the rest; what it leaves out is\nunknown, which is not the same as zero and must never be written as zero.",
+      "properties": {
+        "uptime_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uptime Seconds"
+        },
+        "temperature_c": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature C"
+        },
+        "load1": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Load1"
+        },
+        "memory_available_kb": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory Available Kb"
+        },
+        "throttled": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Throttled"
+        }
+      },
+      "title": "Board",
+      "type": "object"
+    },
+    "ClockStatus": {
+      "description": "Whether the timestamp on a reading came from a clock that knows the time.",
+      "enum": [
+        "synced",
+        "unsynced",
+        "unknown"
+      ],
+      "title": "ClockStatus",
+      "type": "string"
+    },
+    "Drops": {
+      "additionalProperties": false,
+      "description": "What the node threw away and why, counted rather than hidden.",
+      "properties": {
+        "count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "bytes": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "age": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Age",
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "title": "Drops",
+      "type": "object"
+    },
+    "Quality": {
+      "description": "How much a single reading can be trusted.",
+      "enum": [
+        "valid",
+        "degraded",
+        "unavailable",
+        "unknown"
+      ],
+      "title": "Quality",
+      "type": "string"
+    },
+    "Queue": {
+      "additionalProperties": false,
+      "description": "What is waiting to be sent, and whether the node is allowed to send it.",
+      "properties": {
+        "events": {
+          "minimum": 0,
+          "title": "Events",
+          "type": "integer"
+        },
+        "bytes": {
+          "minimum": 0,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "published": {
+          "minimum": 0,
+          "title": "Published",
+          "type": "integer"
+        },
+        "refused": {
+          "minimum": 0,
+          "title": "Refused",
+          "type": "integer"
+        },
+        "drops": {
+          "$ref": "#/$defs/Drops"
+        },
+        "granted": {
+          "default": false,
+          "title": "Granted",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "events",
+        "bytes",
+        "published",
+        "refused"
+      ],
+      "title": "Queue",
+      "type": "object"
+    },
+    "Reading": {
+      "additionalProperties": true,
+      "description": "The last thing a source measured, as health reports it.",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "maxLength": 16,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "quality": {
+          "$ref": "#/$defs/Quality",
+          "default": "valid"
+        }
+      },
+      "title": "Reading",
+      "type": "object"
+    },
+    "SourceReport": {
+      "additionalProperties": true,
+      "description": "One source's diagnostics. Open: a camera says more than a contact does.",
+      "properties": {
+        "readings": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Readings",
+          "type": "integer"
+        },
+        "last_reading_age_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Reading Age Seconds"
+        },
+        "driver": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Driver"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "last": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reading"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "SourceReport",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The heartbeat on `health`: proof of life, and the numbers that qualify the rest.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "node_id": {
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+      "title": "Node Id",
+      "type": "string"
+    },
+    "boot_id": {
+      "format": "uuid",
+      "title": "Boot Id",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "agent_uptime_seconds": {
+      "minimum": 0,
+      "title": "Agent Uptime Seconds",
+      "type": "number"
+    },
+    "clock_status": {
+      "$ref": "#/$defs/ClockStatus",
+      "default": "unknown"
+    },
+    "queue": {
+      "$ref": "#/$defs/Queue"
+    },
+    "sources": {
+      "additionalProperties": {
+        "$ref": "#/$defs/SourceReport"
+      },
+      "title": "Sources",
+      "type": "object"
+    },
+    "board": {
+      "$ref": "#/$defs/Board"
+    }
+  },
+  "required": [
+    "node_id",
+    "boot_id",
+    "agent_uptime_seconds",
+    "queue"
+  ],
+  "title": "Satellite health, version 1",
+  "type": "object",
+  "$id": "https://sentry-mode.invalid/contracts/satellite/v1/control/health.schema.json"
+}

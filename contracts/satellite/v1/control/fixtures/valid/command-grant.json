@@ -1,0 +1,10 @@
+{
+  "command_id": "3f1b7c0e-8d4a-4e2b-9f61-0a5c8d7e4b12",
+  "action": "grant",
+  "node_id": "pico-ingresso",
+  "hub_epoch": 7,
+  "capability": "events",
+  "grant_id": "025a1b1f-2969-48c2-b14e-079c8b955f7c",
+  "duration_seconds": 300.0,
+  "sequence": 1
+}

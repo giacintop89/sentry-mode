@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "DeclaredSource": {
+      "additionalProperties": false,
+      "description": "One source as the node says it has it, with the options it is running under.",
+      "properties": {
+        "source_id": {
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "kind": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "options": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Options",
+          "type": "object"
+        }
+      },
+      "required": [
+        "source_id",
+        "kind"
+      ],
+      "title": "DeclaredSource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The retained snapshot on `state`, and the will the broker publishes for a node.\n\nEverything past `online` is optional, and that is what makes a small implementation\npossible: the lwIP MQTT client writes the will's topic and payload with 8-bit lengths,\nso a goodbye has to fit in 255 bytes including the topic. A node that is leaving says\nwho it is, which boot and which connection is ending, and that it is gone. The full\nsnapshot, with the sources, is the same message with the optional parts filled in.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "node_id": {
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+      "title": "Node Id",
+      "type": "string"
+    },
+    "boot_id": {
+      "format": "uuid",
+      "title": "Boot Id",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "connection_id": {
+      "format": "uuid",
+      "title": "Connection Id",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "online": {
+      "title": "Online",
+      "type": "boolean"
+    },
+    "agent_version": {
+      "anyOf": [
+        {
+          "maxLength": 32,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Version"
+    },
+    "profile": {
+      "anyOf": [
+        {
+          "maxLength": 32,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profile"
+    },
+    "config_revision": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Config Revision"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/DeclaredSource"
+      },
+      "maxItems": 32,
+      "title": "Sources",
+      "type": "array"
+    }
+  },
+  "required": [
+    "node_id",
+    "boot_id",
+    "connection_id",
+    "online"
+  ],
+  "title": "Satellite state, version 1",
+  "type": "object",
+  "$id": "https://sentry-mode.invalid/contracts/satellite/v1/control/state.schema.json"
+}

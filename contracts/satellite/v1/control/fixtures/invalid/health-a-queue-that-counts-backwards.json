@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "node_id": "zero-entrance",
+  "boot_id": "2c9a7f38-16d4-4b9e-9a0c-77f0b2d5e611",
+  "agent_uptime_seconds": 3612.4,
+  "clock_status": "synced",
+  "queue": {
+    "events": -1,
+    "bytes": 0,
+    "published": 184,
+    "refused": 0,
+    "drops": {
+      "count": 0,
+      "bytes": 0,
+      "age": 0,
+      "total": 0
+    },
+    "granted": true
+  },
+  "sources": {
+    "pir-1": {
+      "readings": 12,
+      "last_reading_age_seconds": 4.2,
+      "driver": "running",
+      "error": null,
+      "last": {
+        "value": false,
+        "unit": null,
+        "quality": "valid"
+      }
+    },
+    "board-temperature": {
+      "readings": 120,
+      "last_reading_age_seconds": 1.0,
+      "driver": "running",
+      "error": null,
+      "last": {
+        "value": 42.2,
+        "unit": "°C",
+        "quality": "valid"
+      }
+    }
+  },
+  "board": {
+    "uptime_seconds": 37986.4,
+    "temperature_c": 42.2,
+    "load1": 0.44,
+    "memory_available_kb": 306168,
+    "throttled": "0x0"
+  }
+}

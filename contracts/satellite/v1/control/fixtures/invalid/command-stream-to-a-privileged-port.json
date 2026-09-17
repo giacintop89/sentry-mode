@@ -1,0 +1,11 @@
+{
+  "command_id": "3f1b7c0e-8d4a-4e2b-9f61-0a5c8d7e4b12",
+  "action": "video_start",
+  "node_id": "zero-entrance",
+  "hub_epoch": 7,
+  "stream_id": "s7Kd2Lm9",
+  "source_id": "camera-1",
+  "port": 80,
+  "token": "Yb3xK9tQ2wR7mN4pL8vZ1cD5fH6jS0aU",
+  "duration_seconds": 120.0
+}

@@ -1,0 +1,53 @@
+{
+  "additionalProperties": false,
+  "description": "What the node answers on `acks`, once, for each command it was sent.\n\nAn answer is about one command and says what became of it. It is not a receipt for an\nevent, and `applied` is not a promise that the hub agreed with the result.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "command_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Command Id",
+      "type": "string"
+    },
+    "node_id": {
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+      "title": "Node Id",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "received",
+        "applied",
+        "failed"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    }
+  },
+  "required": [
+    "command_id",
+    "node_id",
+    "outcome"
+  ],
+  "title": "Satellite answer to a command, version 1",
+  "type": "object",
+  "$id": "https://sentry-mode.invalid/contracts/satellite/v1/control/ack.schema.json"
+}

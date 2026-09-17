@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "node_id": "pico-ingresso",
+  "boot_id": "2c9a7f38-16d4-4b9e-9a0c-77f0b2d5e611",
+  "agent_uptime_seconds": 61.0,
+  "clock_status": "unsynced",
+  "queue": {
+    "events": 3,
+    "bytes": 512,
+    "published": 0,
+    "refused": 0,
+    "drops": {
+      "count": 0,
+      "bytes": 0,
+      "age": 0,
+      "total": 0
+    },
+    "granted": false
+  },
+  "sources": {},
+  "board": {
+    "uptime_seconds": 61.0,
+    "temperature_c": null,
+    "load1": null,
+    "memory_available_kb": null,
+    "throttled": null
+  }
+}
