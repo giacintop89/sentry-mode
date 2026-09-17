@@ -4,7 +4,7 @@
 **Data:** 17 settembre 2026  
 **Repository:** `giacintop89/sentry-mode`  
 **Baseline verificata:** `b597535d23d077f91cab84b9ad48727d943868c5` su `main`  
-**Stato:** proposta implementativa; nessun firmware compilato, test eseguito o modifica pubblicata in questa attività.  
+**Stato:** implementato. Il firmware è scritto, costruito per quattro schede e provato su hardware; `PICO-00`…`PICO-09` e `PICO-11` sono chiusi, `PICO-10` (snapshot JPEG) non è stato costruito perché non c'è una camera SPI da collegare, ed è dichiarato `not built` nel manifest. Le trascrizioni di ciò che è stato visto accadere — e l'elenco esplicito di ciò che non lo è stato — sono in [`firmware/pico/README.md`](../firmware/pico/README.md); il manifest di un'immagine lo produce `make pico-release`. Aggiornamento del 17 settembre 2026, a valle della prova live sull'hub di casa.  
 **Continuità:** estensione del sistema satelliti già presente, non porting dell'app Linux sul microcontrollore.
 
 > Primo risultato utile: un Pico W con PIR e contatto porta comunica con l'hub già esistente, riceve un grant, pubblica eventi validi e attiva una regola Sentry. La camera può rimanere sul Pi 5 o su uno Zero W. Audio e immagini non bloccano questo rilascio.
@@ -549,7 +549,7 @@ Eseguire prove prolungate, interruzioni alimentazione/rete, rinnovi e revoche, r
 
 ## 12. Matrice di accettazione
 
-I test seguenti sono da implementare/eseguire. Non risultano superati per il Pico in questa attività.
+I test seguenti erano da implementare/eseguire quando questo piano è stato scritto. Lo stato di ciascuno al 17 settembre 2026 è in [12.2](#122-stato-della-matrice-al-17-settembre-2026).
 
 | ID | Prova | Risultato richiesto |
 |---|---|---|
@@ -601,6 +601,60 @@ Obiettivi proposti per rete LAN in buone condizioni, da approvare dopo la prima 
 La scadenza locale della lease resta la protezione durante un'interruzione di rete, anche quando il target di latenza non è raggiungibile. Separare latenza del sensore, trasporto, decisione e azione: una richiesta di foto o un annuncio possono aggiungere latenza propria.
 
 Per ogni profilo da pubblicare eseguire una prova continuativa proposta di almeno 48 ore, oltre ai test di guasto. Questa è la durata del test richiesto, non una stima di consegna. Registrare scheda, build, alimentazione, periferiche, rete, RAM minima anche durante handshake, stack massimo, latenze, riconnessioni, drop, errori TLS e risultato della revoca. Non trasferire la qualifica di Pico 2 W al Pico W originale.
+
+### 12.2 Stato della matrice al 17 settembre 2026
+
+Verdetti conservativi: dove il README del firmware non mostra una trascrizione di ciò che è
+accaduto, la riga resta *non eseguita* anche se il codice che la riguarda esiste ed è
+testato. «Hardware» significa una Pico 2 W — e per le righe del bridge una Pico 2 senza
+radio, che è la stessa scheda con la radio mai accesa — contro l'hub in esercizio.
+
+| ID | Esito | Dove |
+|---|---|---|
+| T01 | Hardware | Quattro target costruiti, manifest prodotto, `image_check` non trova segreti nell'immagine |
+| T02 | Host | `check_against_contracts.py`: gli stessi eventi scritti dal firmware, letti da schema e Pydantic |
+| T03 | Host | Suite `json`/`event`/`command`: malformato, oltre misura, frammentato |
+| T04 | Host | Suite `names`/`json`: uuid, numeri, chiavi ripetute |
+| T05 | Hardware | Una scheda che annuncia il nome di un altro nodo: niente pubblicato, e l'ACL del broker la rifiuterebbe comunque |
+| T06 | Parziale | Quattro certificati offerti al broker e rifiutati o accettati di proposito; nessuno di essi *dalla scheda* |
+| T07 | Parziale | Come sopra: il rifiuto è del broker, e il caso «nessuna credenziale» è provato solo dal lato del nodo che non parte |
+| T08 | Host | `control.cpp`: il congedo entro i 255 byte del will con i nomi più lunghi ammessi |
+| T09 | Hardware | Subscribe confermato prima di `online`, grant ricevuto e applicato |
+| T10 | Hardware | Lease scaduta, revocata e assente: nessun evento live e nessun audio |
+| T11 | Hardware | Comando ripetuto, stesso ack, durata non estesa |
+| T12 | Parziale | Ogni evento porta epoca e grant sotto cui è stato pubblicato; la metà dell'hub — un vecchio will che non chiude una sessione nuova — è provata dall'hub, non dalla scheda |
+| T13 | Hardware | Nodo Zero in MQTT 5 e microcontrollore in 3.1.1 sullo stesso broker |
+| T14 | Parziale | Coda e PUBACK perso su host; la disconnessione su hardware, non ancora una coda riempita su scheda |
+| T15 | Parziale | Le letture trattenute arrivano dopo l'interruzione; la classificazione a journal è dell'hub e provata dai suoi test |
+| T16 | Parziale | Ora non sincronizzata: nessun evento live, e la regola che smette di dire `synced` esiste ma non è mai stata vista scattare; il salto UTC **non è stato eseguito** |
+| T17 | Hardware | Baseline al boot e finestra di assestamento: nessuna falsa transizione |
+| T18 | Parziale | Debounce e polarità provati con la scheda che pilota il proprio pad; nessun PIR e nessun contatto reale |
+| T19 | Parziale | CRC e 85 °C su host, bus vuoto su hardware, nessuna sonda che risponda; I²C non è implementato |
+| T20 | Parziale | Conteggi impossibili rifiutati su host; su scheda il pin è flottante, e il rumore è etichettato per quello che è |
+| T21 | Hardware | Scrittura interrotta con il verbo `tear`: torna l'ultimo slot valido, l'identità resta |
+| T22 | Hardware | Conflitto di pin rifiutato prima di applicare, e l'hub riceve un ack `failed` |
+| T23 | Hardware | Rete assente per minuti, non per ore: backoff e memoria stabili, nessun reset storm |
+| T24 | Hardware | Watchdog provato, causa del reset visibile, boot e connessione con identificativi nuovi |
+| T25 | Hardware | Scanner spento: presenza `unknown` subito, non `absent` |
+| T26 | Hardware | BLE e MQTT insieme: heartbeat e comandi reattivi, `missed` fermo dopo l'handshake |
+| T27 | Hardware | I²S con segnale sintetico su host e cattura su filo vuoto sulla scheda |
+| T28 | Hardware | Framing SMA1 letto dal gateway dell'hub, e da `audio_check.py` su host |
+| T29 | Hardware | Due handshake TLS insieme su Pico 2 W, con il margine di RAM misurato |
+| T30 | Hardware | Stop, revoca e perdita dell'hub entro la lease, senza replay audio |
+| T31 | Non eseguito | La politica anti-loop è dell'hub e non è stata riprovata con un microcontrollore |
+| T32 | Non eseguito | `PICO-10`: niente camera |
+| T33 | Non eseguito | Come sopra |
+| T34 | Hardware | USB scollegata e nodo non mappato: offline, e nessuna identità arbitraria |
+| T35 | Hardware | Bridge riavviato con letture in attesa: consegnate, non ritimestampate |
+| T36 | Host | 760 test dell'hub verdi senza alcun Pico collegato |
+| T37 | Parziale | Una regola ha scattato in test mode; le azioni reali restano decisione di chi abita la casa |
+| T38 | Hardware | Configurazione oltre le capacità: ack `failed` e messaggio chiaro, mai «applicato» |
+| T39 | Non eseguito | C'è una sola scheda |
+| T40 | Parziale | Trentacinque minuti di esercizio con heap e code stabili, non le 48 ore che questa sezione chiede |
+
+Le tre righe più pesanti che restano sono `T40` (la durata), `T18`/`T19` (un sensore vero
+sui morsetti) e l'interruzione di alimentazione vera, che non è una riga della matrice ma è
+il limite dichiarato in testa al README del firmware.
 
 ## 13. Build, release e regole di consegna
 
