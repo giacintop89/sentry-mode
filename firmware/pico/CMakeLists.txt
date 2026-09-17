@@ -57,6 +57,7 @@ add_library(sentry_protocol
   src/protocol/control.cpp
   src/protocol/topics.cpp
   src/protocol/mqtt.cpp
+  src/protocol/client.cpp
   src/protocol/event.cpp
   src/protocol/lease.cpp
   src/core/store.cpp
@@ -108,7 +109,7 @@ endif()
 
 enable_testing()
 
-foreach(suite json command control event lease topics mqtt session store identity timebase spool input sensors pins)
+foreach(suite json command control event lease topics mqtt client session store identity timebase spool input sensors pins)
   add_executable(test_${suite} tests/test_${suite}.cpp)
   target_link_libraries(test_${suite} PRIVATE sentry_protocol)
   target_include_directories(test_${suite} PRIVATE tests)
@@ -128,6 +129,12 @@ target_compile_options(sentry_emit PRIVATE -Wall -Wextra -Werror)
 add_executable(sentry_mqtt_emit tools/mqtt_emit.cpp)
 target_link_libraries(sentry_mqtt_emit PRIVATE sentry_protocol)
 target_compile_options(sentry_mqtt_emit PRIVATE -Wall -Wextra -Werror)
+
+# Drives the client through one whole connection, with a broker made of bytes from the
+# specification, and prints the packets in the order it wrote them.
+add_executable(sentry_client_run tools/client_run.cpp)
+target_link_libraries(sentry_client_run PRIVATE sentry_protocol)
+target_compile_options(sentry_client_run PRIVATE -Wall -Wextra -Werror)
 
 # Reads two configuration slots the way the firmware would at boot. See
 # tools/pack_provisioning.py, which writes them with its own framing and checks the answer.

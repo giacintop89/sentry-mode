@@ -69,8 +69,12 @@ struct Connect {
 size_t write_connect(const Connect& connect, uint8_t* out, size_t capacity);
 size_t write_subscribe(uint16_t packet_id, const char* topic, uint8_t qos, uint8_t* out,
                        size_t capacity);
+// `duplicate` is the DUP flag, and it means one thing only: this is the same packet id
+// being sent again because no PUBACK came back. It is never set on a first attempt and
+// never at QoS 0, where there is nothing to repeat.
 size_t write_publish(const char* topic, const uint8_t* payload, size_t size, uint8_t qos,
-                     bool retain, uint16_t packet_id, uint8_t* out, size_t capacity);
+                     bool retain, uint16_t packet_id, uint8_t* out, size_t capacity,
+                     bool duplicate = false);
 size_t write_puback(uint16_t packet_id, uint8_t* out, size_t capacity);
 size_t write_pingreq(uint8_t* out, size_t capacity);
 size_t write_disconnect(uint8_t* out, size_t capacity);

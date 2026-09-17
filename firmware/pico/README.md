@@ -28,8 +28,8 @@ cmake --build build/pico-host
 ctest --test-dir build/pico-host --output-on-failure
 ```
 
-Fifteen suites: `json`, `command`, `control`, `event`, `lease`, `topics`, `mqtt`, `session`,
-`store`, `identity`, `timebase`, `spool`, `input`, `sensors`, `pins`. The `command` suite
+Sixteen suites: `json`, `command`, `control`, `event`, `lease`, `topics`, `mqtt`, `client`,
+`session`, `store`, `identity`, `timebase`, `spool`, `input`, `sensors`, `pins`. The `command` suite
 reads the fixtures in
 `contracts/satellite/v1/control/fixtures/`, the same files `tests/unit/test_satellite_control.py`
 and `satellite/tests/unit/test_control_contracts.py` read, so a fixture the hub accepts and
@@ -66,6 +66,15 @@ topics have to be ones the hub's parser reads back as this node's; every payload
 pass the models and the published schema. A packet a broker would drop — SUBSCRIBE with the
 wrong reserved bits, a PUBLISH at QoS 1 with no packet id — is caught here rather than by a
 broker closing the connection for a reason nobody can see from the board.
+
+The same script then reads a whole connection rather than a packet at a time. `client.cpp`
+is driven through one by `tools/client_run.cpp`, against a broker made of bytes written
+from the specification, and the decoder is asked whether what came out is a node behaving:
+the CONNECT, the SUBSCRIBE, nothing announced until the SUBACK and nothing published until
+the hub has been told this node is here, an event that went unacknowledged coming back
+with DUP under the same packet id rather than as a second event, the acknowledgement a
+command is owed, and the ping that keeps a quiet link open. A packet can be perfect and a
+node can still be wrong about when to send it.
 
 And to the flash framing:
 
@@ -170,6 +179,7 @@ within 10 ms — which is the whole point of asking the network rather than a pe
 | `include/sentry/command.h`, `src/protocol/command.cpp` | The closed command grammar: the actions, what each one may carry, and who it is addressed to. |
 | `include/sentry/control.h`, `src/protocol/control.cpp` | The three control messages this node writes, including the goodbye that has to fit in a 255-byte will. |
 | `include/sentry/mqtt.h`, `src/protocol/mqtt.cpp` | The packets, and what this node refuses to speak: no QoS 2, no length it has nowhere to put, no packet only a client may send. |
+| `include/sentry/client.h`, `src/protocol/client.cpp` | What is in flight, what is owed and when to stop waiting: one publish at a time, sent again with DUP under its own packet id, a ping before the keepalive runs out, and a link given up on rather than waited on forever. |
 | `include/sentry/topics.h`, `src/protocol/topics.cpp` | Where each message goes, built in one place because the topic is the one claim a node cannot make up. |
 | `include/sentry/names.h`, `src/protocol/names.cpp` | What a name, a uuid, a kind, a driver and a timestamp are, in one place rather than in whichever file needed one first. |
 | `include/sentry/session.h`, `src/core/session.cpp` | The order a connection comes up in: nothing is announced before the subscription is confirmed, and every connection has an identifier of its own. |
@@ -177,7 +187,7 @@ within 10 ms — which is the whole point of asking the network rather than a pe
 | `include/sentry/store.h`, `src/core/store.cpp` | The framing that lets an interrupted write be recognised as one, and the rule for choosing between the two configuration slots. |
 | `include/sentry/identity.h`, `src/core/identity.cpp` | The provisioning record — the node id and where the broker is — and the boot id that must differ every boot. |
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
-| `tools/emit.cpp`, `tools/unpack.cpp`, `tools/mqtt_emit.cpp` | Write events, packets and configuration slots for the three cross-checks above. |
+| `tools/emit.cpp`, `tools/unpack.cpp`, `tools/mqtt_emit.cpp`, `tools/client_run.cpp` | Write events, packets, a whole connection and configuration slots for the cross-checks above. |
 | `src/device/main.cpp` | The one program that runs on a board: USB serial, the LED, the die temperature, and the same event writer as everything else. |
 | `include/sentry/spool.h`, `src/core/spool.cpp` | The queue for an outage: which readings collapse into a newer one, which are never dropped for them, and what is counted when something is given up. |
 | `include/sentry/input.h`, `src/core/input.cpp` | What a wire may mean: the baseline that is not an intrusion, the settling window a PIR needs, the debounce, and the polarity software cannot guess. |
@@ -205,11 +215,13 @@ fails here, in a second, rather than at link time on a target with neither.
   two answers is, what happens when the network goes away mid-interval, and whether a node
   that has lost its clock should go back to `unsynced` rather than keep stamping readings
   from a counter nobody has checked.
-- The MQTT client itself. `mqtt.cpp` writes and reads the packets and is checked against a
-  second implementation, `session.cpp` says what order things happen in and `lease.cpp` says
-  what permission is worth — but nothing yet holds a socket, retries, tracks what is in
-  flight or does the mTLS handshake. No board has connected to the broker, so the
-  compatibility run against a live one that PICO-03 asks for has **not** been done.
+- The socket under the MQTT client. `mqtt.cpp` writes and reads the packets, `client.cpp`
+  decides what is in flight and when a link has stopped being one, `session.cpp` says what
+  order things happen in and `lease.cpp` says what permission is worth — all of it checked
+  against implementations that have never seen it. What none of them has is a socket: no
+  TLS handshake, no certificates, no lwIP connection, and nothing that reconnects a real
+  one. No board has spoken to the broker, so the compatibility run against a live one that
+  PICO-03 asks for has **not** been done.
 - Any sensor driver at all. What is here is the part of one that has no hardware in it:
   `input.cpp` decides what a level means, `sensors.cpp` decides what a scratchpad or an
   ADC count means, and `pins.cpp` decides whether a configuration may start. Nothing has

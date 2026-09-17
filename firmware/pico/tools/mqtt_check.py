@@ -188,6 +188,76 @@ def channel_of(topic: str, what: str) -> str:
     return channel
 
 
+def conversation(binary: Path) -> int:
+    """One whole connection, in the order a broker would have seen it.
+
+    Each packet on its own being well formed is not the same as the node behaving. What is
+    checked here is the order and the memory: nothing is announced before the subscription
+    is confirmed, an unacknowledged event comes back as the same event rather than a second
+    one, and a command is answered.
+    """
+    if not binary.exists():
+        raise SystemExit(f"{binary} is not built; cmake --build {binary.parent}")
+    try:
+        packets = {name: decode(body) for name, body in emitted(binary).items()}
+    except NotAPacket as problem:
+        raise SystemExit(f"the client wrote something that is not a packet: {problem}") from None
+
+    order = list(packets)
+    expected = [
+        "1.connect",
+        "2.subscribe",
+        "3.publish.state",
+        "4.publish.event",
+        "5.republish.event",
+        "6.puback",
+        "7.ping",
+    ]
+    if order != expected:
+        raise SystemExit(f"the conversation went {order}, not {expected}")
+
+    if packets["1.connect"]["client_id"] != NODE or not packets["1.connect"]["clean_session"]:
+        raise SystemExit("the connection is not a clean one made by this node")
+    if channel_of(packets["2.subscribe"]["topic"], "the subscription") != "commands":
+        raise SystemExit("the node subscribed to something other than its commands")
+
+    hello = packets["3.publish.state"]
+    if not hello["retain"] or hello["qos"] != 1:
+        raise SystemExit("the announcement is not a retained, acknowledged state")
+    document = json.loads(hello["payload"])
+    judged(
+        document,
+        MESSAGES["state"],
+        json.loads((CONTRACTS / "control/state.schema.json").read_text()),
+        "the announcement",
+    )
+    if document.get("online") is not True:
+        raise SystemExit("the node announced itself without saying it was here")
+
+    first = packets["4.publish.event"]
+    again = packets["5.republish.event"]
+    if first["duplicate"]:
+        raise SystemExit("the first attempt at an event claims to be a repeat of one")
+    if not again["duplicate"]:
+        raise SystemExit("an event sent twice without DUP is two events to a broker")
+    if again["packet_id"] != first["packet_id"] or again["payload"] != first["payload"]:
+        raise SystemExit("the repeat is a different event, not the same one again")
+    judged(
+        json.loads(first["payload"]),
+        EventEnvelope,
+        json.loads((CONTRACTS / "event.schema.json").read_text()),
+        "the event",
+    )
+    if first["packet_id"] == hello["packet_id"]:
+        raise SystemExit("two messages in flight under one packet id")
+
+    if packets["6.puback"]["packet_id"] != 42:
+        raise SystemExit("the command was acknowledged under somebody else's packet id")
+    if packets["7.ping"]["type"] != "pingreq":
+        raise SystemExit("a quiet link was not pinged")
+    return len(packets)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=Path("build/pico-host"))
@@ -272,6 +342,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"{len(packets)} packets decoded from the specification, {published} of them published")
     print("the will, the subscription and every payload are what the hub would accept")
+
+    spoken = conversation(arguments.build_dir / "sentry_client_run")
+    print(f"and {spoken} more in one connection, in the order the client wrote them:")
+    print("nothing announced before the subscription, and an event resent as the same event")
     return 0
 
 

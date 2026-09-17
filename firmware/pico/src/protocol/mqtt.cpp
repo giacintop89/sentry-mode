@@ -175,8 +175,11 @@ size_t write_subscribe(uint16_t packet_id, const char* topic, uint8_t qos, uint8
 }
 
 size_t write_publish(const char* topic, const uint8_t* payload, size_t size, uint8_t qos,
-                     bool retain, uint16_t packet_id, uint8_t* out, size_t capacity) {
+                     bool retain, uint16_t packet_id, uint8_t* out, size_t capacity,
+                     bool duplicate) {
   if (out == nullptr || qos > 1) return 0;
+  // A repeat of something that was never acknowledged, and at QoS 0 nothing is.
+  if (duplicate && qos == 0) return 0;
   if (size > 0 && payload == nullptr) return 0;
   size_t topic_length = 0;
   if (!sensible_topic(topic, topic_length)) return 0;
@@ -191,6 +194,7 @@ size_t write_publish(const char* topic, const uint8_t* payload, size_t size, uin
   uint8_t first = static_cast<uint8_t>(static_cast<uint8_t>(Type::kPublish) << 4);
   first = static_cast<uint8_t>(first | (qos << 1));
   if (retain) first = static_cast<uint8_t>(first | 0x01);
+  if (duplicate) first = static_cast<uint8_t>(first | 0x08);
   out[at++] = first;
   const size_t length_bytes = put_remaining_length(out, capacity, at, body);
   if (length_bytes == 0) return 0;
