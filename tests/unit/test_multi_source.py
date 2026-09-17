@@ -240,8 +240,14 @@ def test_the_planner_knows_which_cameras_it_can_watch(hub):
         update={"actions": [PhotoAction(source_id="synthetic-a")]}
     )
     plan = sentry.planner.plan([photo])
-    assert [p.message for p in plan.problems] == [
-        "photos and videos come only from legacy-primary for now"
+    # Watched for objects, so it already streams: nothing more to keep ready.
+    assert plan.ok and plan.ready == frozenset() and not plan.camera
+    elsewhere = photo.model_copy(update={"actions": [PhotoAction(source_id="synthetic-b")]})
+    plan = sentry.planner.plan([elsewhere])
+    assert plan.ok and plan.ready == {"synthetic-b"} and not plan.camera
+    missing = photo.model_copy(update={"actions": [PhotoAction(source_id="synthetic-z")]})
+    assert [p.message for p in sentry.planner.plan([missing]).problems] == [
+        "synthetic-z is not a known source"
     ]
     plan = sentry.planner.plan([looking("yard", "synthetic-a", "person")])
     assert plan.ok and plan.vision == {"synthetic-a": 0.5} and not plan.camera

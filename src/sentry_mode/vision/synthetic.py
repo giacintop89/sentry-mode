@@ -8,6 +8,7 @@ like any other camera. Nothing creates one unless a test or a developer asks for
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -58,6 +59,7 @@ class SyntheticCamera:
         self.rate = 0.0
         self.captured = 0
         self.raw_frame = None
+        self.frame_at = 0.0
         self.error: str | None = None
 
     def hold(
@@ -140,7 +142,7 @@ class SyntheticCamera:
                 frame = self.frames(self.captured)
                 self.captured += 1
                 with self.condition:
-                    self.raw_frame = frame
+                    self.raw_frame, self.frame_at = frame, time.monotonic()
                 self.detection.submit(frame)
                 if stopped.wait(1 / max(self.rate, 0.1)):
                     break
@@ -151,6 +153,10 @@ class SyntheticCamera:
     def latest_frame(self):
         with self.condition:
             return self.raw_frame
+
+    def latest_capture(self):
+        with self.condition:
+            return None if self.raw_frame is None else (self.raw_frame, self.frame_at)
 
     def status(self) -> dict:
         running = self.thread is not None and self.thread.is_alive() and not self.stopped.is_set()

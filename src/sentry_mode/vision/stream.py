@@ -1,6 +1,7 @@
 """Shared camera capture with independent Sentry and optional JPEG preview demand."""
 
 import threading
+import time
 from _thread import LockType
 from collections.abc import Callable
 
@@ -159,7 +160,7 @@ class VideoStream:
         self.ready.clear()
         self.error = None
         self.jpeg = None
-        self.raw_frame = None
+        self.raw_frame, self.frame_at = None, 0.0
         self.detection.start()
         self.thread = threading.Thread(target=self._capture, name="sentry-mode-video")
         try:
@@ -219,6 +220,12 @@ class VideoStream:
         with self.condition:
             return None if self.stopped.is_set() else self.raw_frame
 
+    def latest_capture(self):
+        with self.condition:
+            if self.stopped.is_set() or self.raw_frame is None:
+                return None
+            return self.raw_frame, self.frame_at
+
     def _frame(self, camera):
         """A frame, reopening the device first if it went away underneath us.
 
@@ -263,7 +270,7 @@ class VideoStream:
                     self.capture_size = (selected.width, selected.height)
                     self.detection.submit(frame)
                     with self.condition:
-                        self.raw_frame = frame
+                        self.raw_frame, self.frame_at = frame, time.monotonic()
                         render = self.preview and (self.viewers > 0 or self.jpeg is None)
                     if render:
                         jpeg = camera.encode_jpeg(self.detection.overlay(frame))

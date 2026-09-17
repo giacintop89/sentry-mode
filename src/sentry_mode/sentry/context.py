@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -27,7 +29,11 @@ class ActionContext:
     sources: tuple[str, ...] = ()
     """Every source the actions will use, resolved when the trigger fired."""
     decided_at: float = field(default_factory=time.monotonic)
+    decided_wall: float = field(default_factory=time.time)
     expires_at: float | None = None
+    frames: Mapping[str, tuple[Any, float]] = field(default_factory=dict, compare=False, repr=False)
+    """The newest frame of each camera a first photo uses, kept when the trigger fired,
+    with its capture time on the monotonic clock."""
 
     @classmethod
     def new(cls, **fields) -> ActionContext:

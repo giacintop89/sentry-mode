@@ -318,6 +318,12 @@ class RemoteCamera:
         with self.lock:
             return self.raw_frame
 
+    def latest_capture(self):
+        with self.lock:
+            if self.raw_frame is None or self.last_frame_at is None:
+                return None
+            return self.raw_frame, self.last_frame_at
+
     def status(self) -> dict:
         now = self.clock()
         with self.lock:

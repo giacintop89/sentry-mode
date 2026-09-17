@@ -220,11 +220,13 @@ A board has one camera port, so one `csi` source. It needs `rpicam-vid`
 `sentry-satellite doctor` names the sensor it finds, or says there is none.
 
 The camera sends nothing on its own. When it is declared, the hub adds it to its own
-cameras as `zero-entrance.camera-1`, and a rule can watch it for objects like the primary
-camera. Only while something holds it — an armed rule, for now — does the hub ask the node
-for video; the node encodes in the GPU and sends the H.264 as it comes, over TLS, to the
-hub's media port. The hub decodes it, runs the shared detector on it, and keeps only the
-newest frame. Photos and videos still come from the primary camera.
+cameras as `zero-entrance.camera-1`. A rule can watch it for objects, take photos and
+videos from it ([rules](rules-v2.md#where-the-evidence-comes-from)), and the Video view
+can show it. Only while something holds it — an armed rule, a page showing it, a
+recording — does the hub ask the node for video; the node encodes in the GPU and sends
+the H.264 as it comes, over TLS, to the hub's media port. The hub decodes it, runs the
+shared detector on it when a rule asks, and keeps only the newest frame. A video from it
+is silent unless the rule names a microphone.
 
 On the hub, the media port is part of the satellite settings and uses the same
 certificates as the broker:
@@ -246,7 +248,33 @@ the satellites status and carries on with events only.
 
 The `satellites.media` block of `/api/satellites` shows the open streams; each camera's
 own status says whether it is `starting`, `live`, `stale` (connected, nothing arriving) or
-`offline`, the rate actually delivered, and why the last stream ended. Why this is raw
+`offline`, the rate actually delivered, and why the last stream ended.
+
+### Watching any camera
+
+The Video view has a camera list once the hub has more than one camera. It shows each
+camera's state, how old its newest picture is, and whether it is on this hub or on a
+satellite. Each page that shows a camera holds its own preview session, so closing one
+page never stops a camera another page, a rule or a recording is using.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/cameras` | — | `cameras`: `source_id`, `display_name`, `origin`, `zone`, `primary`, `state` (`idle`, `starting`, `live`, `stale`, `offline`), `frame_age_seconds`, `fps`, `error`, `previews` |
+| POST | `/api/cameras/preview/start` | `{"source_id"}` | `session`, `source_id`, `expires_in_seconds`, `stream` |
+| POST | `/api/cameras/preview/renew` | `{"session"}` | as start |
+| POST | `/api/cameras/preview/stop` | `{"session"}` | `{"closed": true}`, or `false` if it had already ended |
+| GET | `/api/cameras/preview/stream?session=…` | — | MJPEG, up to 10 frames per second and 960 pixels wide |
+| GET | `/api/cameras/snapshot?source_id=…` | — | a JPEG of a picture no older than two seconds, or `409` |
+
+A session ends 30 seconds after its last renewal, unless its stream is still open; the
+page renews it every 10 seconds and stops it when it is closed. At most 16 sessions are
+open at once. A stream ends after 10 seconds without a new picture, so a page notices
+and asks again. The POSTs need the usual `X-Sentry-Mode-Control: 1` header.
+
+The older `/api/video…` endpoints are still this hub's own camera, whatever camera a page
+shows. A session on `legacy-primary` switches its preview on if it was off, and off again
+when the last such session ends; a preview started with `/api/video/start` is left as it
+was, and `/api/video/stop` still stops it for everybody. Why this is raw
 H.264 over TLS rather than RTSP is in [the video profile](adr/satellite-video-profile.md),
 with the measurements.
 

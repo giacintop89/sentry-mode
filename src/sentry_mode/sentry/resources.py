@@ -15,9 +15,12 @@ from __future__ import annotations
 
 from collections.abc import Container
 from dataclasses import dataclass, field
+from typing import TypeVar
 
 from sentry_mode.sentry.config import (
     ARMABLE_TRIGGERS,
+    TRIGGER_SOURCE,
+    Action,
     AudioAction,
     HealthEventTrigger,
     PhotoAction,
@@ -27,8 +30,35 @@ from sentry_mode.sentry.config import (
     VideoAction,
     VisionTrigger,
 )
-from sentry_mode.sources.models import PRIMARY_CAMERA, SourceKind, SourceRef, SourceState
+from sentry_mode.sources.models import (
+    PRIMARY_CAMERA,
+    PRIMARY_MICROPHONE,
+    SourceKind,
+    SourceRef,
+    SourceState,
+)
 from sentry_mode.sources.registry import SourceRegistry
+
+A = TypeVar("A")
+
+
+def resolve(rule: RuleV2, action: A) -> A:
+    """The action with `trigger_source` replaced by the camera that set the rule off.
+
+    Only a camera trigger names a camera. For any other trigger the action is returned as
+    it is, and the planner refuses it.
+    """
+    if (
+        isinstance(action, (PhotoAction, VideoAction))
+        and action.source_id == TRIGGER_SOURCE
+        and isinstance(rule.trigger, VisionTrigger)
+    ):
+        return action.model_copy(update={"source_id": rule.trigger.source_id})  # type: ignore[return-value]
+    return action
+
+
+def resolved(rule: RuleV2) -> list[Action]:
+    return [resolve(rule, action) for action in rule.actions]
 
 
 @dataclass(frozen=True)
@@ -50,6 +80,8 @@ class Plan:
     min_confidence: float = 0.7
     vision: dict[str, float] = field(default_factory=dict)
     """Other cameras on this hub watched for objects, with the lowest confidence each needs."""
+    ready: frozenset[str] = frozenset()
+    """Other cameras kept streaming while armed because an action takes pictures from them."""
     watched: frozenset[str] = frozenset()
     """Satellite sources a trigger listens to."""
     needs: dict[str, frozenset[str]] = field(default_factory=dict)
@@ -69,6 +101,7 @@ class Plan:
             "detector": self.detector,
             "camera": self.camera,
             "vision": sorted(self.vision),
+            "ready": sorted(self.ready),
             "watched": sorted(self.watched),
             "problems": [
                 {"rule_id": p.rule_id, "rule": p.rule_name, "message": p.message}
@@ -105,6 +138,8 @@ class ResourcePlanner:
         detector = camera_for_actions = False
         confidences = []
         vision: dict[str, float] = {}
+        ready: set[str] = set()
+        notes: list[str] = []
 
         for rule in rules:
 
@@ -133,11 +168,10 @@ class ResourcePlanner:
             elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger)):
                 watched.add(trigger.source_id)
 
-            if self._actions(rule, used, fail):
+            if self._actions(rule, used, fail, ready, notes):
                 camera_for_actions = True
             needs[rule.id] = frozenset(used)
 
-        notes = []
         if camera_for_actions and not detector:
             notes.append(
                 "The camera runs while Sentry is armed so that a photo or video can start "
@@ -148,6 +182,7 @@ class ResourcePlanner:
             camera=detector or camera_for_actions,
             min_confidence=min(confidences, default=0.7),
             vision=vision,
+            ready=frozenset(ready - set(vision)),
             watched=frozenset(watched),
             needs=needs,
             problems=tuple(problems),
@@ -161,29 +196,55 @@ class ResourcePlanner:
         def fail(message: str) -> None:
             problems.append(Problem(rule.id, rule.name, message))
 
-        self._actions(rule, set(), fail)
+        self._actions(rule, set(), fail, set(), [])
         return problems
 
-    def _actions(self, rule: RuleV2, used: set[str], fail) -> bool:
-        """Check the sources a rule's actions use. True if they need this node's camera."""
+    def _actions(
+        self, rule: RuleV2, used: set[str], fail, ready: set[str], notes: list[str]
+    ) -> bool:
+        """Check the sources a rule's actions use. True if they need this node's camera.
+
+        Cameras besides this node's own that an action records from go into `ready`.
+        """
         camera = False
-        for action in rule.actions:
+        for original in rule.actions:
+            action = resolve(rule, original)
             if isinstance(action, (PhotoAction, VideoAction)):
+                if action.source_id == TRIGGER_SOURCE:
+                    fail(
+                        f"a {action.type} after a {rule.trigger.type.replace('_', ' ')} "
+                        "trigger has to name its camera"
+                    )
+                    continue
                 used.add(action.source_id)
                 if self._check(action.source_id, SourceKind.CAMERA, fail):
                     if action.source_id == PRIMARY_CAMERA:
                         camera = True
-                    elif SourceRef.parse(action.source_id).is_local:
-                        fail(f"photos and videos come only from {PRIMARY_CAMERA} for now")
+                    elif action.source_id in self.cameras:
+                        ready.add(action.source_id)
                     else:
-                        fail("recording from a satellite camera is not available yet")
-            if isinstance(action, AudioAction) or (
-                isinstance(action, VideoAction) and action.audio
-            ):
-                used.add(action.audio_source_id)
-                if self._check(action.audio_source_id, SourceKind.MICROPHONE, fail):
-                    if not SourceRef.parse(action.audio_source_id).is_local:
+                        fail(f"{action.source_id} is not a camera this hub can record from")
+            if isinstance(action, VideoAction) and action.audio and action.microphone is None:
+                note = (
+                    f"{rule.name}: the video from {action.source_id} is recorded without "
+                    "sound, because no microphone is chosen for it."
+                )
+                if note not in notes:
+                    notes.append(note)
+            microphone = (
+                action.audio_source_id
+                if isinstance(action, AudioAction)
+                else action.microphone
+                if isinstance(action, VideoAction)
+                else None
+            )
+            if microphone is not None:
+                used.add(microphone)
+                if self._check(microphone, SourceKind.MICROPHONE, fail):
+                    if not SourceRef.parse(microphone).is_local:
                         fail("recording from a satellite microphone is not available yet")
+                    elif microphone != PRIMARY_MICROPHONE:
+                        fail(f"sound is recorded only from {PRIMARY_MICROPHONE} for now")
         return camera
 
     def _check(self, source_id: str, kind: SourceKind | None, fail) -> bool:
@@ -205,4 +266,4 @@ class ResourcePlanner:
         return True
 
 
-__all__ = ["Plan", "Problem", "ResourcePlanner"]
+__all__ = ["Plan", "Problem", "ResourcePlanner", "resolve", "resolved"]

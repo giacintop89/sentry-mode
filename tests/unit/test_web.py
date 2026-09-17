@@ -705,7 +705,9 @@ def test_captures_are_listed_served_in_ranges_and_deleted(web, tmp_path):
         b"ssh",
         b"wait",
     ]
-    assert b'id="rule-video-audio" data-f="video-audio" type="checkbox" checked' in page
+    # Photos and videos name their camera, and a video names its microphone or none.
+    assert b'data-f="video-mic"' in page and b'data-f="video-audio"' not in page
+    assert page.count(b'data-f="camera"') == 2 and page.count(b'data-f="missing"') == 2
 
 
 def upload(base, data, name="Door Bell.wav", content_type="application/octet-stream"):
@@ -960,8 +962,9 @@ def test_the_video_view_records_to_the_captures_tab(web):
     assert request(base, "/api/video/record/start", "POST")[0] == 409
     saved = threading.Event()
 
-    def record(frames, seconds, rule, stop_event, size, microphone):
+    def record(frames, seconds, rule, stop_event, size, microphone, meta):
         assert (seconds, rule) == (60, "manual recording")
+        assert meta["source_id"] == "legacy-primary" and meta["timing"] == "manual"
         stop_event.wait(5)
         saved.set()
         return "20260914-101500-250-manual-recording.mp4", None

@@ -45,6 +45,13 @@ def sentry(tmp_path):
         sounds_directory=tmp_path / "sounds",
     )
     engine = Sentry(settings, video, threading.Lock())
+
+    def capture():
+        # A frame set by a test is a live one, captured just now.
+        frame = video.latest_frame.return_value
+        return (frame, time.monotonic()) if hasattr(frame, "shape") else None
+
+    video.latest_capture.side_effect = capture
     try:
         yield engine
     finally:
@@ -603,6 +610,7 @@ def test_test_mode_logs_photo_and_video_without_touching_the_camera(sentry):
         "Photos: 3 every 1.5 s",
     ]
     sentry.video.latest_frame.assert_not_called()
+    sentry.video.latest_capture.assert_not_called()
     sentry.video.hold_recording.assert_not_called()
 
 
@@ -619,7 +627,7 @@ def test_photo_is_saved_and_video_records_beside_the_announcement(sentry):
     sentry.video.recording_size.return_value = (1280, 720)
     recording, spoken = threading.Event(), threading.Event()
 
-    def record(frames, seconds, rule, stop_event, size, microphone):
+    def record(frames, seconds, rule, stop_event, size, microphone, meta):
         recording.set()
         assert (seconds, rule, size) == (20, "Person at entrance", (1280, 720))
         assert microphone == ["-f", "pulse", "-i", "default"]
@@ -813,7 +821,7 @@ def test_audio_action_records_from_the_microphone_in_the_background(sentry):
     sentry.config.rules[0].actions = [AudioAction(duration_seconds=6), TTSAction(text="Hello")]
     started, spoken = threading.Event(), threading.Event()
 
-    def record(microphone, seconds, rule, stop_event):
+    def record(microphone, seconds, rule, stop_event, meta):
         started.set()
         assert (microphone, seconds, rule) == (
             ["-f", "pulse", "-i", "mic"],
@@ -848,7 +856,7 @@ def test_a_silent_video_is_kept_when_the_microphone_is_missing(sentry):
     sentry.video.recording_size.return_value = (128, 72)
     saved = threading.Event()
 
-    def record(frames, seconds, rule, stop_event, size, microphone):
+    def record(frames, seconds, rule, stop_event, size, microphone, meta):
         assert microphone is None
         saved.set()
         return "20260101-000000-000-person-at-entrance.mp4", None

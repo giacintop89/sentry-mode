@@ -69,6 +69,7 @@ def engine(tmp_path):
         captures_directory=tmp_path / "captures",
         sounds_directory=tmp_path / "sounds",
     )
+    video.latest_capture.return_value = None
     sentry = Sentry(settings, video, threading.Lock())
     sentry.sources.register(satellite(PIR))
     sentry.sources.register(satellite(TEMPERATURE))
@@ -379,7 +380,7 @@ def test_disarming_moves_the_epoch_on(engine):
         ),
         (
             pir_rule([PhotoAction(source_id="zero-entrance.camera")]),
-            "recording from a satellite camera is not available yet",
+            "zero-entrance.camera is not a camera this hub can record from",
         ),
     ],
 )
@@ -554,7 +555,7 @@ def test_a_first_version_rule_can_still_be_tested(engine):
 
 def test_testing_a_rule_that_records_from_a_satellite_is_refused(engine):
     rule = pir_rule([PhotoAction(source_id="zero-entrance.camera")])
-    with pytest.raises(ValueError, match="satellite camera is not available yet"):
+    with pytest.raises(ValueError, match="not a camera this hub can record from"):
         engine.test(rule)
 
 

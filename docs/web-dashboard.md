@@ -17,6 +17,11 @@ Integrations and Event log. The rule editor has Conditions and Actions tabs with
 that stay in view, and the Actions tab is the rule's ordered list of steps
 ([action sequencer](action-sequencer.md)).
 
+When the hub has more than one camera, the Video view lists them with their state and how
+old their newest picture is; the choice is remembered in the browser. Recording and the
+quality settings stay with this node's own camera
+([satellite cameras](satellites.md#watching-any-camera)).
+
 Drafts survive switching tabs. Direct links include `/#speech`, `/#push-to-talk`,
 `/sentry#integrations`, `/sentry#events`, `/sentry#captures` and `/sentry#actions`.
 

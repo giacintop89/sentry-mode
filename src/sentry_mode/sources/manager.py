@@ -109,6 +109,10 @@ class Camera(Protocol):
 
     def latest_frame(self) -> Any: ...
 
+    def latest_capture(self) -> tuple[Any, float] | None:
+        """The newest frame and when it was captured, on the monotonic clock."""
+        ...
+
     def close(self) -> None: ...
 
 

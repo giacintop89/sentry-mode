@@ -14,7 +14,7 @@ and where its limits are.
 - [Sentry rules](sentry-rules.md) — confirmed appearances, arming, test mode, event log.
 - [Action sequencer](action-sequencer.md) — the ordered steps a rule runs when it triggers.
 - [Tunes and audio files](tunes-and-audio-files.md) — built-in tunes and the uploaded library.
-- [Captures](captures.md) — photos, videos, recordings and how they are stored.
+- [Captures](captures.md) — photos, videos, recordings, where each came from, and how they are stored.
 - [Telegram](telegram.md) — bot messages from a rule.
 - [SSH commands](ssh-commands.md) — saved remote commands from a rule.
 - [Web dashboard](web-dashboard.md) — views, navigation, embedding, small screens.

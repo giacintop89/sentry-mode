@@ -95,6 +95,23 @@
       :'No satellite sensor is known yet. Add one on the Satellites page; a rule can name it once the node has reported it.';
   }
   const sensors=()=>sources.filter(s=>s.kind==='sensor');
+  const TRIGGER_CAMERA='trigger_source',PRIMARY_CAMERA='legacy-primary',PRIMARY_MIC='legacy-microphone';
+  const sourceLabel=s=>s.display_name+(s.zone?' · '+s.zone:'')+(s.state!=='ready'?' · '+s.state:'');
+  // A step names its camera; a rule set off by a camera may also say "that camera".
+  function fillCameras(step,selected) {
+    const entries=[[TRIGGER_CAMERA,'The camera that set the rule off'],...sources.filter(s=>s.kind==='camera').map(s=>[s.source_id,sourceLabel(s)])];
+    if(!entries.some(([id])=>id===selected))entries.push([selected,'Missing camera: '+selected]);
+    options(f(step,'camera'),entries,selected);
+  }
+  // Sound is an explicit choice: leaving it out of a rule keeps the node microphone only
+  // for the node's own camera, so the list shows what the rule will really record.
+  function fillMicrophones(step,a) {
+    const camera=a.source_id||PRIMARY_CAMERA;
+    const chosen=a.audio===false?'':a.audio_source_id||(camera===PRIMARY_CAMERA?PRIMARY_MIC:'');
+    const entries=[['','No sound'],...sources.filter(s=>s.kind==='microphone').map(s=>[s.source_id,sourceLabel(s)])];
+    if(chosen&&!entries.some(([id])=>id===chosen))entries.push([chosen,'Missing microphone: '+chosen]);
+    options(f(step,'video-mic'),entries,chosen);
+  }
   function fillSources(selected) {
     const entries=sensors().map(s=>[s.source_id,s.display_name+(s.zone?' · '+s.zone:'')+(s.state!=='ready'?' · '+s.state:'')]);
     if(selected&&!entries.some(([id])=>id===selected))entries.unshift([selected,'Missing sensor: '+selected]);
@@ -139,9 +156,10 @@
   function fillStep(step,a) {
     step.querySelector('.step-together').checked=!!a.with_previous;
     const set=(name,value)=>{f(step,name).value=value;};
+    if(a.type==='photo'||a.type==='video'){fillCameras(step,a.source_id||PRIMARY_CAMERA);set('missing',a.if_unavailable||'fail');}
     if(a.type==='photo'){set('photo-count',a.count??1);set('photo-interval',a.interval_seconds??2);f(step,'photo-interval').disabled=(a.count??1)<=1;}
     else if(a.type==='audio')set('audio-duration',a.duration_seconds??10);
-    else if(a.type==='video'){set('video-duration',a.duration_seconds??10);f(step,'video-audio').checked=a.audio!==false;}
+    else if(a.type==='video'){set('video-duration',a.duration_seconds??10);fillMicrophones(step,a);}
     else if(a.type==='tts'){
       set('text',a.text??'Hello. Please wait here.');renderVoices(step,a.voice||'en');set('rate',a.rate||175);
       set('preset',a.effects?.preset||'natural');set('pitch',a.effects?.pitch||0);set('volume',a.effects?.volume??60);
@@ -155,9 +173,10 @@
   }
   function readStep(step) {
     const type=step.dataset.type,a={type,with_previous:step.querySelector('.step-together').checked};
-    if(type==='photo')return {...a,count:val(step,'photo-count'),interval_seconds:val(step,'photo-interval')};
+    const media={source_id:f(step,'camera')?.value,if_unavailable:f(step,'missing')?.value};
+    if(type==='photo')return {...a,...media,count:val(step,'photo-count'),interval_seconds:val(step,'photo-interval')};
     if(type==='audio')return {...a,duration_seconds:val(step,'audio-duration')};
-    if(type==='video')return {...a,duration_seconds:val(step,'video-duration'),audio:f(step,'video-audio').checked};
+    if(type==='video'){const mic=f(step,'video-mic').value;return {...a,...media,duration_seconds:val(step,'video-duration'),audio:!!mic,audio_source_id:mic||null};}
     if(type==='tts')return {...a,text:f(step,'text').value,voice:f(step,'voice').value,rate:val(step,'rate'),
       effects:{preset:f(step,'preset').value,pitch:val(step,'pitch'),volume:val(step,'volume')}};
     if(type==='tune')return {...a,tune:f(step,'tune').value,repeat:val(step,'tune-repeat'),volume:val(step,'tune-volume'),pitch:val(step,'tune-pitch')};
@@ -180,9 +199,10 @@
   const voiceName=step=>label(step,'voice').split(' · ')[1]||label(step,'voice');
   function stepSummary(step) {
     const type=step.dataset.type,say=text=>{step.querySelector('.step-summary').textContent=text;};
-    if(type==='photo')return say(val(step,'photo-count')>1?val(step,'photo-count')+' pictures, every '+val(step,'photo-interval')+' s':'one picture');
+    const where=type==='photo'||type==='video'?' · '+label(step,'camera'):'';
+    if(type==='photo')return say((val(step,'photo-count')>1?val(step,'photo-count')+' pictures, every '+val(step,'photo-interval')+' s':'one picture')+where);
     if(type==='audio')return say(val(step,'audio-duration')+' s of sound');
-    if(type==='video')return say(val(step,'video-duration')+' s'+(f(step,'video-audio').checked?' with sound':', silent'));
+    if(type==='video')return say(val(step,'video-duration')+' s'+(f(step,'video-mic').value?' with sound':', silent')+where);
     if(type==='tts')return say(shorten(f(step,'text').value)+' · '+voiceName(step));
     if(type==='tune')return say(label(step,'tune')+(val(step,'tune-repeat')>1?' ×'+val(step,'tune-repeat'):'')
       +(val(step,'tune-pitch')?' at '+(val(step,'tune-pitch')>0?'+':'')+val(step,'tune-pitch')+' st':''));

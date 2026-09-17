@@ -26,6 +26,23 @@ def source_id(value: str) -> str:
 
 SourceId = Annotated[str, Field(min_length=1, max_length=81)]
 
+TRIGGER_SOURCE = "trigger_source"
+"""What a photo or video names to use the camera that set the rule off.
+
+The underscore keeps it apart from every real source name, which may not contain one."""
+
+
+def camera_id(value: str) -> str:
+    return value if value == TRIGGER_SOURCE else source_id(value)
+
+
+IfUnavailable = Literal["fail", "skip", "stop"]
+"""What a photo or video does when its camera has nothing recent to give.
+
+`fail` reports the step as failed, `skip` reports it as skipped, and `stop` also drops the
+steps of that sequence still to come. None of them takes the picture from another camera.
+"""
+
 
 class Model(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, hide_input_in_errors=True)
@@ -91,30 +108,47 @@ class PhotoAction(Step):
     count: int = Field(default=1, ge=1, le=20)
     interval_seconds: float = Field(default=2, ge=0.5, le=60)
     source_id: SourceId = PRIMARY_CAMERA
+    if_unavailable: IfUnavailable = "fail"
 
     @field_validator("source_id")
     @classmethod
     def known_shape(cls, value):
-        return source_id(value)
+        return camera_id(value)
 
 
 class VideoAction(Step):
-    """A clip from one camera, with sound from one named microphone when `audio` is on.
+    """A clip from one camera, with sound only from a microphone the rule chose.
 
-    The microphone is spelled out rather than implied, so that moving a rule to another
-    camera never silently records sound from somewhere else.
+    With `audio_source_id` left out, a clip from this node's camera keeps the sound of this
+    node's microphone, as it always had. A clip from any other camera is then silent: moving
+    a rule to another camera never records sound from somewhere else.
     """
 
     type: Literal["video"] = "video"
     duration_seconds: int = Field(default=10, ge=1, le=60)
     audio: StrictBool = True
     source_id: SourceId = PRIMARY_CAMERA
-    audio_source_id: SourceId = PRIMARY_MICROPHONE
+    audio_source_id: SourceId | None = None
+    if_unavailable: IfUnavailable = "fail"
 
-    @field_validator("source_id", "audio_source_id")
+    @field_validator("source_id")
+    @classmethod
+    def known_camera(cls, value):
+        return camera_id(value)
+
+    @field_validator("audio_source_id")
     @classmethod
     def known_shape(cls, value):
-        return source_id(value)
+        return None if value is None else source_id(value)
+
+    @property
+    def microphone(self) -> str | None:
+        """The microphone this clip records, or None for a silent one."""
+        if not self.audio:
+            return None
+        if self.audio_source_id is not None:
+            return self.audio_source_id
+        return PRIMARY_MICROPHONE if self.source_id == PRIMARY_CAMERA else None
 
 
 class AudioAction(Step):

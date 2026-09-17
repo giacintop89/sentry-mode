@@ -132,8 +132,17 @@ def obstacles(config: SentryConfigV2) -> list[str]:
                 and action.source_id != PRIMARY_CAMERA
             ):
                 found.append(f"{rule.name} records from camera {action.source_id}")
-            microphone = getattr(action, "audio_source_id", PRIMARY_MICROPHONE)
-            if isinstance(action, (AudioAction, VideoAction)) and microphone != PRIMARY_MICROPHONE:
+            if isinstance(action, (PhotoAction, VideoAction)) and action.if_unavailable != "fail":
+                found.append(f"{rule.name} {action.if_unavailable}s when its camera is missing")
+            if isinstance(action, AudioAction):
+                microphone: str | None = action.audio_source_id
+            elif isinstance(action, VideoAction):
+                microphone = (
+                    action.microphone if action.audio else action.audio_source_id
+                ) or PRIMARY_MICROPHONE
+            else:
+                continue
+            if microphone != PRIMARY_MICROPHONE:
                 found.append(f"{rule.name} records sound from {microphone}")
     return found
 
@@ -174,8 +183,8 @@ def to_v1(config: SentryConfigV2) -> SentryConfig:
 # shape old clients see is exactly the shape they always saw; `obstacles` has already made
 # sure the values left out are the ones they would have assumed.
 V1_HIDDEN = {
-    "photo": {"source_id"},
-    "video": {"source_id", "audio_source_id"},
+    "photo": {"source_id", "if_unavailable"},
+    "video": {"source_id", "audio_source_id", "if_unavailable"},
     "audio": {"audio_source_id"},
 }
 

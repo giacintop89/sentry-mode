@@ -1,5 +1,15 @@
-"""Photos, videos and audio from the shared camera and microphones, kept in one bounded folder."""
+"""Photos, videos and audio from the hub's cameras and microphones, in one bounded folder.
 
+Each file is written under a `.part` name and renamed when it is complete, so a reader
+never sees half a file. Beside it goes a small JSON sidecar that says where the evidence
+came from and why: the source, the rule, the trigger and how old the picture was. The
+sidecar is renamed into place first, so a crash can leave a sidecar without its file, which
+the next clean-up removes, but never a file that looks complete and is not. Files saved
+before sidecars existed are served and listed as they always were.
+"""
+
+import json
+import os
 import re
 import signal
 import subprocess
@@ -20,6 +30,13 @@ MAX_MESSAGE_BYTES = 5 * 1024 * 1024
 CAPTURE_NAME = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-z0-9-]{1,40}\.(jpg|mp4|m4a)$")
 MEDIA_TYPES = {"jpg": "image/jpeg", "mp4": "video/mp4", "m4a": "audio/mp4"}
 KINDS = {".jpg": "photo", ".mp4": "video", ".m4a": "audio"}
+SIDECAR_VERSION = 1
+MAX_SIDECAR_BYTES = 16 * 1024
+MAX_RECORDINGS = 3
+"""Videos encoded at once on the hub; one more is refused rather than left to starve the rest."""
+STALE_PART_SECONDS = 600
+"""A `.part` file this old belongs to no recording still running: the longest is 60 s."""
+PARTIAL = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-z0-9-]{1,40}\.(?:.*\.)?part")
 AAC = ["-ac", "1", "-c:a", "aac", "-b:a", "96k"]
 
 
@@ -27,10 +44,77 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "capture"
 
 
+def sidecar(path: Path) -> Path:
+    return path.with_name(path.stem + ".json")
+
+
 class Captures:
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, max_recordings: int = MAX_RECORDINGS):
         self.directory = directory
         self.lock = threading.Lock()
+        self.recordings = threading.BoundedSemaphore(max_recordings)
+        self.max_recordings = max_recordings
+        self.sweep()
+
+    def sweep(self, older_than: float = STALE_PART_SECONDS) -> list[str]:
+        """Remove what an interrupted save left behind: old `.part` files and lone sidecars."""
+        removed: list[str] = []
+        now = time.time()
+        try:
+            entries = list(self.directory.iterdir())
+        except OSError:
+            return removed
+        names = {entry.name for entry in entries}
+        for entry in entries:
+            lone = (
+                entry.suffix == ".json"
+                and CAPTURE_NAME.fullmatch(entry.stem + ".jpg") is not None
+                and not any(entry.stem + suffix in names for suffix in KINDS)
+            )
+            if not (lone or PARTIAL.match(entry.name)):
+                continue
+            try:
+                # A save still in progress has a fresh `.part`, and briefly a lone sidecar.
+                if now - entry.stat().st_mtime < older_than:
+                    continue
+                entry.unlink()
+                removed.append(entry.name)
+            except OSError:
+                continue
+        return removed
+
+    def _commit(self, partial: Path, path: Path, meta: dict | None, kind: str) -> None:
+        """Put the sidecar, then the file, where readers look for them."""
+        if meta is not None:
+            document = {
+                "schema_version": SIDECAR_VERSION,
+                "name": path.name,
+                "kind": kind,
+                "saved_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                **meta,
+            }
+            target = sidecar(path)
+            temporary = target.with_name(target.name + ".part")
+            try:
+                with temporary.open("w") as out:
+                    json.dump(document, out)
+                    out.flush()
+                    os.fsync(out.fileno())
+                temporary.replace(target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        partial.replace(path)
+
+    def metadata(self, name: str) -> dict | None:
+        """The sidecar of a capture, or None for one saved without it."""
+        try:
+            target = sidecar(self.path(name))
+            if target.stat().st_size > MAX_SIDECAR_BYTES:
+                return None
+            document = json.loads(target.read_text())
+        except (LookupError, OSError, ValueError):
+            return None
+        return document if isinstance(document, dict) else None
 
     def _new_path(self, rule: str, extension: str) -> Path:
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -55,20 +139,37 @@ class Captures:
             except OSError:
                 continue
             stamp = datetime.strptime(path.name[:19], "%Y%m%d-%H%M%S-%f")
-            captures.append(
-                {
-                    "name": path.name,
-                    "kind": KINDS[path.suffix],
-                    "rule": path.stem[20:],
-                    "time": stamp.isoformat(timespec="seconds"),
-                    "size": size,
+            entry = {
+                "name": path.name,
+                "kind": KINDS[path.suffix],
+                "rule": path.stem[20:],
+                "time": stamp.isoformat(timespec="seconds"),
+                "size": size,
+            }
+            meta = self.metadata(path.name)
+            if meta is not None:
+                entry["evidence"] = {
+                    key: meta.get(key)
+                    for key in (
+                        "source_id",
+                        "source_name",
+                        "origin",
+                        "timing",
+                        "frame_age_seconds",
+                        "audio_source_id",
+                        "rule_name",
+                        "trigger_id",
+                        "sequence",
+                    )
                 }
-            )
+            captures.append(entry)
         return {"captures": captures}
 
     def delete(self, name: str) -> dict:
         with self.lock:
-            self.path(name).unlink()
+            path = self.path(name)
+            sidecar(path).unlink(missing_ok=True)
+            path.unlink()
         return self.listing()
 
     def _prune(self):
@@ -80,9 +181,11 @@ class Captures:
             except OSError:
                 return
             for old in found[:-MAX_CAPTURES]:
+                sidecar(old).unlink(missing_ok=True)
                 old.unlink(missing_ok=True)
+        self.sweep()
 
-    def save_photo(self, frame, rule: str) -> str:
+    def save_photo(self, frame, rule: str, meta: dict | None = None) -> str:
         import cv2
 
         path = self._new_path(rule, "jpg")
@@ -92,7 +195,9 @@ class Captures:
             if not ok:
                 raise HardwareError("Photo encoding failed.")
             partial.write_bytes(encoded.tobytes())
-            partial.replace(path)
+            if meta is not None:
+                meta = {**meta, "width": frame.shape[1], "height": frame.shape[0], "quality": 90}
+            self._commit(partial, path, meta, "photo")
         finally:
             partial.unlink(missing_ok=True)
         self._prune()
@@ -126,7 +231,12 @@ class Captures:
         return detail or f"ffmpeg exited with {process.returncode}"
 
     def record_audio(
-        self, microphone: list[str], seconds: int, rule: str, stop_event: threading.Event
+        self,
+        microphone: list[str],
+        seconds: int,
+        rule: str,
+        stop_event: threading.Event,
+        meta: dict | None = None,
     ) -> str:
         """Record the node microphone; stopping early keeps what was recorded."""
         path = self._new_path(rule, "m4a")
@@ -140,7 +250,7 @@ class Captures:
             error = self._finish_audio(process, partial)
             if error:
                 raise HardwareError(f"Audio recording failed: {error}")
-            partial.replace(path)
+            self._commit(partial, path, meta, "audio")
         finally:
             if process.poll() is None:
                 process.kill()
@@ -169,7 +279,7 @@ class Captures:
                 )  # fmt: skip
             if not partial.is_file() or not partial.stat().st_size:
                 raise HardwareError("no audio was decoded")
-            partial.replace(path)
+            self._commit(partial, path, {"origin": "browser", "source_id": None}, "audio")
         except (HardwareError, OSError) as exc:
             raise ValueError(f"Could not save the recorded message: {exc}") from exc
         finally:
@@ -185,13 +295,25 @@ class Captures:
         stop_event: threading.Event,
         size: tuple[int, int] | None = None,
         microphone: list[str] | None = None,
+        meta: dict | None = None,
     ) -> tuple[str, str | None]:
         """Sample the latest frame at a fixed rate so the file lasts as long as asked.
 
         `frames` returns the newest camera frame or None. Stopping early keeps what was recorded.
         `size` fixes the output width and height, since the camera may still be switching up.
         `microphone` adds sound; if it fails the video is kept silent and the error returned.
+        No more than `max_recordings` videos are encoded at once; one more is refused.
         """
+        if not self.recordings.acquire(blocking=False):
+            raise HardwareError(
+                f"{self.max_recordings} videos are already being recorded; this one was not."
+            )
+        try:
+            return self._record_video(frames, seconds, rule, stop_event, size, microphone, meta)
+        finally:
+            self.recordings.release()
+
+    def _record_video(self, frames, seconds, rule, stop_event, size, microphone, meta):
         import cv2
 
         first = None
@@ -254,7 +376,18 @@ class Captures:
                     muxed.replace(partial)
                 except (HardwareError, OSError) as exc:
                     audio_error = str(exc)
-            partial.replace(path)
+            if meta is not None:
+                meta = {
+                    **meta,
+                    "width": width,
+                    "height": height,
+                    "fps": VIDEO_FPS,
+                    "requested_seconds": seconds,
+                    "recorded_seconds": round(written / VIDEO_FPS, 1),
+                    "sound": audio is not None and not audio_error,
+                    "sound_error": audio_error,
+                }
+            self._commit(partial, path, meta, "video")
         except (BrokenPipeError, subprocess.TimeoutExpired) as exc:
             raise HardwareError(f"Video encoding failed: {exc}") from exc
         finally:

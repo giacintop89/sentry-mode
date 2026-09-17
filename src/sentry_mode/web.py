@@ -1,5 +1,6 @@
 """HTTP controls using the same configuration and hardware adapters as the CLI."""
 
+import itertools
 import json
 import logging
 import re
@@ -14,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
@@ -51,8 +52,10 @@ from sentry_mode.sentry.engine import Sentry
 from sentry_mode.sentry.migration import SchemaUpgradeRequired
 from sentry_mode.sources.legacy import legacy_sources
 from sentry_mode.sources.manager import SourceManager
+from sentry_mode.sources.models import PRIMARY_CAMERA, PRIMARY_MICROPHONE
 from sentry_mode.sources.registry import SourceRegistry
 from sentry_mode.vision.capture import capture_image
+from sentry_mode.vision.preview import PreviewSessions
 from sentry_mode.vision.recording import MAX_MESSAGE_BYTES, MEDIA_TYPES
 from sentry_mode.vision.scheduler import InferenceScheduler
 from sentry_mode.vision.stream import VideoStream
@@ -80,6 +83,16 @@ class CaptureReference(BaseModel):
 class SoundReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(max_length=64)
+
+
+class PreviewStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_id: str = Field(min_length=1, max_length=81)
+
+
+class PreviewReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session: str = Field(pattern=r"^[A-Za-z0-9_-]{16,64}$")
 
 
 MANUAL_VIDEO_SECONDS = 60
@@ -158,6 +171,7 @@ class NodeControls:
         self.cameras = SourceManager(self.sources)
         self.cameras.add(self.video, register=False)
         self.sentry = Sentry(config, self.video, self.audio_lock, self.sources, self.cameras)
+        self.previews = PreviewSessions(self.cameras, self.video, self.sources)
         self.satellites_error: str | None = None
         self.satellites = self._open_satellites()
         self.runtime_lock = threading.Lock()
@@ -313,6 +327,8 @@ class NodeControls:
             }
         if path == "/api/video/status":
             return self.video_status()
+        if path == "/api/cameras":
+            return self.previews.listing()
         if path == "/api/camera/list":
             return {"devices": list_cameras(), "configured": self.config.camera.device}
         if path == "/api/audio/list":
@@ -441,6 +457,12 @@ class NodeControls:
                         stop,
                         size=self.video.recording_size(),
                         microphone=microphone,
+                        meta={
+                            "source_id": PRIMARY_CAMERA,
+                            "origin": "local",
+                            "timing": "manual",
+                            "audio_source_id": PRIMARY_MICROPHONE if microphone else None,
+                        },
                     )
                     missing = sound_error or audio_error
                     self.recording_result = {
@@ -567,6 +589,12 @@ class NodeControls:
             self.stop_video_recording()
             self.video.stop()
             return self.video_status()
+        if path == "/api/cameras/preview/start":
+            return self.previews.open(PreviewStart.model_validate(body).source_id)
+        if path == "/api/cameras/preview/renew":
+            return self.previews.renew(PreviewReference.model_validate(body).session)
+        if path == "/api/cameras/preview/stop":
+            return self.previews.close(PreviewReference.model_validate(body).session)
         if path == "/api/video/record/start":
             return self.start_video_recording()
         if path == "/api/video/record/stop":
@@ -681,6 +709,9 @@ class NodeControls:
 
 
 JSON_POSTS = {
+    "/api/cameras/preview/start",
+    "/api/cameras/preview/renew",
+    "/api/cameras/preview/stop",
     "/api/speech",
     "/api/video/detection",
     "/api/sentry/config",
@@ -700,6 +731,11 @@ JSON_POSTS = {
     "/api/sounds/play",
     "/api/tunes/play",
 }
+
+
+def query(path: str) -> dict[str, str]:
+    """The first value of each query parameter, for the few GET routes that take one."""
+    return {key: values[0] for key, values in parse_qs(urlsplit(path).query).items()}
 
 
 def make_handler(controls: NodeControls):
@@ -769,6 +805,11 @@ def make_handler(controls: NodeControls):
                 )
             elif self.path == "/api/video":
                 self.stream_video()
+            elif self.path.startswith("/api/cameras/preview/stream?"):
+                self.stream_preview(query(self.path).get("session", ""))
+            elif self.path.startswith("/api/cameras/snapshot?"):
+                source_id = query(self.path).get("source_id", "")
+                self.execute(lambda: controls.previews.snapshot(source_id))
             # The browser adds a cache-busting query when it reconnects to the microphone.
             elif self.path.partition("?")[0] == "/api/audio/monitor":
                 self.stream_audio()
@@ -861,6 +902,40 @@ def make_handler(controls: NodeControls):
                 self.stream_frames()
             finally:
                 controls.video.add_viewer(-1)
+
+        def stream_preview(self, token: str):
+            try:
+                frames = controls.previews.stream(token)
+                first = next(frames, None)
+            except LookupError as exc:
+                self.respond({"error": str(exc)}, 404)
+                return
+            if first is None:
+                self.respond({"error": "The camera has no picture yet; try again."}, 503)
+                return
+            self.write_frames(first, frames)
+
+        def write_frames(self, first: bytes, frames):
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            try:
+                for jpeg in itertools.chain([first], frames):
+                    self.wfile.write(
+                        b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                        + str(len(jpeg)).encode()
+                        + b"\r\n\r\n"
+                        + jpeg
+                        + b"\r\n"
+                    )
+                    self.wfile.flush()
+                self.wfile.write(b"--frame--\r\n")
+            except (OSError, TimeoutError):
+                pass  # Viewer closed the page or stopped its image request.
+            finally:
+                frames.close()
 
         def stream_frames(self):
             if not controls.video.status()["running"]:
@@ -1086,6 +1161,7 @@ def serve(
                     assert secure_thread is not None
                     secure_thread.join()
                 controls.talk.close()
+                controls.previews.close_all()
                 controls.stop_video_recording()
                 controls.sentry.disarm()
                 controls.video.close()

@@ -60,7 +60,7 @@ from sentry_mode.sentry.migration import (
     to_v2,
     write_document,
 )
-from sentry_mode.sentry.resources import Plan, ResourcePlanner
+from sentry_mode.sentry.resources import Plan, ResourcePlanner, resolved
 from sentry_mode.sentry.triggers import (
     RuleState,
     cooled,
@@ -70,7 +70,12 @@ from sentry_mode.sentry.triggers import (
 )
 from sentry_mode.sources.legacy import register_legacy
 from sentry_mode.sources.manager import Lease, SourceManager
-from sentry_mode.sources.models import PRIMARY_CAMERA, SourceRef, SourceState
+from sentry_mode.sources.models import (
+    PRIMARY_CAMERA,
+    PRIMARY_MICROPHONE,
+    SourceRef,
+    SourceState,
+)
 from sentry_mode.sources.registry import SourceRegistry
 from sentry_mode.vision.detection import Detection
 from sentry_mode.vision.labels import CLASSES
@@ -96,6 +101,15 @@ Action = (
 MOTION_KINDS = frozenset({"sensor.motion", "motion.pir"})
 BOOST_FACTOR = 2.0
 BOOST_SECONDS = 10.0
+FRESH_SECONDS = 2.0
+"""A picture older than this is not evidence of what is happening now."""
+FRAME_WAIT_SECONDS = 3.0
+READY_FPS = 5.0
+"""The rate a camera kept ready for photos runs at, when nothing else asks for more."""
+
+
+class Unavailable(HardwareError):
+    """The camera an action names has nothing recent to give. No other camera stands in."""
 
 
 class _Others:
@@ -144,6 +158,9 @@ class Sentry:
             cameras=_Others(self.cameras),
         )
         self.watching: dict[str, Lease] = {}
+        """Leases on other cameras: watched for objects, or kept ready for photos."""
+        self.halted: deque[str] = deque(maxlen=64)
+        """Triggers whose remaining steps were dropped by a step's `if_unavailable: stop`."""
         self.plan: Plan | None = None
         self.arm_epoch = 0
         self.suspended: dict[str, str] = {}
@@ -359,14 +376,23 @@ class Sentry:
         """What test mode logs instead of running an action."""
         if isinstance(action, WaitAction):
             return f"Wait: {action.seconds:g} s"
+        where = ""
+        if isinstance(action, (PhotoAction, VideoAction)) and action.source_id != PRIMARY_CAMERA:
+            where = " from " + action.source_id.replace("trigger_source", "the triggering camera")
         if isinstance(action, PhotoAction):
             return (
-                f"Photos: {action.count} every {action.interval_seconds:g} s"
+                f"Photos{where}: {action.count} every {action.interval_seconds:g} s"
                 if action.count > 1
-                else "Photo"
+                else f"Photo{where}"
             )
         if isinstance(action, VideoAction):
-            return f"Video: {action.duration_seconds} s" + (" with sound" if action.audio else "")
+            sound = action.microphone
+            return (
+                f"Video{where}: {action.duration_seconds} s"
+                + (f" with sound from {sound}" if sound and sound != PRIMARY_MICROPHONE else "")
+                + (" with sound" if sound == PRIMARY_MICROPHONE else "")
+                + (" without sound" if action.audio and sound is None else "")
+            )
         if isinstance(action, AudioAction):
             return f"Audio: {action.duration_seconds} s"
         if isinstance(action, TTSAction):
@@ -485,7 +511,7 @@ class Sentry:
                 return self.status()
 
     def _watch(self, plan: Plan) -> dict[str, Lease]:
-        """Take a monitoring lease on every other camera a rule watches for objects."""
+        """Take a monitoring lease on every other camera a rule watches or photographs."""
         leases: dict[str, Lease] = {}
         owner = f"sentry-{self.arm_epoch + 1}"
         try:
@@ -500,6 +526,14 @@ class Sentry:
                     fps=self.config.detection_fps,
                     confidence=confidence,
                     detect=True,
+                )
+            for source_id in sorted(plan.ready):
+                camera = self.cameras.camera(source_id)
+                if camera is None:
+                    raise HardwareError(f"{source_id} is no longer available.")
+                # Streaming before the trigger, so the first photo shows the moment itself.
+                leases[source_id] = camera.hold(
+                    "monitoring", owner, fps=max(READY_FPS, self.config.detection_fps)
                 )
         except Exception:
             for lease in leases.values():
@@ -533,7 +567,8 @@ class Sentry:
         """
         jobs: list[Job] = []
         delay = 0.0
-        for action in rule.actions:
+        actions = resolved(rule) if isinstance(rule, RuleV2) else rule.actions
+        for action in actions:
             if jobs and action.with_previous:
                 jobs[-1].steps.append(action)
                 continue
@@ -695,7 +730,7 @@ class Sentry:
             return
         if plan.detector:
             self.video.detection.boost(BOOST_FACTOR, BOOST_SECONDS)
-        for source_id in self.watching:
+        for source_id in [s for s in self.watching if s in plan.vision]:
             camera = self.cameras.camera(source_id)
             if camera is not None:
                 camera.detection.boost(BOOST_FACTOR, BOOST_SECONDS)
@@ -712,21 +747,20 @@ class Sentry:
         ]
 
     def _context(
-        self, rule: RuleV2, origin: tuple[str, ...], zone: str | None = None
+        self,
+        rule: RuleV2,
+        origin: tuple[str, ...],
+        zone: str | None = None,
+        frames: dict | None = None,
     ) -> ActionContext:
-        sources = sorted(
-            {
-                source
-                for action in rule.actions
-                for source in (
-                    getattr(action, "source_id", None),
-                    getattr(action, "audio_source_id", None)
-                    if not isinstance(action, VideoAction) or action.audio
-                    else None,
-                )
-                if source
-            }
-        )
+        sources: set[str] = set()
+        for action in resolved(rule):
+            if isinstance(action, (PhotoAction, VideoAction)):
+                sources.add(action.source_id)
+            if isinstance(action, VideoAction) and action.microphone:
+                sources.add(action.microphone)
+            if isinstance(action, AudioAction):
+                sources.add(action.audio_source_id)
         return ActionContext.new(
             rule_id=rule.id,
             rule_name=rule.name,
@@ -734,8 +768,26 @@ class Sentry:
             arm_epoch=self.arm_epoch,
             zone=zone,
             origin=origin,
-            sources=tuple(sources),
+            sources=tuple(sorted(sources)),
+            frames=frames or {},
         )
+
+    def _trigger_frames(self, rule: RuleV2) -> dict:
+        """The newest frame of every camera the rule's first photos use, taken now."""
+        frames: dict = {}
+        for index, action in enumerate(resolved(rule)):
+            if index and not action.with_previous:
+                break
+            if not isinstance(action, PhotoAction) or action.source_id in frames:
+                continue
+            camera = self._camera_or_none(action.source_id)
+            try:
+                got = camera.latest_capture() if camera is not None else None
+                if got is not None and time.monotonic() - got[1] <= FRESH_SECONDS:
+                    frames[action.source_id] = got
+            except Exception:  # noqa: BLE001 - the photo step reports it; the trigger stands
+                logger.exception("No frame kept from %s at the trigger", action.source_id)
+        return frames
 
     def _fire(self, rule: RuleV2, created: float, origin: tuple[str, ...], zone) -> None:
         """Queue a rule's whole sequence, or none of it. The caller holds the guard."""
@@ -744,7 +796,8 @@ class Sentry:
                 together = "+ " if action.with_previous else ""
                 self._event("would_run", together + self._describe(action), rule.name)
             return
-        jobs = self._groups(rule, created, self._context(rule, origin, zone))
+        context = self._context(rule, origin, zone, self._trigger_frames(rule))
+        jobs = self._groups(rule, created, context)
         free = self.jobs.maxsize - self.jobs.qsize()
         if len(jobs) > free:
             # Half a sequence is worse than none: a greeting without the photo it was
@@ -910,12 +963,17 @@ class Sentry:
         if job.context is not None and job.context.arm_epoch != self.arm_epoch:
             self._event("cancelled", "Action belonged to an earlier arming.", job.rule)
             return
+        if job.context is not None and job.context.trigger_id in self.halted:
+            self._event("cancelled", "An earlier step stopped this sequence.", job.rule)
+            return
         if len(job.steps) == 1:
-            self._step(job.rule, job.steps[0], deadline)
+            self._step(job.rule, job.steps[0], deadline, job.context)
             return
         threads = [
             threading.Thread(
-                target=self._step, args=(job.rule, action, deadline), name="sentry-mode-step"
+                target=self._step,
+                args=(job.rule, action, deadline, job.context),
+                name="sentry-mode-step",
             )
             for action in job.steps
         ]
@@ -924,7 +982,9 @@ class Sentry:
         for thread in threads:
             thread.join()
 
-    def _step(self, rule: str, action: Action, deadline: float):
+    def _step(
+        self, rule: str, action: Action, deadline: float, context: ActionContext | None = None
+    ):
         """Execute one action of the sequence."""
         try:
             if self.cancelled.is_set():
@@ -940,16 +1000,16 @@ class Sentry:
                 return
             finished = "Action completed."
             if isinstance(action, PhotoAction) and action.count > 1:
-                self._start_photo_series(rule, action)
+                self._start_photo_series(rule, action, context)
                 return
             if isinstance(action, PhotoAction):
                 self._label("Photo: " + rule)
-                finished = "Photo saved: " + self._save_photo(rule)
+                finished = "Photo saved: " + self._save_photo(rule, action, context)
             elif isinstance(action, VideoAction):
-                self._start_recording(rule, action)
+                self._start_recording(rule, action, context)
                 return
             elif isinstance(action, AudioAction):
-                self._start_audio(rule, action.duration_seconds)
+                self._start_audio(rule, action, context)
                 return
             elif isinstance(action, (TTSAction, TuneAction, SoundAction)):
                 kind = {TTSAction: "announcement", TuneAction: "tune"}.get(
@@ -1019,10 +1079,31 @@ class Sentry:
                 self._event("action_started", "Sending Telegram message.", rule)
                 self._telegram(action)
             self._event("action_finished", finished, rule)
+        except Unavailable as exc:
+            self._unavailable(rule, action, context, str(exc))
         except Exception as exc:
             self._event("cancelled" if self.cancelled.is_set() else "action_failed", str(exc), rule)
         finally:
             self._label(None)
+
+    def _unavailable(
+        self, rule: str, action: Action, context: ActionContext | None, reason: str
+    ) -> None:
+        """A camera had nothing to give: do what the step said, and never use another one."""
+        if self.cancelled.is_set():
+            self._event("cancelled", reason, rule)
+            return
+        policy = getattr(action, "if_unavailable", "fail")
+        if policy == "skip":
+            self._event("skipped", f"{reason}; step skipped.", rule)
+            return
+        if policy == "stop":
+            if context is not None:
+                with self.guard:
+                    self.halted.append(context.trigger_id)
+            self._event("cancelled", f"{reason}; the rest of this sequence was dropped.", rule)
+            return
+        self._event("action_failed", f"{reason}; no other camera was used.", rule)
 
     def _play_tune(self, action: TuneAction):
         play_tune(
@@ -1034,11 +1115,82 @@ class Sentry:
             stop_event=self.cancelled,
         )
 
-    def _save_photo(self, rule: str) -> str:
-        frame = self.video.latest_frame()
-        if frame is None:
-            raise HardwareError("No camera frame is available for a photo.")
-        return self.captures.save_photo(frame, rule)
+    def _camera_or_none(self, source_id: str):
+        if source_id == PRIMARY_CAMERA:
+            return self.video
+        return self.cameras.camera(source_id)
+
+    def _camera(self, source_id: str):
+        camera = self._camera_or_none(source_id)
+        if camera is None:
+            raise Unavailable(f"{source_id} is not a camera on this hub")
+        return camera
+
+    def _recent(self, source_id: str) -> tuple:
+        """A frame from this camera no older than `FRESH_SECONDS`, waiting briefly for one."""
+        camera = self._camera(source_id)
+        deadline = time.monotonic() + FRAME_WAIT_SECONDS
+        while True:
+            got = camera.latest_capture()
+            now = time.monotonic()
+            if got is not None and now - got[1] <= FRESH_SECONDS:
+                return got
+            if now >= deadline or self.cancelled.wait(0.05):
+                state = (
+                    "has stopped" if got is None else f"last sent a frame {now - got[1]:.0f} s ago"
+                )
+                raise Unavailable(f"{source_id} {state}")
+
+    def _evidence(self, context: ActionContext | None, source_id: str | None, **details) -> dict:
+        """What a sidecar says about where a capture came from and why it was taken."""
+        record = self.sources.get(source_id) if source_id else None
+        document: dict[str, object] = {
+            "source_id": source_id,
+            "source_name": record.display_name if record else source_id,
+            "origin": record.origin if record else None,
+            "zone": record.zone if record else None,
+        }
+        if context is not None:
+            document.update(
+                rule_id=context.rule_id,
+                rule_name=context.rule_name,
+                rule_revision=context.rule_revision,
+                trigger_id=context.trigger_id,
+                trigger_origin=list(context.origin),
+                trigger_zone=context.zone,
+                arm_epoch=context.arm_epoch,
+                triggered_at=_wall(context.decided_wall),
+            )
+        document.update(details)
+        return document
+
+    def _save_photo(
+        self,
+        rule: str,
+        action: PhotoAction | None = None,
+        context: ActionContext | None = None,
+        index: int = 0,
+    ) -> str:
+        """One photo from the action's camera: the frame kept at the trigger, or a new one."""
+        source_id = action.source_id if action is not None else PRIMARY_CAMERA
+        kept = context.frames.get(source_id) if context is not None and index == 0 else None
+        if kept is not None:
+            (frame, captured), timing = kept, "at_trigger"
+        else:
+            (frame, captured), timing = self._recent(source_id), "after_trigger"
+        now = time.monotonic()
+        details = {
+            "timing": timing,
+            "captured_at": _wall(time.time() - (now - captured)),
+            "frame_age_seconds": round(
+                (context.decided_at if kept is not None and context else now) - captured, 3
+            ),
+            "sequence": {"index": index + 1, "count": action.count if action else 1},
+        }
+        if context is not None:
+            details["seconds_after_trigger"] = round(captured - context.decided_at, 3)
+        name = self.captures.save_photo(frame, rule, self._evidence(context, source_id, **details))
+        return name if source_id == PRIMARY_CAMERA else f"{name} from {source_id}"
 
     def _in_background(self, rule: str, started: str, work):
         # Videos and photo series run beside the queue, so an announcement is not held back.
@@ -1048,53 +1200,94 @@ class Sentry:
         self._event("action_started", started, rule)
         recorder.start()
 
-    def _start_photo_series(self, rule: str, action: PhotoAction):
+    def _start_photo_series(
+        self, rule: str, action: PhotoAction, context: ActionContext | None = None
+    ):
         cancelled = self.cancelled
+        # The first photo decides, as a single one would, whether the sequence goes on.
+        first = self._save_photo(rule, action, context, 0)
 
         def take():
             start = time.monotonic()
-            for index in range(action.count):
-                if index and cancelled.wait(
+            for index in range(1, action.count):
+                if cancelled.wait(
                     max(0, start + index * action.interval_seconds - time.monotonic())
                 ):
                     self._event("cancelled", f"Photo series stopped after {index}.", rule)
                     return
                 try:
-                    self._event("action_finished", "Photo saved: " + self._save_photo(rule), rule)
+                    name = self._save_photo(rule, action, context, index)
+                    self._event("action_finished", "Photo saved: " + name, rule)
                 except Exception as exc:
                     self._event("action_failed", f"Photo {index + 1} failed: {exc}", rule)
 
         self._in_background(
             rule, f"Taking {action.count} photos every {action.interval_seconds:g} s.", take
         )
+        self._event("action_finished", "Photo saved: " + first, rule)
 
     def _microphone(self) -> list[str]:
         return Microphone(self.settings.microphone).ffmpeg_input()
 
-    def _start_recording(self, rule: str, action: VideoAction):
+    def _start_recording(
+        self, rule: str, action: VideoAction, context: ActionContext | None = None
+    ):
         cancelled, seconds = self.cancelled, action.duration_seconds
-        lease = self.video.hold_recording(f"rule:{rule}")
+        source_id = action.source_id
+        camera = self._camera(source_id)
+        self._recent(source_id)
+        if source_id == PRIMARY_CAMERA:
+            lease = self.video.hold_recording(f"rule:{rule}")
+            size: tuple[int, int] | None = self.video.recording_size()
+        else:
+            lease = camera.hold("recording", f"rule:{rule}")
+            size = None
+        microphone_id = action.microphone
+
+        def frames():
+            got = camera.latest_capture()
+            if got is None or time.monotonic() - got[1] > FRESH_SECONDS:
+                return None
+            return got[0]
 
         def record():
             try:
                 microphone = sound_error = None
-                if action.audio:
+                if microphone_id == PRIMARY_MICROPHONE:
                     try:
                         microphone = self._microphone()
                     except HardwareError as exc:
                         sound_error = str(exc)
+                elif microphone_id is not None:
+                    sound_error = f"{microphone_id} cannot be recorded by this hub"
+                elif action.audio:
+                    sound_error = f"no microphone is chosen for {source_id}"
+                started = time.monotonic()
                 name, audio_error = self.captures.record_video(
-                    self.video.latest_frame,
+                    frames,
                     seconds,
                     rule,
                     cancelled,
-                    size=self.video.recording_size(),
+                    size=size,
                     microphone=microphone,
+                    meta=self._evidence(
+                        context,
+                        source_id,
+                        timing="after_trigger",
+                        audio_source_id=microphone_id,
+                        seconds_after_trigger=None
+                        if context is None
+                        else round(started - context.decided_at, 3),
+                    ),
                 )
                 sound_error = sound_error or audio_error
+                where = "" if source_id == PRIMARY_CAMERA else f" from {source_id}"
                 self._event(
                     "action_finished",
-                    "Video saved: " + name + (f" (no sound: {sound_error})" if sound_error else ""),
+                    "Video saved: "
+                    + name
+                    + where
+                    + (f" (no sound: {sound_error})" if sound_error else ""),
                     rule,
                 )
             except Exception as exc:
@@ -1102,15 +1295,29 @@ class Sentry:
             finally:
                 lease.release()
 
-        sound = " with sound" if action.audio else ""
-        self._in_background(rule, f"Recording a {seconds}-second video{sound}.", record)
+        sound = " with sound" if microphone_id else ""
+        where = "" if source_id == PRIMARY_CAMERA else f" from {source_id}"
+        self._in_background(rule, f"Recording a {seconds}-second video{where}{sound}.", record)
 
-    def _start_audio(self, rule: str, seconds: int):
-        cancelled = self.cancelled
+    def _start_audio(
+        self, rule: str, action: AudioAction | int, context: ActionContext | None = None
+    ):
+        if isinstance(action, int):
+            action = AudioAction(duration_seconds=action)
+        cancelled, seconds = self.cancelled, action.duration_seconds
+        microphone_id = action.audio_source_id
+        if microphone_id != PRIMARY_MICROPHONE:
+            raise Unavailable(f"{microphone_id} cannot be recorded by this hub")
 
         def record():
             try:
-                name = self.captures.record_audio(self._microphone(), seconds, rule, cancelled)
+                name = self.captures.record_audio(
+                    self._microphone(),
+                    seconds,
+                    rule,
+                    cancelled,
+                    meta=self._evidence(context, microphone_id, timing="after_trigger"),
+                )
                 self._event("action_finished", "Audio saved: " + name, rule)
             except Exception as exc:
                 self._event("action_failed", f"Audio recording failed: {exc}", rule)
@@ -1224,6 +1431,10 @@ class Sentry:
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait()
+
+
+def _wall(seconds: float) -> str:
+    return datetime.fromtimestamp(seconds, timezone.utc).isoformat(timespec="milliseconds")
 
 
 def confirm(rule: RuleV2, state: RuleState, count: int, captured: float) -> list[tuple[str, str]]:
