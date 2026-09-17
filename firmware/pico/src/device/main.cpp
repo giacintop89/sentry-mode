@@ -22,22 +22,33 @@
 //   credentials <json>     the authority, the certificate and the key, for the handshake
 //   connect                open the one connection this node makes, and keep it open
 //   disconnect             close it and stop trying
+//   keeping                what is in flash, by name and by sequence number, never by value
+//   forget [what]          erase one of those, or all of them: the recovery verb
+//   tear <what>            write half a record, on purpose, to see the next boot refuse it
+//   hang                   stop feeding the watchdog, on purpose, to watch it fire
 //
 // Until something tells it the time — SNTP, or that command — it publishes nothing. A board
 // with no clock could stamp its readings from the moment it booted and call that a
 // timestamp; it would be a number nobody measured, and the hub decides what counts as live
 // from exactly those.
 //
-// The provisioning record given here lives in RAM and is gone at the next boot. Writing it
-// to flash is PICO-02, and it is the part that needs the erase and program calls plus the
-// two slots `store.cpp` already describes.
+// What it is given it keeps. The identity, the three parts of the handshake and the last
+// configuration the hub sent are written to the flash at the end of the part, two slots
+// each, and read back at the next boot — so a board that loses power comes back as itself,
+// running what it was told to run, without a cable. Nothing of that is in the image: the
+// UF2 is the same on every board, and `flash_vault.cpp` is the only file that writes.
+//
+// The boot id is the opposite, and deliberately: it is made fresh every time, so a hub
+// that sees a sequence number start again at zero can tell a reboot from a replay.
 
 #include <cstdio>
 #include <malloc.h>
 #include <cstdlib>
 #include <cstring>
 
+#include "flash_vault.h"
 #include "hardware/adc.h"
+#include "hardware/watchdog.h"
 #include "net.h"
 #include "pico/rand.h"
 #include "pico/stdlib.h"
@@ -59,6 +70,7 @@
 #include "sentry/spool.h"
 #include "sentry/timebase.h"
 #include "sentry/topics.h"
+#include "sentry/vault.h"
 
 namespace {
 
@@ -70,6 +82,11 @@ constexpr uint32_t kHeartbeatBlinkMs = 2000;
 // against: a node that says nothing for three of these is a node to wonder about.
 constexpr uint32_t kHeartbeatMs = 15000;
 constexpr uint32_t kJoinPatienceMs = 20000;
+// How long the loop may go round without saying anything before the chip resets itself.
+// Everything in this program is measured in time rather than waited on, and the longest
+// thing it ever does in one turn is a TLS handshake; eight seconds is what the hardware
+// allows and several times what a turn takes.
+constexpr uint32_t kWatchdogMs = 8000;
 // Whoever runs the pool, rather than a vendor's own: a satellite that only ever reaches the
 // hub still has to agree with it about what time it is.
 constexpr const char* kTimeServer = "pool.ntp.org";
@@ -96,6 +113,14 @@ sentry::Provisioning provisioning;
 sentry::Credentials credentials;
 bool provisioned = false;
 uint32_t answers_seen = 0;
+// Whether the last reset was the watchdog's doing, read once before it is turned on again.
+// A board that keeps coming back this way is a board with something wrong with it, and the
+// hub cannot see the difference unless it is told.
+bool woke_from_watchdog = false;
+// A board that was provisioned, given its credentials and told what to run comes back
+// without anybody at the cable: it joins, waits to be told the time, and connects. Nothing
+// here decides to do that on its own — it is what it was doing when the power went off.
+bool come_back_on_its_own = false;
 char node_id[sentry::kMaxNodeIdText] = {};
 char boot_id[sentry::kUuidText] = {};
 char connection_id[sentry::kUuidText] = {};
@@ -581,6 +606,8 @@ void run_the_default_plan() {
   start_the_plan();
 }
 
+uint32_t monotonic_ms() { return static_cast<uint32_t>(now_us() / 1000); }
+
 // Whatever the network last said the time was, handed to the timebase here rather than in
 // the callback: what a reading may claim about itself is decided in one place, on this
 // loop, and not from lwIP's context.
@@ -589,6 +616,15 @@ void take_the_time_if_it_arrived() {
   if (answers.count == answers_seen || answers.count == 0) return;
   answers_seen = answers.count;
   clock_.sync(answers.last_unix_ms, ticks.extend(static_cast<uint32_t>(answers.taken_at_us)));
+  if (come_back_on_its_own && !wanted) {
+    // Not before now: a certificate has dates on it, and a board that does not know what
+    // time it is cannot tell an expired one from a good one.
+    come_back_on_its_own = false;
+    wanted = true;
+    attempts_since_online = 0;
+    next_attempt_ms = monotonic_ms();
+    std::printf("# it knows the time and has what it needs: connecting on its own\n");
+  }
   char stamped[32] = {};
   if (sentry::write_timestamp(answers.last_unix_ms, stamped, sizeof(stamped))) {
     std::printf("# the network says it is %s (answer %lu)\n", stamped,
@@ -596,7 +632,6 @@ void take_the_time_if_it_arrived() {
   }
 }
 
-uint32_t monotonic_ms() { return static_cast<uint32_t>(now_us() / 1000); }
 
 // A second, then two, up to a minute, plus a little of this board's own randomness so that
 // a houseful of them coming back after a power cut does not arrive in step.
@@ -925,7 +960,8 @@ const char* beyond_this_firmware(sentry::Action action) {
 // A configuration, judged whole on a copy and then adopted whole. Nothing is touched until
 // `Plan::take` has agreed to all of it, so a refused configuration leaves this board
 // running exactly what it was running, and says which source it could not have.
-bool take_a_configuration(const sentry::Command& command, const char*& detail) {
+bool take_a_configuration(const sentry::Command& command, const char*& detail,
+                          const char* as_it_arrived, size_t arrived_size) {
   static char why_not[sentry::kMaxPlanDetail];
   sentry::Unplanned why = sentry::Unplanned::kNone;
   if (!candidate.take(command.sources, command.source_count, why, why_not, sizeof(why_not))) {
@@ -939,17 +975,26 @@ bool take_a_configuration(const sentry::Command& command, const char*& detail) {
   candidate.clear();
   start_the_plan();
   config_revision = command.revision;
-  // A hub that has just been told what this node runs does not know where any of it
-  // stands, and the retained state still describes what was running a moment ago.
-  take_every_baseline();
-  owes_a_declaration = true;
+  if (as_it_arrived != nullptr) {
+    // Kept as it arrived, rather than as a plan written back out. What comes off the flash
+    // at the next boot then goes through the same parser and the same `Plan::take` the hub
+    // is answered from, so there is no second reading of a configuration to keep in step.
+    if (!vault::save(sentry::Held::kConfiguration, as_it_arrived, arrived_size)) {
+      std::printf("# this configuration is running but could not be kept for the next boot\n");
+    }
+    // A hub that has just been told what this node runs does not know where any of it
+    // stands, and the retained state still describes what was running a moment ago.
+    take_every_baseline();
+    owes_a_declaration = true;
+  }
   detail = nullptr;
   return true;
 }
 
 // One command, from the hub or from the cable. Everything it changes is changed here, and
 // every one of them is answered.
-void obey_a_command(const sentry::Command& command) {
+void obey_a_command(const sentry::Command& command, const char* as_it_arrived,
+                    size_t arrived_size) {
   const sentry::Answer* before = answered.recall(command.command_id);
   if (before != nullptr) {
     // The same command twice is answered the same way and acted on once. A hub whose ack
@@ -965,7 +1010,7 @@ void obey_a_command(const sentry::Command& command) {
   }
   if (command.action == sentry::Action::kConfigure) {
     const char* detail = nullptr;
-    const bool taken = take_a_configuration(command, detail);
+    const bool taken = take_a_configuration(command, detail, as_it_arrived, arrived_size);
     const sentry::Answer answer = taken ? sentry::Answer::kApplied : sentry::Answer::kFailed;
     answered.remember(command.command_id, answer);
     queue_an_ack(command, answer, detail);
@@ -999,7 +1044,7 @@ void a_command_arrived(const sentry::mqtt::Incoming& packet) {
     std::printf("# a command arrived that this node will not act on: %s\n", sentry::name_of(why));
     return;
   }
-  obey_a_command(command);
+  obey_a_command(command, reinterpret_cast<const char*>(packet.payload), packet.payload_size);
 }
 
 // Everything the connection has to say, and everything this node has to say back.
@@ -1239,7 +1284,10 @@ void say_status() {
               node_id, provisioned ? "yes" : "no", net::linked() ? "up" : "down",
               has_address ? address : "none", static_cast<long>(net::signal_strength()),
               clock_.synced() ? "synced" : "unsynced", static_cast<unsigned long>(answers.count));
-  std::printf("# heap_free=%lldkB\n", static_cast<long long>(free_heap_kb()));
+  std::printf("# heap_free=%lldkB uptime=%llus reset=%s\n",
+              static_cast<long long>(free_heap_kb()),
+              static_cast<unsigned long long>(now_us() / 1000000),
+              woke_from_watchdog ? "watchdog" : "power");
   std::printf("# credentials=%s socket=%s mqtt=%s queued=%lu coalesced=%lu dropped=%lu\n",
               credentials.complete() ? "yes" : "no", socket_state, mqtt_state,
               static_cast<unsigned long>(spool.size()),
@@ -1280,20 +1328,166 @@ void drive_a_pin(const char* rest) {
   std::printf("# pin %d (%s) driven %s\n", pin, holder, level != 0 ? "high" : "low");
 }
 
-void take_provisioning(const char* document) {
+void take_provisioning(const char* document, bool keep) {
   sentry::Provisioning found;
-  if (!sentry::read_provisioning(document, std::strlen(document), found)) {
+  const size_t size = std::strlen(document);
+  if (!sentry::read_provisioning(document, size, found)) {
     std::printf("# that is not a provisioning record this firmware can use\n");
     return;
   }
   provisioning = found;
   provisioned = true;
+  if (keep && !vault::save(sentry::Held::kIdentity, document, size)) {
+    // Worth saying out loud: this node is provisioned now and will not be after a reset,
+    // which is exactly the sort of thing a board does quietly and nobody finds out about
+    // until it comes back as a stranger.
+    std::printf("# this node is provisioned, but the record could not be written to flash\n");
+  }
   // Both are the same fixed array, and the record was checked before it got here.
   std::memcpy(node_id, found.node_id, sizeof(node_id));
   // The passphrase is never printed back: a serial log is a file like any other.
   std::printf("# provisioned as %s, broker %s:%u, network %s\n", provisioning.node_id,
               provisioning.mqtt_host, static_cast<unsigned>(provisioning.mqtt_port),
               provisioning.has_wifi() ? provisioning.wifi_ssid : "none");
+}
+
+// Everything a node keeps, in the order it is needed at boot.
+constexpr sentry::Held kEverythingKept[] = {
+    sentry::Held::kIdentity, sentry::Held::kAuthority, sentry::Held::kCertificate,
+    sentry::Held::kPrivateKey, sentry::Held::kConfiguration};
+
+// The three parts of the handshake, written one to a pair of slots. The text is written
+// without the terminator the TLS layer counts: what is kept is the PEM, and what reads it
+// back hands it to the same function the cable does.
+void keep_the_credentials() {
+  const struct {
+    sentry::Held held;
+    bool present;
+    const char* text;
+    size_t size;
+  } parts[] = {
+      {sentry::Held::kAuthority, credentials.has_authority(), credentials.authority(),
+       credentials.authority_size()},
+      {sentry::Held::kCertificate, credentials.has_certificate(), credentials.certificate(),
+       credentials.certificate_size()},
+      // The key goes to flash and is not read back out by anything but the handshake. A
+      // board somebody walks away with gives it up; that is what the certificate being
+      // this node's own, and revocable, is for.
+      {sentry::Held::kPrivateKey, credentials.has_private_key(), credentials.private_key(),
+       credentials.private_key_size()},
+  };
+  for (const auto& part : parts) {
+    if (!part.present) continue;
+    if (!vault::save(part.held, part.text, part.size - 1)) {
+      std::printf("# the %s is in use but could not be written to flash\n",
+                  sentry::name_of(part.held));
+    }
+  }
+}
+
+// What is in the flash, said without saying what is in it. A sequence number and a name
+// are enough to tell a board that was provisioned from one that was not; the authority is
+// the only one of these that would be harmless to print, and it is not printed either,
+// because a rule with an exception in it is a rule somebody edits later.
+void say_what_is_kept() {
+  std::printf("# vault at 0x%08lx, %lu bytes, %u slots of %u\n",
+              static_cast<unsigned long>(vault::begins_at()),
+              static_cast<unsigned long>(sentry::kVaultBytes),
+              static_cast<unsigned>(sentry::kHeldKinds * sentry::kVaultSlots),
+              static_cast<unsigned>(sentry::kVaultSlotBytes));
+  for (sentry::Held held : kEverythingKept) {
+    uint32_t writes = 0;
+    if (vault::holds(held, writes)) {
+      std::printf("#   %-13s kept, write %lu\n", sentry::name_of(held),
+                  static_cast<unsigned long>(writes));
+    } else {
+      std::printf("#   %-13s empty\n", sentry::name_of(held));
+    }
+  }
+}
+
+// The recovery verb. A board whose identity is wrong, or whose key must not stay on it, is
+// erased here rather than reflashed: the image has none of this in it, so a new image
+// would come up with exactly the same flash behind it.
+void forget_what_is_kept(const char* rest) {
+  while (*rest == ' ') ++rest;
+  const bool everything = *rest == '\0' || std::strcmp(rest, "everything") == 0;
+  bool done = false;
+  for (sentry::Held held : kEverythingKept) {
+    if (!everything && std::strcmp(rest, sentry::name_of(held)) != 0) continue;
+    std::printf("# forgetting the %s: %s\n", sentry::name_of(held),
+                vault::forget(held) ? "gone" : "the flash would not let go of it");
+    done = true;
+  }
+  if (!done) {
+    std::printf("# forget what? identity, authority, certificate, key, configuration, or"
+                " everything\n");
+    return;
+  }
+  // And out of memory as well as out of flash, or the next connection would be made with
+  // what this node was just told to forget.
+  if (everything || std::strcmp(rest, "identity") == 0) {
+    provisioning = sentry::Provisioning{};
+    provisioned = false;
+    name_this_board();
+  }
+  if (everything || std::strcmp(rest, "authority") == 0 ||
+      std::strcmp(rest, "certificate") == 0 || std::strcmp(rest, "key") == 0) {
+    credentials.forget();
+  }
+  wanted = false;
+  std::printf("# this board is %s; it will come back this way after a reset\n",
+              provisioned ? "still provisioned" : "no longer provisioned");
+}
+
+// What this board was left with, read back before anything is started. The order matters:
+// the name comes first, because the configuration in flash is addressed to it and is
+// refused by the same parser the hub's commands go through if it is not this node's.
+void take_back_what_was_kept() {
+  static char kept[sentry::kVaultSlotBytes];
+  size_t size = vault::load(sentry::Held::kIdentity, kept, sizeof(kept) - 1);
+  if (size > 0) {
+    kept[size] = '\0';
+    take_provisioning(kept, false);
+  }
+  size = vault::load(sentry::Held::kAuthority, kept, sizeof(kept));
+  if (size > 0 && !credentials.take_authority(kept, size)) {
+    std::printf("# the authority in flash is not one this firmware can use\n");
+  }
+  size = vault::load(sentry::Held::kCertificate, kept, sizeof(kept));
+  if (size > 0 && !credentials.take_certificate(kept, size)) {
+    std::printf("# the certificate in flash is not one this firmware can use\n");
+  }
+  size = vault::load(sentry::Held::kPrivateKey, kept, sizeof(kept));
+  if (size > 0 && !credentials.take_private_key(kept, size)) {
+    std::printf("# the key in flash is not one this firmware can use\n");
+  }
+  if (credentials.complete()) {
+    std::printf("# credentials: read back from flash, all three\n");
+  }
+  size = vault::load(sentry::Held::kConfiguration, kept, sizeof(kept));
+  if (size == 0) return;
+  sentry::Command command;
+  sentry::Refusal why = sentry::Refusal::kNone;
+  if (!sentry::parse_command(kept, size, node_id, command, why)) {
+    std::printf("# the configuration in flash is not one this node can read: %s\n",
+                sentry::name_of(why));
+    return;
+  }
+  const char* detail = nullptr;
+  if (!take_a_configuration(command, detail, nullptr, 0)) {
+    // The board this configuration was written for is this board, so this means the
+    // firmware changed under it. It keeps its own temperature and waits to be told again.
+    std::printf("# the configuration in flash was refused: %s\n", detail != nullptr ? detail : "");
+    return;
+  }
+  std::printf("# running what it was left with: revision %lld, %u sources\n",
+              static_cast<long long>(config_revision), static_cast<unsigned>(running.size()));
+}
+
+// Whether this board has everything it needs to be a satellite again without being told.
+bool it_can_carry_on_by_itself() {
+  return provisioned && provisioning.has_wifi() && credentials.complete();
 }
 
 // Whatever the host has sent, up to a newline. Returns false when there is no full line.
@@ -1319,7 +1513,7 @@ bool read_line(char* out, size_t capacity) {
 
 void obey(const char* line) {
   if (std::strncmp(line, "provision ", 10) == 0) {
-    take_provisioning(line + 10);
+    take_provisioning(line + 10, true);
     return;
   }
   if (std::strcmp(line, "join") == 0) {
@@ -1329,6 +1523,36 @@ void obey(const char* line) {
   if (std::strcmp(line, "status") == 0) {
     say_status();
     return;
+  }
+  if (std::strcmp(line, "keeping") == 0) {
+    say_what_is_kept();
+    return;
+  }
+  if (std::strncmp(line, "tear ", 5) == 0) {
+    const char* what = line + 5;
+    for (sentry::Held held : kEverythingKept) {
+      if (std::strcmp(what, sentry::name_of(held)) != 0) continue;
+      std::printf("# half a %s written to the slot that is not in use: %s\n",
+                  sentry::name_of(held),
+                  vault::tear(held) ? "unreadable, as an interrupted write is"
+                                    : "readable, which is not what a torn write looks like");
+      return;
+    }
+    std::printf("# tear what? identity, authority, certificate, key or configuration\n");
+    return;
+  }
+  if (std::strncmp(line, "forget", 6) == 0 && (line[6] == '\0' || line[6] == ' ')) {
+    forget_what_is_kept(line + 6);
+    return;
+  }
+  if (std::strcmp(line, "hang") == 0) {
+    // On purpose, and the only way to see the watchdog do its job: the loop stops going
+    // round, nothing feeds it, and the chip resets itself a few seconds later. What comes
+    // back says so, with a new boot id and the same identity.
+    std::printf("# not feeding the watchdog; this board should reset in about %lu ms\n",
+                static_cast<unsigned long>(kWatchdogMs));
+    std::fflush(stdout);
+    while (true) tight_loop_contents();
   }
   if (std::strncmp(line, "time ", 5) == 0) {
     int64_t unix_ms = 0;
@@ -1364,7 +1588,7 @@ void obey(const char* line) {
       std::printf("# not a command for this node: %s\n", sentry::name_of(why));
       return;
     }
-    obey_a_command(command);
+    obey_a_command(command, line + 8, std::strlen(line + 8));
     return;
   }
   if (std::strncmp(line, "credentials ", 12) == 0) {
@@ -1378,6 +1602,7 @@ void obey(const char* line) {
                 credentials.has_authority() ? "yes" : "no",
                 credentials.has_certificate() ? "yes" : "no",
                 credentials.has_private_key() ? "yes" : "no");
+    keep_the_credentials();
     return;
   }
   if (std::strcmp(line, "connect") == 0) {
@@ -1420,6 +1645,9 @@ void obey(const char* line) {
 int main() {
   stdio_init_all();
 
+  // Read before anything turns it on again, because turning it on is what clears it.
+  woke_from_watchdog = watchdog_caused_reboot();
+
   name_this_board();
 
   // The radio is brought up whether or not there is a network to join: it is also what
@@ -1434,6 +1662,9 @@ int main() {
   adc_set_temp_sensor_enabled(true);
 
   run_the_default_plan();
+  // And then whatever it was told to run instead, if it was told anything before the
+  // power went off. A board with nothing in its flash keeps its own temperature.
+  take_back_what_was_kept();
 
   if (!make_uuid(boot_id) || !make_uuid(connection_id)) {
     std::printf("# this board cannot make an identifier for this boot\n");
@@ -1444,12 +1675,24 @@ int main() {
   // ever read. Saying it again on a timer would be noise; saying it once, after a moment,
   // is what a person watching a serial monitor needs.
   sleep_ms(2000);
-  std::printf("# ready %s node=%s boot=%s connection=%s wireless=%s\n", PICO_BOARD, node_id,
-              boot_id, connection_id, wireless ? "up" : "no");
+  std::printf("# ready %s node=%s boot=%s connection=%s wireless=%s reset=%s\n", PICO_BOARD,
+              node_id, boot_id, connection_id, wireless ? "up" : "no",
+              woke_from_watchdog ? "watchdog" : "power");
   std::fflush(stdout);
+
+  if (it_can_carry_on_by_itself()) {
+    come_back_on_its_own = true;
+    join_the_network();
+  }
+
+  // From here on the loop has to keep coming round. Everything before this point is the
+  // one place where it does not — joining a network, reading flash and waiting for a
+  // serial monitor are all allowed to take their time exactly once.
+  watchdog_enable(kWatchdogMs, true);
 
   absolute_time_t next = make_timeout_time_ms(kHeartbeatBlinkMs);
   while (true) {
+    watchdog_update();
     net::poll();
     take_the_time_if_it_arrived();
     if (net::socket() != net::Socket::kIdle) {

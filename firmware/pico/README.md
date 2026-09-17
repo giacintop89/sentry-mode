@@ -14,9 +14,11 @@ temperature were accepted by the hub's models and by the published schema — th
 serializer, the same bytes, on a chip where `long` is 32 bits and unaligned access is not
 free. The same board has since joined a network, taken its time from it, proved who it
 was to this system's own Mosquitto over mutual TLS, announced itself, and been granted,
-renewed, revoked and stopped by a hub speaking through the broker. What is still not on
-the board is flash — the record and the key live in RAM and are gone at the next boot —
-health messages, and any sensor driver at all. The hardware gates in the
+renewed, revoked and stopped by a hub speaking through the broker. It keeps its identity,
+its credentials and the last configuration it was given in its own flash, comes back from
+a reset as itself with nobody at the cable, and resets itself when its loop stops turning.
+What is still not on the board is a sensor with wires on it, I²C, and the media this plan
+puts after the sensors. The hardware gates in the
 [implementation plan](../../docs/sentry-mode-pico-implementation-plan.md) that this has
 executed are named where they were executed, below; the rest stay marked **not
 executed**.
@@ -106,7 +108,29 @@ Then, with `gcc-arm-none-eabi` installed:
 make pico-device                      # or: PICO_BOARD=pico_w make pico-device
 ```
 
-That writes `build/pico2w/sentry_firmware.uf2`. Hold BOOTSEL while plugging the board in —
+That writes `build/pico2_w/sentry_firmware.uf2`, and then checks the image for anything
+that should not be in it. Four boards are built by the workflow and were built by hand on
+2026-09-17:
+
+| `PICO_BOARD` | Chip | Radio | UF2 |
+|---|---|---|---|
+| `pico2_w` | RP2350 | yes | 1.00 MB |
+| `pico_w` | RP2040 | yes | 1.05 MB |
+| `pico2` | RP2350 | no | 275 kB |
+| `pico` | RP2040 | no | 294 kB |
+
+The wired ones are a quarter of the size because they compile a different network module —
+`net_wired.cpp`, which answers "no radio" and nothing else — and with it no lwIP, no
+mbedTLS and no TLS stack at all. Everything else is the same firmware: the sources, the
+plan, the vault and the serial console all work on a board that cannot connect to anything,
+which is what `PICO-03`'s USB bridge will need. Only `pico2_w` has been run on hardware.
+
+Nothing is compiled into any of them that belongs to a particular board.
+`tools/image_check.py` is what says so: it refuses an image carrying a PEM block with a
+body in it, and — when it is pointed at one — anything out of a provisioning record. A
+board becomes this node by being told over the cable, and it writes that down itself.
+
+Hold BOOTSEL while plugging the board in —
 or, if it is running MicroPython, `import machine; machine.bootloader()` — and copy the UF2
 onto the `RP2350` volume that appears. The board reboots into the firmware.
 
@@ -122,7 +146,7 @@ What it listens for on the serial line:
 
 | Line | What it does |
 |---|---|
-| `provision <json>` | The identity and the network, as `read_provisioning` reads them. It lives in RAM: flash is PICO-02. |
+| `provision <json>` | The identity and the network, as `read_provisioning` reads them, written to flash and read back at the next boot. |
 | `join` | Joins that network and starts asking `pool.ntp.org` what time it is. |
 | `credentials <json>` | The authority, the certificate and the key, as PEM. Nothing prints any of it back. |
 | `connect` | Opens the one connection this node makes, and keeps making it again if it drops. |
@@ -132,6 +156,10 @@ What it listens for on the serial line:
 | `time <unix_ms>` | The time, for a board with no network to ask. |
 | `sample` | Every source read now, rather than at the next interval. |
 | `drive <pin> <0|1>` | Drives a pin the plan holds, as a sensor on it would. A board with nothing wired to it can still be made to have something happen. |
+| `keeping` | What is in the flash: the five things, by name and by how many times each has been written. Never what is in them. |
+| `forget [what]` | Erases one of them, or all of them, and clears it out of memory too. The recovery verb. |
+| `tear <what>` | Writes half a record into the slot that is not in use, on purpose, so the next boot can be watched refusing it. |
+| `hang` | Stops feeding the watchdog. The board resets itself a few seconds later, which is the only way to see that the watchdog works. |
 
 The record holds a passphrase and points at a private key, so it is handed over rather than
 committed:
@@ -530,6 +558,105 @@ file was still in the first version of the rules format, which has no sensor tri
 `scripts/migrate_satellites.py --apply` converts it, keeping a checksummed backup. And
 arming is a POST with no body, which the hub says plainly if it is given one.
 
+### What it keeps, and what it forgets
+
+`PICO-02` asks for a versioned flash layout with two configuration slots, a provisioning
+record that survives a boot, a recovery path over USB, and an interrupted write that still
+leaves a valid configuration behind. All of that is now on the board.
+
+The layout is in `sentry/vault.h`, which is pure and host-tested: five things a node keeps
+— its identity, the authority, its certificate, its private key, and the last configuration
+the hub sent it — with two slots each, one erase sector apiece, at the end of the flash
+part. Nothing of it is in the image. The UF2 is the same on every board; what makes a board
+this node is what it was told over the cable and wrote down. The version of the layout is
+the record version in `store.h`, carried in every slot: a record written by a firmware that
+laid the vault out differently fails to read rather than being taken for one of these.
+
+```
+keeping
+# vault at 0x003f6000, 40960 bytes, 10 slots of 4096
+#   identity      kept, write 1
+#   authority     kept, write 1
+#   certificate   kept, write 1
+#   key           kept, write 1
+#   configuration kept, write 1
+```
+
+Names and write counts, never values. The authority would be harmless to print and is not
+printed either, because a rule with an exception in it is a rule somebody edits later.
+
+**A reset it was not asked for.** `PICO-01` wants a watchdog that has been seen to fire, so
+there is a verb that stops feeding it:
+
+```
+hang
+# not feeding the watchdog; this board should reset in about 8000 ms
+--- the cable is quiet; waiting for the board to come back
+--- the port went away after 3.8s
+--- back after 6.4s
+# ready pico2_w node=pico-ingresso boot=c4357001-… connection=602dfff3-… wireless=up reset=watchdog
+# joining GL-SFT1200-fda
+# joined GL-SFT1200-fda as 192.168.11.156, -46 dBm
+# it knows the time and has what it needs: connecting on its own
+# the network says it is 2026-09-17T16:38:37.491Z (answer 1)
+# the broker accepted this node
+# online, as pico-ingresso
+# grant 6d92c2a8-…: applied
+```
+
+Everything after the reset happened with nobody at the cable: the node read its own name,
+its three PEMs and a configuration of three sources back out of flash, joined, waited to be
+told the time — a certificate has dates on it, and a board that does not know the time
+cannot tell an expired one from a good one — and then connected. The boot id is new and the
+sequence starts again at zero, which is exactly what tells the hub this was a reboot and
+not a replay; the node id is the same one the hub registered. `reset=watchdog` is what it
+says about how it got here, in `status` as well as at boot, because a board that keeps
+coming back this way is a board with something wrong with it.
+
+**An interrupted write.** The only way to see the two slots earn their keep is to interrupt
+one, so there is a verb for that too. `tear` writes a record whose header promises three
+pages and whose flash holds one — a sequence number a thousand higher than the current one,
+so a node that compared them without checking them would choose it:
+
+```
+tear configuration
+# half a configuration written to the slot that is not in use: unreadable, as an interrupted write is
+hang
+…
+# ready pico2_w node=pico-ingresso boot=… reset=watchdog
+# plan=3 revision=5
+#   board-temperature board measure=temperature every=30s readings=2
+#   pir-1 gpio pin=15 level=low state=off readings=1
+#   light-1 adc pin=26 output=ratio every=20s readings=3
+```
+
+Revision 5 and all three sources: the torn slot lost, and it lost on its checksum rather
+than on its sequence number. That is `T21`, on the board.
+
+**No credentials, and no way around it.** The recovery verb erases what is kept, out of
+flash and out of memory both:
+
+```
+credentials {"key": "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"}
+# that is not a set of credentials this firmware can use
+forget authority
+# forgetting the authority: gone
+# this board is still provisioned; it will come back this way after a reset
+connect
+# no certificate to connect with; send: credentials <json>
+```
+
+A certificate offered as a private key is refused whole, and the key already in flash is
+untouched — `keeping` still shows one write. With the authority gone, a new connection is
+refused before anything is opened, and after a reset the board comes back as itself, still
+knowing what it was told to run, with `link=down` and `credentials=no`: it does not join,
+does not ask the time, and does not try. There is no setting anywhere that would let it.
+
+One thing this does not defend against, and cannot: a board somebody walks away with gives
+up its private key and its Wi-Fi passphrase to anybody with the patience to read its flash.
+That is a property of the part, not of this firmware. It is why the satellite gets the
+guest network and a certificate of its own — one the hub can revoke.
+
 ## What is in here
 
 | Path | What it is |
@@ -545,6 +672,8 @@ arming is a POST with no body, which the hub says plainly if it is given one.
 | `include/sentry/session.h`, `src/core/session.cpp` | The order a connection comes up in: nothing is announced before the subscription is confirmed, and every connection has an identifier of its own. |
 | `include/sentry/lease.h`, `src/protocol/lease.cpp` | Permission with an end to it, measured on this node's clock, and the memory of the last 64 commands answered. |
 | `include/sentry/store.h`, `src/core/store.cpp` | The framing that lets an interrupted write be recognised as one, and the rule for choosing between the two configuration slots. |
+| `include/sentry/vault.h`, `src/core/vault.cpp` | Where the five things a node keeps live: two slots each, a whole erase sector apiece, and the most each one may be. |
+| `src/device/flash_vault.h`, `src/device/flash_vault.cpp` | The only file that writes to flash: erase, program, read back through the same path the boot takes, and a `tear` that stops halfway on purpose. |
 | `include/sentry/identity.h`, `src/core/identity.cpp` | The provisioning record — the node id and where the broker is — and the boot id that must differ every boot. |
 | `include/sentry/credentials.h`, `src/core/credentials.cpp` | The authority, the certificate and the key: what each one has to be, taken whole or not at all, and a `forget()` that overwrites the key. |
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
@@ -556,7 +685,7 @@ arming is a POST with no body, which the hub says plainly if it is given one.
 | `include/sentry/sensors.h`, `src/core/sensors.cpp` | Turning what a sensor returned into a reading or into an admission there is none: the 1-Wire CRC, the 85 °C a DS18B20 holds after a reset, and an ADC count nothing could have produced. |
 | `include/sentry/plan.h`, `src/core/plan.cpp` | What a configuration is allowed to ask for: which drivers this firmware has, which options each one takes, and a refusal that names the source it failed on — decided whole, on a copy, before a pin is touched. |
 | `include/sentry/pins.h`, `src/core/pins.cpp` | Which pins a configuration may use and who already has them, refused whole rather than in part. |
-| `tests/` | The eighteen suites, and a tiny harness rather than a test framework. |
+| `tests/` | The nineteen suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful

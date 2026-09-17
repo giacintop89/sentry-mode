@@ -65,6 +65,7 @@ add_library(sentry_protocol
   src/protocol/event.cpp
   src/protocol/lease.cpp
   src/core/store.cpp
+  src/core/vault.cpp
   src/core/identity.cpp
   src/core/credentials.cpp
   src/core/timebase.cpp
@@ -86,7 +87,16 @@ target_compile_options(sentry_protocol PRIVATE
 if(SENTRY_PICO_TARGET STREQUAL "device")
   # One program, and the same library the host tests are run against. What it proves is
   # that these modules behave on the chip as they do on a computer; it is not a satellite.
-  add_executable(sentry_firmware src/device/main.cpp src/device/net.cpp src/device/onewire.cpp)
+  # Which network module this target gets. A board with a radio compiles the lwIP and
+  # mbedTLS half; a wired one compiles the half that says so and nothing else — no TLS
+  # stack in the image, and no dead code pretending there might be one.
+  if(PICO_CYW43_SUPPORTED)
+    set(SENTRY_NET src/device/net.cpp)
+  else()
+    set(SENTRY_NET src/device/net_wired.cpp)
+  endif()
+  add_executable(sentry_firmware src/device/main.cpp ${SENTRY_NET} src/device/onewire.cpp
+                                 src/device/flash_vault.cpp)
   # lwipopts.h lives beside them, because what of lwIP this firmware compiles in is part of
   # the firmware and not of whoever builds it.
   target_include_directories(sentry_firmware PRIVATE src/device)
@@ -96,6 +106,10 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
     pico_rand
     pico_unique_id
     hardware_adc
+    # The vault: erasing and programming the sectors at the end of the part, and the reset
+    # this program asks for when its own loop stops turning.
+    hardware_flash
+    hardware_watchdog
   )
   if(PICO_CYW43_SUPPORTED)
     # The background context: lwIP runs from an alarm and the main loop never blocks on it.
@@ -119,7 +133,7 @@ endif()
 
 enable_testing()
 
-foreach(suite json command control event lease topics mqtt client session store identity credentials timebase spool input sensors pins plan)
+foreach(suite json command control event lease topics mqtt client session store vault identity credentials timebase spool input sensors pins plan)
   add_executable(test_${suite} tests/test_${suite}.cpp)
   target_link_libraries(test_${suite} PRIVATE sentry_protocol)
   target_include_directories(test_${suite} PRIVATE tests)

@@ -1,8 +1,11 @@
 # The part of the Pico firmware that can be checked without a Pico.
 #
-# The device build is not here yet (see firmware/pico/README.md), so this workflow builds
-# the protocol for the host, runs the four test suites, and then makes the hub's models and
-# the satellite's schema checker judge the events the firmware's own serializer writes.
+# The first job builds the protocol for the host, runs the suites, and then makes the hub's
+# models and the satellite's schema checker judge the events the firmware's own serializer
+# writes. The second builds the firmware itself for every board this plan names — two with a
+# radio, two without — and checks the images it produced for anything that should not be in
+# them. What neither job can do is run any of it on a board; the transcripts in
+# firmware/pico/README.md are where that lives, and they say what was and was not executed.
 
 name: pico
 
@@ -58,3 +61,53 @@ jobs:
 
       - name: The firmware reads back records it did not frame
         run: python firmware/pico/tools/pack_provisioning.py --build-dir build/pico-host --verify
+
+  device:
+    # Four boards, because "it builds" is a claim about a target and not about a tree. The
+    # wired ones compile a different network module and no TLS stack at all, so a change
+    # that only ever built for a Pico 2 W fails here rather than on somebody's desk.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [pico_w, pico2_w, pico, pico2]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            libstdc++-arm-none-eabi-newlib
+
+      - name: The SDK, with the parts this firmware uses
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: 2.2.0  # the version these transcripts were built with
+          path: pico-sdk
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure
+        run: |
+          cmake -S firmware/pico -B build/${{ matrix.board }} -G Ninja \
+            -DSENTRY_PICO_TARGET=device -DPICO_BOARD=${{ matrix.board }} \
+            -DPICO_SDK_PATH=$GITHUB_WORKSPACE/pico-sdk
+
+      - name: Build
+        run: cmake --build build/${{ matrix.board }}
+
+      - name: Nothing in the image that belongs on a board
+        run: python firmware/pico/tools/image_check.py --build-dir build/${{ matrix.board }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sentry-firmware-${{ matrix.board }}
+          path: |
+            build/${{ matrix.board }}/sentry_firmware.uf2
+            build/${{ matrix.board }}/sentry_firmware.elf
+            build/${{ matrix.board }}/sentry_firmware.elf.map

@@ -31,4 +31,6 @@ pico-device:
 	cmake -S firmware/pico -B build/$(PICO_BOARD) -G Ninja -DSENTRY_PICO_TARGET=device \
 		-DPICO_BOARD=$(PICO_BOARD) -DPICO_SDK_PATH=$(PICO_SDK_PATH)
 	cmake --build build/$(PICO_BOARD)
+	$(BIN)/python firmware/pico/tools/image_check.py --build-dir build/$(PICO_BOARD) \
+		--provisioning .local/pico-provisioning.json
 	@echo "flash: hold BOOTSEL, then copy build/$(PICO_BOARD)/sentry_firmware.uf2 onto RP2350"
