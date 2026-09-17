@@ -55,6 +55,7 @@ KINDS = {
     "uvc": SourceKind.CAMERA,
     "microphone": SourceKind.MICROPHONE,
     "ble": SourceKind.PRESENCE,
+    "board": SourceKind.SENSOR,
 }
 
 

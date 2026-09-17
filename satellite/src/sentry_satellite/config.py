@@ -17,13 +17,41 @@ from sentry_satellite.names import InvalidName, check_kind, check_name, local_na
 PROFILES = ("camera-sensor", "sensor-presence", "audio-sensor")
 """What a board is for. The profile decides which drivers are allowed to exist at all."""
 
-SOURCE_KINDS = ("gpio", "onewire", "bme280", "adc", "csi", "uvc", "microphone", "ble", "dummy")
+SOURCE_KINDS = (
+    "gpio",
+    "onewire",
+    "bme280",
+    "adc",
+    "csi",
+    "uvc",
+    "microphone",
+    "ble",
+    "board",
+    "dummy",
+)
 
 KINDS_BY_PROFILE = {
-    "camera-sensor": {"gpio", "onewire", "bme280", "adc", "csi", "uvc", "microphone", "dummy"},
-    "sensor-presence": {"gpio", "onewire", "bme280", "adc", "ble", "dummy"},
-    "audio-sensor": {"gpio", "onewire", "bme280", "adc", "microphone", "dummy"},
+    "camera-sensor": {
+        "gpio",
+        "onewire",
+        "bme280",
+        "adc",
+        "csi",
+        "uvc",
+        "microphone",
+        "board",
+        "dummy",
+    },
+    "sensor-presence": {"gpio", "onewire", "bme280", "adc", "ble", "board", "dummy"},
+    "audio-sensor": {"gpio", "onewire", "bme280", "adc", "microphone", "board", "dummy"},
 }
+"""Every profile has `board`: it is the board itself, and it is there whatever is wired."""
+
+BOARD = (
+    ("board-temperature", "temperature"),
+    ("board-cpu", "cpu"),
+)
+"""What every node reports about itself unless its configuration says otherwise."""
 
 
 class ConfigError(ValueError):
@@ -115,6 +143,10 @@ OPTIONS: dict[str, dict[str, tuple]] = {
         "output": (str, "ratio", _one_of("ratio", "volts")),
         "reference_volts": (float, 3.3, _between(0.1, 4.096)),
         "event_kind": (str, "light.level", _kind),
+        **INTERVAL,
+    },
+    "board": {
+        "measure": (str, REQUIRED, _one_of("temperature", "cpu")),
         **INTERVAL,
     },
     "dummy": {"interval_seconds": (float, 1.0, _between(0.01, 3600))},
@@ -408,8 +440,25 @@ def parse_sources(
         options = {key: value for key, value in entry.items() if key not in {"id", "kind"}}
         options = check_options(kind, options, f"{at} ({source_id})")
         sources.append(Source(id=source_id, kind=kind, options=options))
+    sources.extend(_the_board_itself(sources, seen))
     check_conflicts(sources)
     return tuple(sources)
+
+
+def _the_board_itself(declared: list[Source], seen: set[str]) -> list[Source]:
+    """The readings every node takes of itself, for a configuration that leaves them out.
+
+    A file that names one of them — to change how often it is taken, or to turn it off
+    with `enabled = false` — has said what it wants and is left alone.
+    """
+    measured = {source.options.get("measure") for source in declared if source.kind == "board"}
+    added = []
+    for source_id, measure in BOARD:
+        if measure in measured or source_id in seen:
+            continue
+        options = check_options("board", {"measure": measure}, f"the board's own {measure}")
+        added.append(Source(id=source_id, kind="board", options=options))
+    return added
 
 
 def parse(document: dict, *, identity_file: Path) -> Config:

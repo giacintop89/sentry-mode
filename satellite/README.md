@@ -27,6 +27,10 @@ sent are kept in `/var/lib/sentry-satellite` (`--state-dir`); the file under `/e
 never rewritten. See [satellites](../docs/satellites.md#sensors) for the options of each
 kind.
 
+Every node also reports its own temperature and how busy its processor has been, every 30
+seconds, without being configured for it; a file that names `board-temperature` or
+`board-cpu` decides for itself how often, or turns it off.
+
     python -m sentry_satellite.cli validate --config config/sensor-presence.example.toml
     python -m sentry_satellite.cli doctor
     python -m sentry_satellite.cli run --config /etc/sentry-satellite/node.toml

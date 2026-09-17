@@ -16,6 +16,7 @@ from sentry_satellite import drivers
 from sentry_satellite.sensors import baseline
 from sentry_satellite.sensors.adc import Ads1115, config_word
 from sentry_satellite.sensors.bme280 import Bme280, Calibration, compensate
+from sentry_satellite.sensors.board import Cpu, Temperature
 from sentry_satellite.sensors.bounded import Bounded, Busy, Timeout
 from sentry_satellite.sensors.digital import DigitalInput
 from sentry_satellite.sensors.gpio import Edge, LineError
@@ -568,11 +569,85 @@ def test_a_source_that_cannot_work_is_refused_at_validate(tables, problem):
         sources(*tables)
 
 
+# -- what the board says about itself ----------------------------------------------------
+
+
+STAT = "cpu  {user} 0 {system} {idle} 0 0 0 0 0 0\ncpu0 1 2 3 4\nintr 99\n"
+
+
+def test_the_board_temperature_is_read_from_the_thermal_zone(tmp_path):
+    zone = tmp_path / "temp"
+    zone.write_text("47216\n")
+    assert Temperature(zone)().value == 47.2
+
+
+def test_a_thermal_zone_that_answers_nonsense_is_unavailable_not_a_guess(tmp_path):
+    zone = tmp_path / "temp"
+    zone.write_text("warm\n")
+    with pytest.raises(Unreadable):
+        Temperature(zone)()
+    zone.write_text("900000\n")  # 900 °C: a unit that is not thousandths, or a broken file
+    with pytest.raises(Unreadable):
+        Temperature(zone)()
+    with pytest.raises(Unreadable):
+        Temperature(tmp_path / "no-such-zone")()
+
+
+def test_the_processor_share_is_what_happened_between_two_readings(tmp_path):
+    """The counters are totals since boot, so one reading of them says nothing at all."""
+    stat = tmp_path / "stat"
+    stat.write_text(STAT.format(user=100, system=0, idle=900))
+    cpu = Cpu(stat)
+    stat.write_text(STAT.format(user=140, system=10, idle=950))
+    assert cpu().value == 50.0  # 50 busy ticks out of the 100 that passed
+    stat.write_text(STAT.format(user=140, system=10, idle=1050))
+    assert cpu().value == 0.0
+    assert cpu().value == 0.0  # asked again before the clock moved: the last interval stands
+
+
+def test_every_board_reports_its_temperature_and_its_occupancy_unasked():
+    """Neither needs a wire, so a node reports both without being configured for them."""
+    config = sources(PIR)
+    assert [(s.id, s.options["measure"]) for s in config.sources if s.kind == "board"] == [
+        ("board-temperature", "temperature"),
+        ("board-cpu", "cpu"),
+    ]
+    built = {d.source_id: d for d in drivers.build(config, drivers.Hardware(open_line=FakeLine))}
+    assert (built["board-temperature"]._kind, built["board-temperature"]._unit) == (
+        "board.temperature",
+        "°C",
+    )
+    assert (built["board-cpu"]._kind, built["board-cpu"]._unit) == ("board.cpu", "%")
+
+
+def test_a_node_that_names_the_board_itself_is_left_to_say_what_it_means():
+    config = sources(
+        '[[sources]]\nid = "board-temperature"\nkind = "board"\n'
+        'measure = "temperature"\ninterval_seconds = 300\nenabled = false\n'
+    )
+    board = [source for source in config.sources if source.kind == "board"]
+    assert [(s.id, s.options["interval_seconds"], s.enabled) for s in board] == [
+        ("board-temperature", 300.0, False),
+        ("board-cpu", 30.0, True),
+    ]
+
+
+def named(thing) -> str:
+    if isinstance(thing, dict):
+        return str(thing.get("id", ""))
+    return str(getattr(thing, "source_id", None) or getattr(thing, "id", thing))
+
+
+def wired(things):
+    """What the configuration asked for, without the two readings every board takes."""
+    return [thing for thing in things if not named(thing).startswith("board-")]
+
+
 def test_a_disabled_source_claims_nothing_and_is_not_built():
     config = sources(PIR, PIR.replace('"pir-1"', '"pir-2"') + "enabled = false\n")
-    assert [source.enabled for source in config.sources] == [True, False]
+    assert [source.enabled for source in wired(config.sources)] == [True, False]
     built = drivers.build(config, drivers.Hardware(open_line=lambda *a, **k: FakeLine()))
-    assert [driver.source_id for driver in built] == ["pir-1"]
+    assert [driver.source_id for driver in wired(built)] == ["pir-1"]
     assert "pir-2 (gpio, disabled)" in configuration.summary(config)["sources"]
 
 
@@ -585,7 +660,7 @@ def test_drivers_share_one_part_and_open_nothing_until_they_read():
 
     hardware = drivers.Hardware(open_i2c=open_i2c, open_line=lambda *a, **k: FakeLine())
     built = drivers.build(sources(PIR, TEMP, HUM, LIGHT, PROBE), hardware)
-    assert [type(d).__name__ for d in built] == [
+    assert [type(d).__name__ for d in wired(built)] == [
         "DigitalInput",
         "Periodic",
         "Periodic",
@@ -604,7 +679,7 @@ def test_the_gpio_line_is_requested_with_the_configured_settings():
         return FakeLine(level=True)
 
     config = sources(PIR + 'bias = "pull_down"\n')
-    [driver] = drivers.build(config, drivers.Hardware(open_line=open_line))
+    [driver] = wired(drivers.build(config, drivers.Hardware(open_line=open_line)))
     collect(driver, 1)
     assert requested == [("/dev/gpiochip0", 17, "sentry-satellite:pir-1", "pull_down")]
 

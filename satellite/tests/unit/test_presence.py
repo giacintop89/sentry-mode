@@ -561,8 +561,19 @@ def load(sources, profile="sensor-presence"):
     )
 
 
+def named(thing) -> str:
+    if isinstance(thing, dict):
+        return str(thing.get("id", ""))
+    return str(getattr(thing, "source_id", None) or getattr(thing, "id", thing))
+
+
+def wired(things):
+    """What the configuration asked for, without the two readings every board takes."""
+    return [thing for thing in things if not named(thing).startswith("board-")]
+
+
 def test_a_ble_source_needs_exactly_one_thing_to_look_for():
-    [built] = load([source(address=TAG)])
+    [built] = wired(load([source(address=TAG)]))
     assert built.options["adapter"] == "hci0"
     assert built.options["enter_sightings"] == 3
     assert built.options["absent_after_seconds"] == 120.0

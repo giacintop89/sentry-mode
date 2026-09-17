@@ -21,14 +21,31 @@ from sentry_satellite.sensors import Driver
 from sentry_satellite.sensors import gpio as gpio_lines
 from sentry_satellite.sensors.adc import Ads1115
 from sentry_satellite.sensors.bme280 import QUANTITIES, Bme280
+from sentry_satellite.sensors.board import Cpu, Temperature
 from sentry_satellite.sensors.digital import DigitalInput
 from sentry_satellite.sensors.dummy import Motion
 from sentry_satellite.sensors.i2c import Bus, Device
 from sentry_satellite.sensors.onewire import Ds18b20
-from sentry_satellite.sensors.periodic import Periodic
+from sentry_satellite.sensors.periodic import Periodic, Sample
 
-SUPPORTED = ("gpio", "onewire", "bme280", "adc", "csi", "microphone", "ble", "dummy")
+SUPPORTED = (
+    "gpio",
+    "onewire",
+    "bme280",
+    "adc",
+    "csi",
+    "microphone",
+    "ble",
+    "board",
+    "dummy",
+)
 """Kinds this version of the agent can drive. Remote configuration is limited to these."""
+
+BOARD: dict[str, tuple[str, str, Callable[[], Callable[[], Sample]]]] = {
+    "temperature": ("board.temperature", "°C", Temperature),
+    "cpu": ("board.cpu", "%", Cpu),
+}
+"""What the board reports about itself, by measure: the kind, the unit, and the sampler."""
 
 PENDING = {
     "uvc": "a later increment, once a USB camera is qualified on the Zero W",
@@ -93,6 +110,15 @@ def build_one(source: Source, hardware: Hardware | None = None) -> Driver:
         return AlsaMicrophone(source.id, options, program=hardware.recorder)
     if source.kind == "ble":
         return BlePresence(source.id, options, scanner=hardware.scanner(options["adapter"]))
+    if source.kind == "board":
+        kind, unit, sampler = BOARD[options["measure"]]
+        return Periodic(
+            source.id,
+            sampler(),
+            event_kind=kind,
+            unit=unit,
+            interval_seconds=options["interval_seconds"],
+        )
     if source.kind == "dummy":
         return Motion(source.id, interval=float(options.get("interval_seconds", 1.0)))
     if source.kind == "gpio":

@@ -100,16 +100,27 @@ def settled(transport, command_id):
     return until(lambda: any(o != "received" for o, _ in outcomes(transport, command_id)))
 
 
+def named(thing) -> str:
+    if isinstance(thing, dict):
+        return str(thing.get("id", ""))
+    return str(getattr(thing, "source_id", None) or getattr(thing, "id", thing))
+
+
+def wired(things):
+    """What the configuration asked for, without the two readings every board takes."""
+    return [thing for thing in things if not named(thing).startswith("board-")]
+
+
 def test_a_new_list_of_sources_is_applied_and_kept(tmp_path):
     agent, transport, lines = make(tmp_path)
     configure(transport, 1, [pir(), dummy()])
     assert settled(transport, "cfg-1")
     assert outcomes(transport, "cfg-1") == [("received", None), ("applied", "revision 1")]
-    assert [driver.source_id for driver in agent.drivers] == ["pir-1", "sim-1"]
+    assert [driver.source_id for driver in wired(agent.drivers)] == ["pir-1", "sim-1"]
     assert until(lambda: lines.opened == [17])
     kept = json.loads((tmp_path / "state" / "sources.json").read_text())
     assert kept["revision"] == 1 and kept["node_id"] == "zero-entrance"
-    assert [entry["id"] for entry in kept["sources"]] == ["pir-1", "sim-1"]
+    assert [entry["id"] for entry in wired(kept["sources"])] == ["pir-1", "sim-1"]
     assert (tmp_path / "state" / "sources.json").stat().st_mode & 0o777 == 0o600
     state = [message for message in transport.on("state") if message["config_revision"] == 1]
     declared = state[-1]["sources"][0]
@@ -177,7 +188,7 @@ def test_a_driver_that_cannot_start_puts_the_previous_sources_back(tmp_path):
     outcome, detail = outcomes(transport, "cfg-2")[-1]
     assert outcome == "failed"
     assert "door: line 22 is busy" in detail and "revision 1 is still in use" in detail
-    assert [driver.source_id for driver in agent.drivers] == ["pir-1"]
+    assert [driver.source_id for driver in wired(agent.drivers)] == ["pir-1"]
     assert agent.revision == 1
     assert until(lambda: lines.opened.count(17) == 3)  # first, during the attempt, restored
     assert json.loads((tmp_path / "state" / "sources.json").read_text())["revision"] == 1
@@ -192,7 +203,7 @@ def test_a_configuration_that_cannot_be_kept_is_not_left_running(tmp_path):
     assert settled(transport, "cfg-1")
     outcome, detail = outcomes(transport, "cfg-1")[-1]
     assert outcome == "failed" and "could not be kept" in detail
-    assert agent.drivers == [] and agent.revision == 0
+    assert wired(agent.drivers) == [] and agent.revision == 0
     agent.stop()
 
 
@@ -250,7 +261,7 @@ def test_the_overlay_replaces_the_installed_sources_on_the_next_start(tmp_path):
     overlay.save(wanted, 4)
     applied = overlay.load(installed, kinds=Builder.kinds)
     assert applied.revision == 4
-    assert [source.id for source in applied.config.sources] == ["pir-1"]
+    assert [source.id for source in wired(applied.config.sources)] == ["pir-1"]
     assert applied.config.hub == installed.hub and applied.config.tls == installed.tls
 
 

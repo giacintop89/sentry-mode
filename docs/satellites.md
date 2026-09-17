@@ -171,9 +171,25 @@ pin that a bus already uses.
 | `onewire` | A DS18B20 probe, in °C. | `device` (`28-…`), `line` (the 1-Wire pin, default 4), `interval_seconds` |
 | `bme280` | Temperature (°C), humidity (%) or pressure (hPa) — one source per quantity. | `measure`, `bus`, `address` (`0x76` or `0x77`), `interval_seconds` |
 | `adc` | One channel of an ADS1115, for an LDR divider or another analogue part. | `channel`, `output` (`ratio` or `volts`), `reference_volts`, `bus`, `address`, `interval_seconds` |
+| `board` | The board itself: its temperature in °C (`board.temperature`) and the share of the time its processor was working, as a percentage (`board.cpu`). | `measure` (`temperature` or `cpu`), `interval_seconds` |
 | `dummy` | A simulated value, for testing the link. | `interval_seconds` |
 
 Every source also takes `enabled = false`, which keeps it in the list without reading it.
+
+**The board's own two are there without being asked for.** Every node reports
+`board-temperature` and `board-cpu` every 30 seconds, whatever else is wired to it,
+because neither needs a wire and a node that is quietly cooking or thrashing is worth
+seeing before it starts missing readings. Naming either of them in `[[sources]]` — to read
+it less often, or to turn it off with `enabled = false` — is left to say what it means:
+
+    [[sources]]
+    id = "board-cpu"
+    kind = "board"
+    measure = "cpu"
+    interval_seconds = 300
+
+The heartbeat carries the same two numbers every few seconds for the health display; the
+sources are what puts them in the journal, where they can be looked back over.
 
 What the board needs first, in `/boot/firmware/config.txt`, followed by a reboot:
 

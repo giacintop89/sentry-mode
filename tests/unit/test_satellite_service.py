@@ -643,6 +643,7 @@ def test_the_page_shows_each_source_with_its_reading_and_its_trouble(service):
         "csi",
         "microphone",
         "ble",
+        "board",
         "dummy",
     ]
     node = page["nodes"][0]

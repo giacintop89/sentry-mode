@@ -24,3 +24,12 @@ heartbeat_seconds = 5
 id = "pir-1"
 kind = "dummy"
 interval_seconds = 1.0
+
+# The board's own temperature and processor share are reported every 30 seconds without
+# being listed here. Name them to read them less often, or to turn them off:
+#
+# [[sources]]
+# id = "board-cpu"
+# kind = "board"
+# measure = "cpu"
+# interval_seconds = 300

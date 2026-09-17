@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from sentry_mode.sources.models import NAME
 
-DRIVERS = ("gpio", "onewire", "bme280", "adc", "csi", "microphone", "ble", "dummy")
+DRIVERS = ("gpio", "onewire", "bme280", "adc", "csi", "microphone", "ble", "board", "dummy")
 """Kinds the satellite agent has a driver for. Only these can be configured remotely."""
 
 PENDING = {
