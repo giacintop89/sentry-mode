@@ -24,6 +24,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from sentry_mode.satellites.platforms import DEFAULT as PLATFORM_DEFAULT
+from sentry_mode.satellites.platforms import known as known_platform
 from sentry_mode.sources.models import NAME
 
 Status = Literal["pending", "approved", "revoked"]
@@ -71,6 +73,9 @@ class NodeRecord(BaseModel):
     node_id: str = Field(pattern=NAME)
     display_name: str = Field(min_length=1, max_length=120)
     profile: str = Field(default="sensor-presence", min_length=1, max_length=40)
+    platform: str = Field(default=PLATFORM_DEFAULT, min_length=1, max_length=40)
+    """Which kind of machine this is, from `platforms.CATALOGUE`. A record written before
+    that catalogue existed has no opinion, and the default is what it has always been."""
     zone: str | None = Field(default=None, pattern=NAME)
     status: Status = "pending"
     fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -185,10 +190,13 @@ class NodeRegistry:
         *,
         display_name: str | None = None,
         profile: str = "sensor-presence",
+        platform: str = PLATFORM_DEFAULT,
         zone: str | None = None,
         certificate: str | None = None,
     ) -> NodeRecord:
         """Record a node as waiting. Registering is not approving."""
+        if not known_platform(platform):
+            raise ValueError(f"{platform} is not a kind of satellite this hub knows")
         with self._lock:
             self.refresh()
             if node_id in self._document.nodes:
@@ -197,6 +205,7 @@ class NodeRegistry:
                 node_id=node_id,
                 display_name=display_name or node_id,
                 profile=profile,
+                platform=platform,
                 zone=zone,
                 status="pending",
                 fingerprint=fingerprint(certificate) if certificate else None,
@@ -263,10 +272,12 @@ class NodeRegistry:
 
     def describe(self, node_id: str, /, **changes) -> NodeRecord:
         """Change what a node is called or where it is, never who it is."""
-        allowed = {"display_name", "zone", "profile", "agent_version", "serial"}
+        allowed = {"display_name", "zone", "profile", "platform", "agent_version", "serial"}
         unknown = set(changes) - allowed
         if unknown:
             raise ValueError(f"a node's {', '.join(sorted(unknown))} is not a description")
+        if "platform" in changes and not known_platform(changes["platform"]):
+            raise ValueError(f"{changes['platform']} is not a kind of satellite this hub knows")
         with self._lock:
             self.refresh()
             record = self.require(node_id)

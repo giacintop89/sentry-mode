@@ -14,10 +14,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from sentry_mode.satellites import platforms
 from sentry_mode.sources.models import NAME
 
-DRIVERS = ("gpio", "onewire", "bme280", "adc", "csi", "microphone", "ble", "board", "dummy")
-"""Kinds the satellite agent has a driver for. Only these can be configured remotely."""
+DRIVERS = platforms.LINUX.drivers
+"""Kinds a satellite agent has a driver for. Only these can be configured remotely, and a
+node whose platform has fewer is held to its own list before anything is sent."""
 
 PENDING = {
     "uvc": "arrives once a USB camera is qualified on the board",
@@ -76,11 +78,13 @@ def overview(status: dict) -> dict:
         "broker": status.get("broker"),
         "drivers": list(DRIVERS),
         "pending": dict(PENDING),
+        "platforms": [platforms.as_document(one) for one in platforms.CATALOGUE.values()],
         "nodes": [_node(node) for node in status.get("nodes", [])],
     }
 
 
 def _node(node: dict) -> dict:
+    chosen = platforms.platform(node.get("platform"))
     health = node.get("health") or {}
     reported = node.get("reported") or {}
     session = node.get("session") or {}
@@ -100,7 +104,7 @@ def _node(node: dict) -> dict:
                 "state": source["state"],
                 "declared": name in declared,
                 "enabled": said.get("enabled", name in declared),
-                "supported": said.get("kind") in DRIVERS,
+                "supported": said.get("kind") in chosen.drivers,
                 "options": said.get("options", {}),
                 "last": reading.get("last"),
                 "last_reading_age_seconds": reading.get("last_reading_age_seconds"),
@@ -125,7 +129,10 @@ def _node(node: dict) -> dict:
         "config_revision": reported.get("config_revision"),
         "last_seen": health.get("last_seen"),
         "clock_status": health.get("clock_status"),
-        "board": health.get("board") or {},
+        "platform": platforms.as_document(chosen),
+        # Only what this kind of board can measure. A microcontroller has no load average,
+        # and a page that showed one as 0 would be showing a number nobody took.
+        "board": platforms.visible_board(chosen, health.get("board") or {}),
         "queue": health.get("queue") or {},
         "sources": sources,
         "errors": errors,

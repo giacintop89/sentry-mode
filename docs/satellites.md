@@ -61,6 +61,46 @@ The name in the certificate is the node's identity. `sign` refuses to put a diff
 in, and the broker is configured to use it as the username, so the topic a node writes to,
 the name it authenticated as, and the name inside its messages all have to agree.
 
+## What kind of machine a node is
+
+Not every satellite is a small Linux computer. A microcontroller running the Sentry
+firmware has the drivers that were compiled into it, a few kilobytes for its configuration,
+no filesystem for a path to point into, and no camera or microphone at all. The hub has to
+know which kind it is talking to before it sends anything, so a node is registered as one:
+
+    python scripts/satellite_admin.py platforms
+    python scripts/satellite_admin.py register --node pico-ingresso --platform pico-w-sensor
+
+| Platform | Board | Drivers | Sources | Configuration | Streams |
+| --- | --- | --- | --- | --- | --- |
+| `linux-agent` | Pi Zero W or similar, running the Python agent | gpio, onewire, bme280, adc, csi, microphone, ble, board, dummy | 32 | 64 KiB | video, audio |
+| `pico-w-sensor` | Pico W (RP2040) | gpio, onewire, adc, board | 16 | 4 KiB | none |
+| `pico-2w-sensor` | Pico 2 W (RP2350) | gpio, onewire, adc, board | 24 | 8 KiB | none |
+
+`--platform` defaults to `linux-agent`, which is what every node registered before this
+existed is, and what the page goes on showing them as. If a node turns out to be something
+else, correct the record rather than re-registering it:
+
+    python scripts/satellite_admin.py describe --node pico-ingresso --platform pico-2w-sensor
+
+Both microcontroller entries are marked **experimental** everywhere they appear, on the
+page and in the shell. The firmware in `firmware/pico` is written and tested on a host; no
+board has been through the acceptance matrix yet.
+
+What a platform says is what is *possible*, never what is allowed. A node still has to be
+approved, still has to be online, and still has to hold a lease before it may say anything;
+the platform only decides what it can be asked for. Nothing here is taken from the node's
+own word — there is no field on the wire in which a node declares what it supports.
+
+A configuration is checked against the node's platform before it is sent, and refused with
+a reason: a driver the firmware does not have, more sources than the board takes, an option
+naming a file or an ALSA device on a board that has neither, or a list too large to hold.
+The node checks all of it again and has the last word; this is here so that a mistake the
+hub can see is an error on the page rather than a round trip that can only come back
+`failed`. For the same reason, the card for a microcontroller shows only the board numbers
+such a board can actually take — uptime, chip temperature, free memory — and no load
+average, because a zero there would be a number nobody measured.
+
 ## The broker
 
 Copy `deploy/satellites/mosquitto.conf.example` to `/etc/mosquitto/conf.d/`, and generate
@@ -445,8 +485,8 @@ reading, and what went wrong recently.
 
 An approved, online node can be given a new list of sources from its card. Open *Change
 sources*, edit the list — it is the node's `[[sources]]` written as JSON — and send it.
-Only the kinds in the tables above can be sent; a USB camera is refused with a note on
-when it arrives. The network, the certificates and the hub address
+Only the kinds in the tables above can be sent, and only those the node's own platform has
+a driver for; a USB camera is refused with a note on when it arrives. The network, the certificates and the hub address
 cannot be changed this way, on purpose.
 
 Each change has a revision number, higher than the last. The node checks the whole list

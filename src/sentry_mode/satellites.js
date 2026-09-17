@@ -46,7 +46,9 @@
     const freshness = node.status !== 'approved' ? node.status : node.online ? node.freshness : 'offline';
     f(item, 'freshness').textContent = freshness;
     f(item, 'freshness').classList.toggle('armed', freshness === 'fresh');
-    const meta = [node.zone && 'zone ' + node.zone, node.profile, node.agent_version && 'agent ' + node.agent_version,
+    const platform = node.platform || {};
+    const kind = platform.name && (platform.name + (platform.experimental ? ' (experimental)' : ''));
+    const meta = [node.zone && 'zone ' + node.zone, node.profile, kind, node.agent_version && 'agent ' + node.agent_version,
       node.config_revision ? 'configuration ' + node.config_revision : 'installed configuration',
       node.last_seen ? 'heard ' + ago(Date.now() / 1000 - node.last_seen) : 'not heard yet',
       node.clock_status && 'clock ' + node.clock_status];
@@ -74,7 +76,12 @@
     const area = f(item, 'sources-json'), id = 'sources-' + node.node_id;
     area.id = id; f(item, 'label').htmlFor = id;
     area.value = drafts.get(node.node_id) ?? JSON.stringify(asEntries(node), null, 2);
-    f(item, 'drivers').textContent = 'Kinds a satellite can drive: ' + last.drivers.join(', ') + '. Set "enabled": false to keep a source in the list without reading it.';
+    // What this node can drive, not what some satellite could: a board with four drivers
+    // should not be offered nine and be told `failed` after the round trip.
+    const drivers = platform.drivers || last.drivers;
+    const room = platform.max_sources ? ' Up to ' + platform.max_sources + ' sources.' : '';
+    f(item, 'drivers').textContent = 'Kinds this node can drive: ' + drivers.join(', ') + '.' + room
+      + ' Set "enabled": false to keep a source in the list without reading it.';
     const editor = f(item, 'editor');
     editor.open = open.has(node.node_id);
     const approved = node.status === 'approved' && node.online;

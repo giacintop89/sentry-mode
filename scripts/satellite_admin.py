@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from sentry_mode.satellites import platforms  # noqa: E402
 from sentry_mode.satellites.identity import NodeRegistry, fingerprint  # noqa: E402
 from sentry_mode.satellites.store import Store, StoreUnavailable  # noqa: E402
 
@@ -248,10 +249,55 @@ def register(arguments) -> int:
         arguments.node,
         display_name=arguments.name,
         profile=arguments.profile,
+        platform=arguments.platform,
         zone=arguments.zone,
         certificate=arguments.certificate.read_text() if arguments.certificate else None,
     )
-    print(f"{record.node_id} is registered and {record.status}")
+    print(f"{record.node_id} is registered and {record.status}, as a {record.platform}")
+    chosen = platforms.platform(record.platform)
+    if chosen.experimental:
+        print(f"{chosen.name} is experimental: no board of this kind has been qualified yet")
+    return 0
+
+
+def describe(arguments) -> int:
+    """Change what a node is called, where it is, or what kind of machine it turned out to be."""
+    changes = {
+        name: value
+        for name, value in (
+            ("display_name", arguments.name),
+            ("zone", arguments.zone),
+            ("profile", arguments.profile),
+            ("platform", arguments.platform),
+        )
+        if value is not None
+    }
+    if not changes:
+        raise Refused("say what to change: --name, --zone, --profile or --platform")
+    record = registry(arguments).describe(arguments.node, **changes)
+    print(f"{record.node_id} is {record.display_name}, a {record.platform}")
+    return 0
+
+
+def catalogue(arguments) -> int:
+    """What kinds of satellite this hub knows, which is what --platform will take."""
+    if arguments.json:
+        print(
+            json.dumps(
+                [platforms.as_document(one) for one in platforms.CATALOGUE.values()], indent=2
+            )
+        )
+        return 0
+    for one in platforms.CATALOGUE.values():
+        mark = " (experimental)" if one.experimental else ""
+        print(f"{one.name}{mark}")
+        print(f"  {one.summary}")
+        print(
+            f"  {one.architecture}, up to {one.max_sources} sources, "
+            f"{one.max_config_bytes} bytes of configuration"
+        )
+        print(f"  drivers: {', '.join(one.drivers)}")
+        print(f"  streams: {', '.join(one.streams) or 'none'}")
     return 0
 
 
@@ -283,7 +329,10 @@ def show(arguments) -> int:
     width = max(len(record.node_id) for record in records)
     for record in records:
         pinned = (record.fingerprint or "")[:16]
-        print(f"{record.node_id.ljust(width)}  {record.status:<9} {record.profile:<16} {pinned}")
+        print(
+            f"{record.node_id.ljust(width)}  {record.status:<9} {record.profile:<16} "
+            f"{record.platform:<15} {pinned}"
+        )
     return 0
 
 
@@ -401,8 +450,21 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--node", required=True)
     new.add_argument("--name")
     new.add_argument("--profile", default="sensor-presence")
+    new.add_argument(
+        "--platform",
+        default=platforms.DEFAULT,
+        choices=sorted(platforms.CATALOGUE),
+        help="what kind of machine this is; a microcontroller takes fewer sources",
+    )
     new.add_argument("--zone")
     new.add_argument("--certificate", type=Path)
+
+    named = commands.add_parser("describe", help="change a node's name, zone, profile or platform")
+    named.add_argument("--node", required=True)
+    named.add_argument("--name")
+    named.add_argument("--profile")
+    named.add_argument("--platform", choices=sorted(platforms.CATALOGUE))
+    named.add_argument("--zone")
 
     allowed = commands.add_parser("approve", help="let a node publish")
     allowed.add_argument("--node", required=True)
@@ -414,6 +476,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = commands.add_parser("list", help="show every registered node")
     listing.add_argument("--json", action="store_true")
+
+    kinds = commands.add_parser("platforms", help="show the kinds of satellite this hub knows")
+    kinds.add_argument("--json", action="store_true")
 
     rules = commands.add_parser("acl", help="write the broker access control list")
     rules.add_argument("--out", type=Path)
@@ -435,6 +500,8 @@ def main(argv: list[str] | None = None) -> int:
         "node-key": node_key,
         "sign": sign,
         "register": register,
+        "describe": describe,
+        "platforms": catalogue,
         "approve": approve,
         "revoke": revoke,
         "list": show,

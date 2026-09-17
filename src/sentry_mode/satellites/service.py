@@ -17,6 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
+from sentry_mode.satellites import platforms
 from sentry_mode.satellites.config import SatellitesConfig
 from sentry_mode.satellites.health import HealthBoard
 from sentry_mode.satellites.identity import (
@@ -689,6 +690,13 @@ class SatelliteService:
         session = self.sessions.current(node_id)
         if session is None:
             raise BlockingIOError(f"{node_id} is offline; it can be configured once it is back")
+        # What this kind of machine can be asked for at all. The node checks everything
+        # again and has the last word; this is here so that a camera sent to a
+        # microcontroller is an error on the page rather than a round trip that can only
+        # come back `failed`.
+        wrong = platforms.check_configuration(platforms.platform(record.platform), sources)
+        if wrong:
+            raise ValueError("; ".join(wrong))
         now = time.time()
         with self._lock:
             pending = self._configurations.get(node_id)
@@ -862,6 +870,7 @@ class SatelliteService:
                     "status": record.status,
                     "zone": record.zone,
                     "profile": record.profile,
+                    "platform": record.platform,
                     "freshness": self.sessions.freshness(record.node_id).value,
                     "session": sessions["nodes"].get(record.node_id),
                     "health": self.health.of(record.node_id),
