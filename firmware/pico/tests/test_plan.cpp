@@ -290,6 +290,68 @@ TEST(an_event_kind_that_is_not_one_is_refused) {
   CHECK(attempt.why == Unplanned::kWrongType);
 }
 
+TEST(a_light_sensor_is_a_pin_with_a_converter_behind_it) {
+  Source source = a_source("light-1", "adc");
+  with_integer(source, "pin", 26);
+  with_text(source, "output", "volts");
+  with_integer(source, "interval_seconds", 5);
+  with_text(source, "event_kind", "light.level");
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(plan, &source, 1));
+  CHECK(plan.at(0).driver == Driver::kAdc);
+  CHECK(plan.at(0).adc.pin == 26);
+  CHECK(plan.at(0).adc.volts);
+  CHECK(plan.at(0).adc.interval_ms == 5000);
+  CHECK(std::strcmp(plan.at(0).adc.event_kind, "light.level") == 0);
+  CHECK(std::strcmp(plan.holder(26), "light-1") == 0);
+}
+
+TEST(a_pin_with_no_converter_behind_it_is_refused_as_that_and_not_as_a_missing_pin) {
+  // GPIO 15 is a pin on this board and a perfectly good one; it just has no converter on
+  // it. Saying "not a pin" would send somebody looking at the wrong thing.
+  Source source = a_source("light-1", "adc");
+  with_integer(source, "pin", 15);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &source, 1));
+  CHECK(attempt.why == Unplanned::kOutOfRange);
+  CHECK(attempt.said("converter"));
+}
+
+TEST(an_adc_source_written_for_the_other_satellite_is_refused_by_name) {
+  // The Linux agent reads its analogue values through an ADS1115 on an I2C bus. This chip
+  // has its own converter and no bus: the channel that configuration means is not a
+  // channel here, and taking the rest of it would start something else entirely.
+  Source source = a_source("light-1", "adc");
+  with_integer(source, "pin", 26);
+  with_text(source, "chip", "ads1115");
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &source, 1));
+  CHECK(attempt.why == Unplanned::kNoSuchOption);
+  CHECK(attempt.said("chip"));
+}
+
+TEST(a_converter_and_a_wire_may_not_be_the_same_pin) {
+  Source sources[2];
+  sources[0] = a_source("light-1", "adc");
+  with_integer(sources[0], "pin", 27);
+  sources[1] = a_source("door-1", "gpio");
+  with_integer(sources[1], "pin", 27);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, sources, 2));
+  CHECK(attempt.why == Unplanned::kPinRefused);
+  CHECK(attempt.said("door-1"));
+  CHECK(attempt.said("light-1"));
+  CHECK(plan.size() == 0);
+}
+
 TEST(a_plan_that_is_adopted_owns_its_own_pins) {
   // The device judges a configuration on one plan and runs it on another. What the running
   // plan says about a pin has to survive the next configuration being judged, or a node

@@ -67,12 +67,64 @@ bool any_number(const Option& option, double& out) {
 const char* kBoardOptions[] = {"measure", "interval_seconds"};
 const char* kGpioOptions[] = {"pin",          "active_high",    "bias",
                               "debounce_ms",  "settle_seconds", "event_kind"};
+const char* kAdcOptions[] = {"pin", "output", "event_kind", "interval_seconds"};
 
 bool known_option(const char* name, const char* const* known, size_t count) {
   for (size_t index = 0; index < count; ++index) {
     if (std::strcmp(name, known[index]) == 0) return true;
   }
   return false;
+}
+
+// How often a periodic source is read. Two drivers take it and it means the same thing in
+// both: a reading taken every so often, whether the sensor is on the die or on a pin.
+bool interval_of(const Source& source, const char* id, uint32_t& out, Unplanned& why,
+                 char* detail, size_t capacity) {
+  out = kDefaultBoardSeconds * 1000;
+  const Option* interval = option_named(source, "interval_seconds");
+  if (interval == nullptr) return true;
+  int64_t seconds = 0;
+  if (!whole_number(*interval, seconds)) {
+    why = Unplanned::kWrongType;
+    say(detail, capacity, "%s: interval_seconds is a whole number of seconds", id);
+    return false;
+  }
+  if (seconds < static_cast<int64_t>(kMinBoardSeconds) ||
+      seconds > static_cast<int64_t>(kMaxBoardSeconds)) {
+    why = Unplanned::kOutOfRange;
+    say(detail, capacity, "%s: interval_seconds is between %u and %u", id,
+        static_cast<unsigned>(kMinBoardSeconds), static_cast<unsigned>(kMaxBoardSeconds));
+    return false;
+  }
+  out = static_cast<uint32_t>(seconds) * 1000u;
+  return true;
+}
+
+// What a source calls what it publishes, checked as a kind and copied where it belongs.
+bool event_kind_of(const Source& source, const char* id, char* out, size_t capacity,
+                   Unplanned& why, char* detail, size_t detail_capacity) {
+  const Option* kind = option_named(source, "event_kind");
+  if (kind == nullptr) return true;
+  if (kind->type != Option::Type::kString || !is_kind(kind->text)) {
+    why = Unplanned::kWrongType;
+    say(detail, detail_capacity, "%s: event_kind is a family and a name, like sensor.contact",
+        id);
+    return false;
+  }
+  if (!copy_into(out, capacity, kind->text)) {
+    why = Unplanned::kOutOfRange;
+    say(detail, detail_capacity, "%s: that event_kind is longer than this node can carry", id);
+    return false;
+  }
+  return true;
+}
+
+// The one pin a source is on, or none. Two drivers here take a pin and the map does not
+// care which: what it is protecting is the wire.
+int pin_of(const Planned& planned) {
+  if (planned.driver == Driver::kGpio) return planned.gpio.pin;
+  if (planned.driver == Driver::kAdc) return planned.adc.pin;
+  return -1;
 }
 
 }  // namespace
@@ -83,6 +135,8 @@ const char* name_of(Driver driver) {
       return "board";
     case Driver::kGpio:
       return "gpio";
+    case Driver::kAdc:
+      return "adc";
     case Driver::kNone:
       break;
   }
@@ -108,11 +162,12 @@ Plan& Plan::operator=(const Plan& other) {
   for (size_t index = 0; index < kMaxPlanned; ++index) planned_[index] = other.planned_[index];
   pins_.clear();
   for (size_t index = 0; index < count_; ++index) {
-    if (planned_[index].driver != Driver::kGpio) continue;
+    const int pin = pin_of(planned_[index]);
+    if (pin < 0) continue;
     PinRefusal refusal = PinRefusal::kNone;
     // It was agreed to once, on the same board, so this cannot refuse; if it somehow did,
     // the plan would be running a pin its own map does not know about, so it is dropped.
-    if (!pins_.claim(planned_[index].gpio.pin, planned_[index].source_id, refusal)) {
+    if (!pins_.claim(pin, planned_[index].source_id, refusal)) {
       count_ = index;
       break;
     }
@@ -149,6 +204,7 @@ const char* name_of(Unplanned why) {
 Driver driver_of(const char* kind) {
   if (std::strcmp(kind, "board") == 0) return Driver::kBoard;
   if (std::strcmp(kind, "gpio") == 0) return Driver::kGpio;
+  if (std::strcmp(kind, "adc") == 0) return Driver::kAdc;
   return Driver::kNone;
 }
 
@@ -203,10 +259,15 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
       return false;
     }
 
-    const char* const* known = planned.driver == Driver::kBoard ? kBoardOptions : kGpioOptions;
-    const size_t how_many = planned.driver == Driver::kBoard
-                                ? sizeof(kBoardOptions) / sizeof(kBoardOptions[0])
-                                : sizeof(kGpioOptions) / sizeof(kGpioOptions[0]);
+    const char* const* known = kGpioOptions;
+    size_t how_many = sizeof(kGpioOptions) / sizeof(kGpioOptions[0]);
+    if (planned.driver == Driver::kBoard) {
+      known = kBoardOptions;
+      how_many = sizeof(kBoardOptions) / sizeof(kBoardOptions[0]);
+    } else if (planned.driver == Driver::kAdc) {
+      known = kAdcOptions;
+      how_many = sizeof(kAdcOptions) / sizeof(kAdcOptions[0]);
+    }
     for (size_t at = 0; at < source.option_count; ++at) {
       if (!known_option(source.options[at].name, known, how_many)) {
         why = Unplanned::kNoSuchOption;
@@ -235,26 +296,81 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
           return false;
         }
       }
-      planned.board.interval_ms = kDefaultBoardSeconds * 1000;
-      const Option* interval = option_named(source, "interval_seconds");
-      if (interval != nullptr) {
-        int64_t seconds = 0;
-        if (!whole_number(*interval, seconds)) {
+      if (!interval_of(source, source.id, planned.board.interval_ms, why, detail, capacity)) {
+        clear();
+        return false;
+      }
+      ++count_;
+      continue;
+    }
+
+    // adc, which is a pin with a converter behind it and a number that is not lux.
+    if (planned.driver == Driver::kAdc) {
+      copy_into(planned.adc.event_kind, sizeof(planned.adc.event_kind), "light.level");
+      const Option* pin = option_named(source, "pin");
+      if (pin == nullptr) {
+        why = Unplanned::kMissingOption;
+        say(detail, capacity, "%s: an adc source is a pin, and this one names none", source.id);
+        clear();
+        return false;
+      }
+      int64_t number = 0;
+      if (!whole_number(*pin, number)) {
+        why = Unplanned::kWrongType;
+        say(detail, capacity, "%s: pin is a GPIO number", source.id);
+        clear();
+        return false;
+      }
+      if (number < kFirstAdcPin || number > kLastAdcPin) {
+        // Refused here rather than by the pin map: GPIO 15 is a pin on this board, it just
+        // has no converter on it, and "not a pin" would send somebody looking at the wrong
+        // thing.
+        why = Unplanned::kOutOfRange;
+        say(detail, capacity, "%s: the converter is on GPIO %d to %d, not on GPIO %lld",
+            source.id, kFirstAdcPin, kLastAdcPin, static_cast<long long>(number));
+        clear();
+        return false;
+      }
+      planned.adc.pin = static_cast<int>(number);
+
+      const Option* output = option_named(source, "output");
+      if (output != nullptr) {
+        if (output->type != Option::Type::kString) {
           why = Unplanned::kWrongType;
-          say(detail, capacity, "%s: interval_seconds is a whole number of seconds",
-              source.id);
+          say(detail, capacity, "%s: output is ratio or volts", source.id);
           clear();
           return false;
         }
-        if (seconds < static_cast<int64_t>(kMinBoardSeconds) ||
-            seconds > static_cast<int64_t>(kMaxBoardSeconds)) {
+        if (std::strcmp(output->text, "volts") == 0) {
+          planned.adc.volts = true;
+        } else if (std::strcmp(output->text, "ratio") != 0) {
           why = Unplanned::kOutOfRange;
-          say(detail, capacity, "%s: interval_seconds is between %u and %u", source.id,
-              static_cast<unsigned>(kMinBoardSeconds), static_cast<unsigned>(kMaxBoardSeconds));
+          say(detail, capacity, "%s: output is ratio or volts, not %s", source.id,
+              output->text);
           clear();
           return false;
         }
-        planned.board.interval_ms = static_cast<uint32_t>(seconds) * 1000u;
+      }
+
+      if (!interval_of(source, source.id, planned.adc.interval_ms, why, detail, capacity) ||
+          !event_kind_of(source, source.id, planned.adc.event_kind,
+                         sizeof(planned.adc.event_kind), why, detail, capacity)) {
+        clear();
+        return false;
+      }
+
+      PinRefusal refusal = PinRefusal::kNone;
+      if (!pins_.claim(planned.adc.pin, planned.source_id, refusal)) {
+        why = Unplanned::kPinRefused;
+        if (refusal == PinRefusal::kTaken) {
+          say(detail, capacity, "%s and %s both use GPIO %d", source.id,
+              pins_.holder(planned.adc.pin), planned.adc.pin);
+        } else {
+          say(detail, capacity, "%s: GPIO %d belongs to the board itself", source.id,
+              planned.adc.pin);
+        }
+        clear();
+        return false;
       }
       ++count_;
       continue;
@@ -351,22 +467,10 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
       input.settle_ms = static_cast<uint32_t>(seconds * 1000.0);
     }
 
-    const Option* kind = option_named(source, "event_kind");
-    if (kind != nullptr) {
-      if (kind->type != Option::Type::kString || !is_kind(kind->text)) {
-        why = Unplanned::kWrongType;
-        say(detail, capacity, "%s: event_kind is a family and a name, like sensor.contact",
-            source.id);
-        clear();
-        return false;
-      }
-      if (!copy_into(planned.gpio.event_kind, sizeof(planned.gpio.event_kind), kind->text)) {
-        why = Unplanned::kOutOfRange;
-        say(detail, capacity, "%s: that event_kind is longer than this node can carry",
-            source.id);
-        clear();
-        return false;
-      }
+    if (!event_kind_of(source, source.id, planned.gpio.event_kind,
+                       sizeof(planned.gpio.event_kind), why, detail, capacity)) {
+      clear();
+      return false;
     }
 
     planned.gpio.input = input;

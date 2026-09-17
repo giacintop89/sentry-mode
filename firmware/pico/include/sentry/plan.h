@@ -30,7 +30,7 @@ namespace sentry {
 
 // Every driver this firmware has. A configuration naming anything else — a camera, a
 // microphone, a bus this build has no code for — is refused rather than ignored.
-enum class Driver { kNone, kBoard, kGpio };
+enum class Driver { kNone, kBoard, kGpio, kAdc };
 
 // What holds a pin when nothing else is driving it. A contact wired to ground needs a pull
 // up or it reads whatever the air says; a PIR drives its own line and needs neither.
@@ -55,6 +55,20 @@ struct BoardSource {
   uint32_t interval_ms = kDefaultBoardSeconds * 1000;
 };
 
+// The pins with a converter behind them on these boards. GPIO 29 measures the supply on a
+// W board and is the radio's business, so it is not one of these.
+inline constexpr int kFirstAdcPin = 26;
+inline constexpr int kLastAdcPin = 28;
+
+struct AdcSource {
+  int pin = -1;
+  // What the number is. A fraction of full scale is a relative figure and is labelled as
+  // one; volts are volts. Neither is lux, and nothing here may be published as lux.
+  bool volts = false;
+  uint32_t interval_ms = kDefaultBoardSeconds * 1000;
+  char event_kind[kMaxKindText] = {};
+};
+
 struct GpioSource {
   int pin = -1;
   Bias bias = Bias::kNone;
@@ -68,6 +82,7 @@ struct Planned {
   bool enabled = true;
   BoardSource board;
   GpioSource gpio;
+  AdcSource adc;
 };
 
 // Why a configuration was not taken up. Every one of these is said out loud with the name

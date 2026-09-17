@@ -430,6 +430,24 @@ says `unknown` because the PIR was given two seconds to settle and had not: wher
 stands, said out loud, with an admission that it is not yet worth acting on. The hub agrees
 with both halves of that — it recorded it and marked it ineligible.
 
+The third driver is the converter the chip already has. An `adc` source is a pin between
+GPIO 26 and 28 read every so often, as a fraction of full scale or as volts, and it is
+labelled for what it is: `ratio` is a relative figure and `volts` are volts, and neither is
+lux — nothing here has been calibrated against a light meter. A pin outside that range is
+refused as what it is, a pin with no converter behind it, rather than as a pin that does
+not exist; and a configuration written for the other satellite, which reads its analogue
+values through an ADS1115 on an I²C bus, is refused by the name of the option that gives it
+away:
+
+```
+light-1: the converter is on GPIO 26 to 28, not on GPIO 15
+light-1: an adc source has no chip
+```
+
+The first of those came back to the hub as the `detail` of a `failed` ack while the node
+went on running the three sources it already had, which is the whole-or-nothing rule seen
+from the other end.
+
 One thing that run found was not the firmware's. The hub acknowledges the messages it
 receives by hand, and only the events path was acknowledging them: state, health and acks
 were read, acted on, and left unsettled. The broker holds an unacknowledged QoS 1 message
@@ -488,9 +506,9 @@ fails here, in a second, rather than at link time on a target with neither.
   two answers is, what happens when the network goes away mid-interval, and whether a node
   that has lost its clock should go back to `unsynced` rather than keep stamping readings
   from a counter nobody has checked.
-- Every driver but two. `board` and `gpio` are real and run on a board; `onewire`, `adc`
-  and I²C are named in the hub's catalogue for this platform and are not here, so a
-  configuration asking for one is refused by name. Camera and microphone commands are
+- Every driver but three. `board`, `gpio` and `adc` are real and run on a board;
+  `onewire` is named in the hub's catalogue for this platform and is not here, so a
+  configuration asking for it is refused by name. Camera and microphone commands are
   refused the same way, and will stay refused: this board has neither.
 - How long a reading waited. Every event goes out with `queued_ms: 0`, because the queue
   does not record when something was put in it. A reading that waited forty seconds says
@@ -506,7 +524,11 @@ fails here, in a second, rather than at link time on a target with neither.
   has been exercised on the hardware — but by the board driving its own pad, not by a PIR
   or a reed switch. What a real sensor does that a driven pin does not — the settling after
   power, the pulse a PIR holds, the bounce of a contact — has not been watched yet.
-- 1-Wire, I²C and the ADC. `sensors.cpp` decides what a scratchpad, an ADC count or the
-  85 °C a DS18B20 holds after a reset means, and none of it has a bus under it: nothing
-  here has waited on a 1-Wire line or started a conversion. BME280, with its identification
-  and its calibration coefficients, is not here at all.
+- 1-Wire and I²C. `sensors.cpp` decides what a scratchpad and the 85 °C a DS18B20 holds
+  after a reset mean, and neither has a bus under it: nothing here has waited on a 1-Wire
+  line or started a conversion. BME280, with its identification and its calibration
+  coefficients, is not here at all.
+- Anything that says a converter has something on it. A floating ADC pin reads noise that
+  looks exactly like a measurement, and `sensors.cpp` only refuses a count the converter
+  could not have produced. The readings above are that noise, honestly labelled and
+  honestly meaningless.

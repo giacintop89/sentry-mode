@@ -318,6 +318,40 @@ void take_a_board_reading(const sentry::Planned& source, Live& state, bool initi
                     initial ? sentry::Kept::kTransition : sentry::Kept::kPeriodic);
 }
 
+// One reading from a pin with a converter behind it. What it is worth is decided in
+// `sensors.cpp`: a count the converter could not have produced is not a measurement, and a
+// fraction of full scale is labelled as a fraction and never as lux.
+void take_an_adc_reading(const sentry::Planned& source, Live& state, bool initial) {
+  adc_select_input(static_cast<uint>(source.adc.pin - sentry::kFirstAdcPin));
+  const uint16_t raw = adc_read();
+  const sentry::Measured measured =
+      source.adc.volts ? sentry::adc_volts(raw) : sentry::relative_brightness(raw);
+
+  uint64_t moment = 0;
+  char stamped[32] = {};
+  char event_id[sentry::kUuidText] = {};
+  if (!moment_of(moment, stamped, sizeof(stamped), event_id)) return;
+
+  sentry::Reading reading;
+  reading.event_id = event_id;
+  reading.node_id = node_id;
+  reading.source_id = source.source_id;
+  reading.boot_id = boot_id;
+  reading.sequence = sequence++;
+  reading.kind = source.adc.event_kind;
+  reading.occurred_at = stamped;
+  reading.clock = clock_.status_at(moment);
+  reading.quality = measured.quality;
+  reading.unit = source.adc.volts ? "V" : "ratio";
+  if (measured.has_value) {
+    reading.value = sentry::Value::of(measured.value, source.adc.volts ? 3 : 4);
+  }
+  ++state.readings;
+
+  offer_the_reading(reading, initial,
+                    initial ? sentry::Kept::kTransition : sentry::Kept::kPeriodic);
+}
+
 // What a wire came to mean. The level is read here and judged in `input.cpp`, which is
 // where the settling, the debounce and the polarity live — and which has never seen a pin.
 void take_a_gpio_reading(const sentry::Planned& source, Live& state, sentry::Report report,
@@ -365,6 +399,12 @@ void read_the_sources() {
       if (static_cast<int32_t>(static_cast<uint32_t>(now_ms) - state.due_ms) < 0) continue;
       state.due_ms = static_cast<uint32_t>(now_ms) + source.board.interval_ms;
       take_a_board_reading(source, state, false);
+      continue;
+    }
+    if (source.driver == sentry::Driver::kAdc) {
+      if (static_cast<int32_t>(static_cast<uint32_t>(now_ms) - state.due_ms) < 0) continue;
+      state.due_ms = static_cast<uint32_t>(now_ms) + source.adc.interval_ms;
+      take_an_adc_reading(source, state, false);
     }
   }
 }
@@ -379,6 +419,9 @@ void take_every_baseline() {
     if (source.driver == sentry::Driver::kBoard) {
       take_a_board_reading(source, state, true);
       state.due_ms = static_cast<uint32_t>(now_ms) + source.board.interval_ms;
+    } else if (source.driver == sentry::Driver::kAdc) {
+      take_an_adc_reading(source, state, true);
+      state.due_ms = static_cast<uint32_t>(now_ms) + source.adc.interval_ms;
     } else if (source.driver == sentry::Driver::kGpio) {
       // Rearmed rather than read: the next sample is the baseline, and a PIR that has not
       // settled yet will say so instead of pretending the room is empty.
@@ -403,6 +446,10 @@ void start_the_plan() {
                      source.gpio.bias == sentry::Bias::kPullDown);
       state.input.configure(source.gpio.input);
       state.input.rearm(now_ms);
+    } else if (source.driver == sentry::Driver::kAdc) {
+      // The pad is given to the converter: no pulls, no digital input, nothing driving it.
+      adc_gpio_init(static_cast<uint>(source.adc.pin));
+      state.due_ms = static_cast<uint32_t>(now_ms);
     } else if (source.driver == sentry::Driver::kBoard) {
       state.due_ms = static_cast<uint32_t>(now_ms);
     }
@@ -412,10 +459,13 @@ void start_the_plan() {
 void stop_the_plan() {
   for (size_t index = 0; index < running.size(); ++index) {
     const sentry::Planned& source = running.at(index);
-    if (source.driver != sentry::Driver::kGpio) continue;
-    const uint pin = static_cast<uint>(source.gpio.pin);
-    gpio_set_pulls(pin, false, false);
-    gpio_deinit(pin);
+    if (source.driver == sentry::Driver::kGpio) {
+      const uint pin = static_cast<uint>(source.gpio.pin);
+      gpio_set_pulls(pin, false, false);
+      gpio_deinit(pin);
+    } else if (source.driver == sentry::Driver::kAdc) {
+      gpio_deinit(static_cast<uint>(source.adc.pin));
+    }
   }
 }
 
@@ -510,6 +560,13 @@ bool write_announcement() {
       options[index][at++] = {
           "interval_seconds",
           sentry::Value::of(static_cast<double>(source.board.interval_ms) / 1000.0, 1)};
+    } else if (source.driver == sentry::Driver::kAdc) {
+      options[index][at++] = {"pin", sentry::Value::of(static_cast<int64_t>(source.adc.pin))};
+      options[index][at++] = {"output", sentry::Value::of(source.adc.volts ? "volts" : "ratio")};
+      options[index][at++] = {
+          "interval_seconds",
+          sentry::Value::of(static_cast<double>(source.adc.interval_ms) / 1000.0, 1)};
+      options[index][at++] = {"event_kind", sentry::Value::of(source.adc.event_kind)};
     } else if (source.driver == sentry::Driver::kGpio) {
       options[index][at++] = {"pin", sentry::Value::of(static_cast<int64_t>(source.gpio.pin))};
       options[index][at++] = {"active_high", sentry::Value::of(source.gpio.input.active_high)};
@@ -1014,6 +1071,11 @@ void say_the_plan() {
                   source.gpio.pin, live[index].level ? "high" : "low",
                   live[index].input.state() ? "on" : "off",
                   static_cast<long long>(live[index].readings));
+    } else if (source.driver == sentry::Driver::kAdc) {
+      std::printf("#   %s adc pin=%d output=%s every=%lus readings=%lld\n", source.source_id,
+                  source.adc.pin, source.adc.volts ? "volts" : "ratio",
+                  static_cast<unsigned long>(source.adc.interval_ms / 1000),
+                  static_cast<long long>(live[index].readings));
     } else {
       std::printf("#   %s board measure=%s every=%lus readings=%lld\n", source.source_id,
                   source.board.measure,
@@ -1165,7 +1227,7 @@ void obey(const char* line) {
   if (std::strcmp(line, "sample") == 0) {
     // Everything this node runs, now rather than when it was next due.
     for (size_t index = 0; index < running.size(); ++index) {
-      if (running.at(index).driver == sentry::Driver::kBoard) {
+      if (running.at(index).driver != sentry::Driver::kGpio) {
         live[index].due_ms = static_cast<uint32_t>(now_us() / 1000);
       }
     }
