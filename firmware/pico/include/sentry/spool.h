@@ -67,6 +67,10 @@ class Spool {
   void link_lost();
 
   size_t size() const { return count_; }
+
+  // How much memory what is waiting is taking. The entries are fixed-size, so this is a
+  // measurement and not an estimate — of the queue, not of the packets it will become.
+  size_t bytes() const { return count_ * sizeof(Entry); }
   bool empty() const { return count_ == 0; }
   const Losses& losses() const { return losses_; }
 

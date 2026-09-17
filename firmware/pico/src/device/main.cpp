@@ -63,6 +63,9 @@ namespace {
 // before it reads as anything but noise.
 constexpr uint kTemperatureInput = 4;
 constexpr uint32_t kIntervalMs = 2000;
+// The same beat the Linux agent keeps by default, and what the hub's staleness is written
+// against: a node that says nothing for three of these is a node to wonder about.
+constexpr uint32_t kHeartbeatMs = 15000;
 constexpr uint32_t kJoinPatienceMs = 20000;
 // Whoever runs the pool, rather than a vendor's own: a satellite that only ever reaches the
 // hub still has to agree with it about what time it is.
@@ -86,6 +89,7 @@ char state_topic[sentry::kMaxTopicText] = {};
 char events_topic[sentry::kMaxTopicText] = {};
 char commands_topic[sentry::kMaxTopicText] = {};
 char acks_topic[sentry::kMaxTopicText] = {};
+char health_topic[sentry::kMaxTopicText] = {};
 char goodbye[sentry::kMaxWillBytes] = {};
 size_t goodbye_size = 0;
 sentry::mqtt::Will will;
@@ -118,10 +122,18 @@ uint32_t acks_lost = 0;
 char outgoing[sentry::kMaxEventBytes] = {};
 size_t outgoing_size = 0;
 // What is in that buffer, which decides where it goes and whether the broker keeps it.
-enum class Saying { kNothing, kAnnouncement, kAck, kEvent, kFarewell };
+enum class Saying { kNothing, kAnnouncement, kAck, kEvent, kHealth, kFarewell };
 Saying saying = Saying::kNothing;
 // The hub said stop. What is owed is said first, and then this node goes quiet.
 bool stopping = false;
+// What the health message counts, which nothing else on this board does: readings the
+// broker has acknowledged, and when the last report went out.
+uint32_t published_events = 0;
+uint32_t health_due_ms = 0;
+// The last temperature this board measured, for the health message to report as the
+// board's own rather than as a reading nobody asked for.
+bool has_last_temperature = false;
+double last_temperature = 0.0;
 
 // Bytes that have arrived and are not yet a whole packet.
 uint8_t incoming[sentry::mqtt::kMaxPacketBytes * 2] = {};
@@ -190,6 +202,10 @@ void led(bool on) {
 void publish_temperature(bool initial = false) {
   adc_select_input(kTemperatureInput);
   const sentry::Measured measured = sentry::board_temperature(adc_read());
+  if (measured.has_value) {
+    has_last_temperature = true;
+    last_temperature = measured.value;
+  }
 
   const uint64_t moment = now_us();
   int64_t unix_ms = 0;
@@ -290,7 +306,9 @@ bool prepare_the_connection() {
       !sentry::topic(sentry::kTopicPrefix, node_id, sentry::Channel::kCommands, commands_topic,
                      sizeof(commands_topic)) ||
       !sentry::topic(sentry::kTopicPrefix, node_id, sentry::Channel::kAcks, acks_topic,
-                     sizeof(acks_topic))) {
+                     sizeof(acks_topic)) ||
+      !sentry::topic(sentry::kTopicPrefix, node_id, sentry::Channel::kHealth, health_topic,
+                     sizeof(health_topic))) {
     return false;
   }
   const size_t size = sentry::write_goodbye(node_id, boot_id, connection_id,
@@ -352,6 +370,47 @@ bool write_the_farewell() {
   return true;
 }
 
+// How this node is doing, which is not a reading and does not wait for a grant: a hub
+// that has granted nothing still needs to know the node is there and what its queue is
+// doing. Anything this board cannot measure is left out rather than sent as a zero.
+bool write_a_health_report() {
+  const uint64_t moment = now_us();
+  const sentry::Losses losses = spool.losses();
+
+  sentry::SourceHealth source;
+  source.source_id = "board-temperature";
+  source.readings = sequence;
+  source.driver = "running";
+
+  sentry::Health health;
+  health.node_id = node_id;
+  health.boot_id = boot_id;
+  health.uptime_seconds = static_cast<double>(moment) / 1000000.0;
+  health.clock = clock_.status_at(moment);
+  health.queue.events = static_cast<int64_t>(spool.size());
+  health.queue.bytes = static_cast<int64_t>(spool.bytes());
+  health.queue.published = published_events;
+  health.queue.refused = losses.refused;
+  // A periodic reading replaced by a newer one from the same source is a reading nobody
+  // will ever see, which is what a drop is. The contract has no separate word for it, and
+  // leaving it out would show a node losing nothing while it quietly lost twenty.
+  health.queue.drops_count = losses.dropped_transitions + losses.coalesced;
+  health.queue.drops_bytes = 0;  // this queue is bounded by events, not by bytes
+  health.queue.drops_age = 0;    // and nothing in it is dropped for being old
+  health.queue.drops_total = health.queue.drops_count;
+  health.queue.granted = lease.live(moment / 1000);
+  health.board.has_uptime = true;
+  health.board.uptime_seconds = health.uptime_seconds;
+  health.board.has_temperature = has_last_temperature;
+  health.board.temperature_c = last_temperature;
+  health.sources = &source;
+  health.source_count = 1;
+
+  outgoing_size = sentry::write_health(health, outgoing, sizeof(outgoing));
+  saying = Saying::kHealth;
+  return outgoing_size > 0;
+}
+
 // The oldest reading still waiting, written once and kept until the broker acknowledges
 // it: a retransmission is the same bytes and the same event id, not a second reading.
 bool write_the_front_of_the_queue() {
@@ -380,6 +439,8 @@ const char* where_it_goes(Saying what) {
       return state_topic;
     case Saying::kAck:
       return acks_topic;
+    case Saying::kHealth:
+      return health_topic;
     case Saying::kEvent:
     case Saying::kNothing:
       break;
@@ -406,6 +467,9 @@ void start_a_connection() {
     return;
   }
   client_told = false;
+  // The first thing after the announcement, rather than fifteen seconds of nothing: a hub
+  // that has just seen a node appear is the hub most in need of knowing how it is.
+  health_due_ms = monotonic_ms();
   std::printf("# connecting to %s:%u\n", provisioning.mqtt_host,
               static_cast<unsigned>(provisioning.mqtt_port));
 }
@@ -578,7 +642,10 @@ void serve_the_broker() {
       case sentry::mqtt::Effect::kDelivered:
         // The broker has it. Only now does whatever was waiting let go of it.
         if (saying == Saying::kAck) forget_the_first_ack();
-        if (saying == Saying::kEvent) spool.accepted();
+        if (saying == Saying::kEvent) {
+          spool.accepted();
+          ++published_events;
+        }
         outgoing_size = 0;
         if (saying == Saying::kFarewell) {
           // The hub has the last word this node had to say. What follows is a DISCONNECT,
@@ -609,6 +676,12 @@ void serve_the_broker() {
         // Nothing after the farewell, whatever the lease still says: a node that was told
         // to stop and went on reporting would be a node that was not told.
         if (!broker.leaving()) write_the_farewell();
+      } else if (static_cast<int32_t>(now - health_due_ms) >= 0) {
+        health_due_ms = now + kHeartbeatMs;
+        if (!write_a_health_report()) {
+          saying = Saying::kNothing;
+          std::printf("# this node could not write a health message about itself\n");
+        }
       } else if (lease.live(now_us() / 1000)) {
         write_the_front_of_the_queue();
       }

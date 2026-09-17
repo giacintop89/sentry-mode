@@ -298,6 +298,27 @@ revocation carries the epoch and the grant id it was published under. That is `T
 `T12` for what a node can show of them; the hub's own half of `T12` — an old will not
 ending a new session — is the hub's to prove.
 
+Beside all of that, every fifteen seconds and whether or not anything has been granted,
+the node says how it is:
+
+```json
+{"schema_version":1,"node_id":"pico-ingresso","boot_id":"22328041-…",
+ "agent_uptime_seconds":65.1,"clock_status":"synced",
+ "queue":{"events":16,"bytes":5504,"published":0,"refused":0,
+          "drops":{"count":8,"bytes":0,"age":0,"total":8},"granted":false},
+ "sources":{"board-temperature":{"readings":24,"driver":"running"}},
+ "board":{"uptime_seconds":65.1,"temperature_c":36.9}}
+```
+
+That is a board nobody has granted anything: sixteen readings waiting, eight already lost
+to make room for newer ones from the same source, and nothing published. A reading
+replaced by a newer one is counted as a drop rather than left out, because the contract has
+no separate word for it and a queue that showed no losses while it quietly lost eight would
+be worse than one that reports them under the nearest true name. What the board cannot
+measure it leaves out: there is no free-heap figure, because nothing here allocates.
+Both of the messages above were handed to the hub's Pydantic model and to the published
+schema, which took them.
+
 Two of those lines were not there the first time. `stop` used to be the node closing the
 socket, and the broker did what a broker does when a client vanishes: it published the
 will, so the hub saw the node go offline twice, once because it was told to stop and once
@@ -359,9 +380,6 @@ fails here, in a second, rather than at link time on a target with neither.
   does not record when something was put in it. A reading that waited forty seconds says
   so only through its own `occurred_at`, which is the honest field but not the one the
   hub uses to notice a node that is falling behind.
-- Health, and saying what was given up. `spool.cpp` counts what it coalesced and dropped
-  and `status` prints it, but nothing publishes a `health` message, so the hub sees a node
-  that is online and nothing about how it is doing.
 - The rest of the failure cases of the handshake. A wrong authority has been watched, and
   refused; a certificate issued for another name, an expired one and a revoked one have
   not, so the rest of `T06` and all of `T07` are **not executed**.
