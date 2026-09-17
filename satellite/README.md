@@ -15,10 +15,14 @@ On Raspberry Pi OS the two libraries come from the distribution, not from pip:
 A board with a camera also needs `rpicam-apps-core` (the encoder is `rpicam-vid`; nothing
 else is installed for video, and nothing is re-encoded in software). A board with a
 microphone needs `alsa-utils` (`arecord`); sound is sent as raw PCM, with no codec.
+A board that watches for a device over Bluetooth needs BlueZ running — it is already on
+Raspberry Pi OS — and its adapter unblocked (`rfkill list bluetooth`); nothing is
+installed for it, because the agent talks to `bluetoothd` over D-Bus itself.
 
 Sensors need their buses switched on in `/boot/firmware/config.txt` (`dtoverlay=w1-gpio`
 for a DS18B20, `dtparam=i2c_arm=on` for a BME280 or an ADS1115) and the service user in
-the `gpio`, `i2c`, `audio` and `video` groups, which the unit in `systemd/` sets. The sources the hub has
+the `gpio`, `i2c`, `audio`, `video` and `bluetooth` groups, which the unit in `systemd/`
+sets. The sources the hub has
 sent are kept in `/var/lib/sentry-satellite` (`--state-dir`); the file under `/etc` is
 never rewritten. See [satellites](../docs/satellites.md#sensors) for the options of each
 kind.

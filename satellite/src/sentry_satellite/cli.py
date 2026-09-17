@@ -97,6 +97,8 @@ def doctor(arguments) -> int:
             note(name, value)
         for name, value in _microphones(config):
             note(name, value)
+        for name, value in _adapters(config):
+            note(name, value)
         try:
             tls_context(config.tls.ca_file, config.tls.cert_file, config.tls.key_file)
             note("tls", "certificate, key and CA are a usable set")
@@ -174,6 +176,46 @@ def _microphones(config: configuration.Config) -> list[tuple[str, str]]:
     if not cards:
         return [("microphone", "no capture device (is the overlay set, and the audio group?)")]
     return [("microphone", line.partition(": ")[2] or line) for line in cards]
+
+
+def _adapters(config: configuration.Config) -> list[tuple[str, str]]:
+    """Whether each adapter a source wants exists and is not blocked.
+
+    Read from `/sys`, not from the bus: a board whose `bluetoothd` is down should hear
+    about the adapter it does have, and a doctor that needs a service running cannot say
+    why the service is not running.
+    """
+    wanted = sorted({s.options["adapter"] for s in config.sources if s.kind == "ble" and s.enabled})
+    found = []
+    for adapter in wanted:
+        if not os.path.exists(f"/sys/class/bluetooth/{adapter}"):
+            found.append((adapter, "not found (is this board's Bluetooth enabled?)"))
+            continue
+        blocks = [
+            name
+            for name in ("soft", "hard")
+            if any(
+                _blocked(entry, name)
+                for entry in Path("/sys/class/rfkill").glob("rfkill*")
+                if _reads(entry / "type") == "bluetooth"
+            )
+        ]
+        if blocks:
+            found.append((adapter, f"{' and '.join(blocks)} blocked (rfkill unblock bluetooth)"))
+        else:
+            found.append((adapter, "present (bluetoothd and the bluetooth group are needed too)"))
+    return found
+
+
+def _reads(path: Path) -> str:
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return ""
+
+
+def _blocked(entry: Path, kind: str) -> bool:
+    return _reads(entry / kind) == "1"
 
 
 def _cameras(config: configuration.Config) -> list[tuple[str, str]]:

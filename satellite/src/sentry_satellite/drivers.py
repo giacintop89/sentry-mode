@@ -15,6 +15,8 @@ from threading import Lock
 from sentry_satellite.audio.source import AlsaMicrophone
 from sentry_satellite.camera.source import CsiCamera
 from sentry_satellite.config import Config, Source
+from sentry_satellite.presence.bluez import BluezScanner
+from sentry_satellite.presence.service import BlePresence
 from sentry_satellite.sensors import Driver
 from sentry_satellite.sensors import gpio as gpio_lines
 from sentry_satellite.sensors.adc import Ads1115
@@ -25,12 +27,11 @@ from sentry_satellite.sensors.i2c import Bus, Device
 from sentry_satellite.sensors.onewire import Ds18b20
 from sentry_satellite.sensors.periodic import Periodic
 
-SUPPORTED = ("gpio", "onewire", "bme280", "adc", "csi", "microphone", "dummy")
+SUPPORTED = ("gpio", "onewire", "bme280", "adc", "csi", "microphone", "ble", "dummy")
 """Kinds this version of the agent can drive. Remote configuration is limited to these."""
 
 PENDING = {
     "uvc": "a later increment, once a USB camera is qualified on the Zero W",
-    "ble": "PR-12",
 }
 
 
@@ -49,8 +50,11 @@ class Hardware:
     recorder: str | None = None
     """The capture program, likewise."""
     consumer: str = "sentry-satellite"
+    open_scanner: Callable[[str], BluezScanner] = BluezScanner
+    """One Bluetooth scanner per adapter, shared by the sources that use it."""
     _buses: dict[tuple[int, int], Bus] = field(default_factory=dict)
     _parts: dict[tuple[int, int], Bme280] = field(default_factory=dict)
+    _scanners: dict[str, BluezScanner] = field(default_factory=dict)
 
     def bus(self, number: int, address: int) -> Bus:
         key = (number, address)
@@ -65,7 +69,15 @@ class Hardware:
             self._parts[key] = Bme280(bus, lock=getattr(bus, "lock", None) or Lock())
         return self._parts[key]
 
+    def scanner(self, adapter: str) -> BluezScanner:
+        if adapter not in self._scanners:
+            self._scanners[adapter] = self.open_scanner(adapter)
+        return self._scanners[adapter]
+
     def close(self) -> None:
+        for scanner in self._scanners.values():
+            scanner.stop()
+        self._scanners.clear()
         for bus in self._buses.values():
             bus.close()
         self._buses.clear()
@@ -79,6 +91,8 @@ def build_one(source: Source, hardware: Hardware | None = None) -> Driver:
         return CsiCamera(source.id, options, program=hardware.encoder)
     if source.kind == "microphone":
         return AlsaMicrophone(source.id, options, program=hardware.recorder)
+    if source.kind == "ble":
+        return BlePresence(source.id, options, scanner=hardware.scanner(options["adapter"]))
     if source.kind == "dummy":
         return Motion(source.id, interval=float(options.get("interval_seconds", 1.0)))
     if source.kind == "gpio":

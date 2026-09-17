@@ -35,6 +35,7 @@ from sentry_mode.sentry.config import (
     AudioAction,
     AudioEventTrigger,
     PhotoAction,
+    PresenceStateTrigger,
     Rule,
     RuleV2,
     SensorEventTrigger,
@@ -71,6 +72,7 @@ from sentry_mode.sentry.triggers import (
     RuleState,
     cooled,
     detection_matches,
+    presence_fires,
     sensor_fires,
     sound_fires,
     threshold_fires,
@@ -789,7 +791,13 @@ class Sentry:
                 return
             if event.kind in MOTION_KINDS and event.value is True and event.quality == "valid":
                 self._boost()
-            watched = (SensorEventTrigger, ThresholdTrigger, SequenceTrigger, AudioEventTrigger)
+            watched = (
+                SensorEventTrigger,
+                ThresholdTrigger,
+                SequenceTrigger,
+                AudioEventTrigger,
+                PresenceStateTrigger,
+            )
             for rule in self._watching(*watched):
                 trigger = rule.trigger
                 state = self.states[rule.id]
@@ -811,6 +819,8 @@ class Sentry:
                     for kind, message in sequence_event(trigger, state, event, zone):
                         self._event(kind, message, rule.name)
                     continue
+                elif isinstance(trigger, PresenceStateTrigger):
+                    fired = presence_fires(trigger, state, event)
                 elif isinstance(trigger, SensorEventTrigger):
                     fired = sensor_fires(trigger, event)
                 else:

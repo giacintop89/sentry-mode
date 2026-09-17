@@ -16,12 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from sentry_mode.sources.models import NAME
 
-DRIVERS = ("gpio", "onewire", "bme280", "adc", "csi", "microphone", "dummy")
+DRIVERS = ("gpio", "onewire", "bme280", "adc", "csi", "microphone", "ble", "dummy")
 """Kinds the satellite agent has a driver for. Only these can be configured remotely."""
 
 PENDING = {
     "uvc": "arrives once a USB camera is qualified on the board",
-    "ble": "arrives with presence",
 }
 
 MAX_SOURCES = 32

@@ -435,16 +435,39 @@ class AudioEventTrigger(Model):
 
 
 class PresenceStateTrigger(Model):
-    """A known device arriving or leaving. Accepted in a document; not armable yet."""
+    """A known device arriving or leaving, as one or more satellites hear it.
+
+    A device is present as soon as any observer says so. It is absent only when every
+    observer the rule names says so: one that cannot scan, or whose node is silent,
+    leaves the answer unknown, and unknown never sets a rule off. A presence is a device,
+    not a person, so nothing here disarms anything.
+    """
 
     type: Literal["presence_state"] = "presence_state"
     source_id: SourceId
     state: Literal["present", "absent"] = "present"
+    kind: str = Field(default="presence.state", pattern=EVENT_KIND)
+    observers: tuple[SourceId, ...] = ()
+    """Other sources watching the same device, from other nodes."""
 
     @field_validator("source_id")
     @classmethod
     def known_shape(cls, value):
         return source_id(value)
+
+    @field_validator("observers")
+    @classmethod
+    def known_shapes(cls, value):
+        if len(value) > 7:
+            raise ValueError("A rule may name at most eight observers of one device.")
+        return tuple(source_id(one) for one in value)
+
+    @model_validator(mode="after")
+    def distinct(self):
+        named = (self.source_id, *self.observers)
+        if len(set(named)) != len(named):
+            raise ValueError("Each observer of a device is named once.")
+        return self
 
 
 class HealthEventTrigger(Model):
@@ -519,7 +542,9 @@ Trigger = Annotated[
     Field(discriminator="type"),
 ]
 
-ARMABLE_TRIGGERS = frozenset({"vision", "sensor_event", "threshold", "sequence", "audio_event"})
+ARMABLE_TRIGGERS = frozenset(
+    {"vision", "sensor_event", "threshold", "sequence", "audio_event", "presence_state"}
+)
 
 
 def trigger_camera(trigger) -> str | None:

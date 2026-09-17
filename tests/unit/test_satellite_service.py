@@ -577,7 +577,7 @@ def test_the_page_shows_each_source_with_its_reading_and_its_trouble(service):
     declared = [
         {"source_id": "pir-1", "kind": "gpio", "options": {"line": 17}},
         {"source_id": "temp", "kind": "onewire", "options": {"device": "28-0123456789ab"}},
-        {"source_id": "tag", "kind": "ble"},
+        {"source_id": "tag", "kind": "uvc"},
     ]
     service.handle(
         message(
@@ -619,6 +619,7 @@ def test_the_page_shows_each_source_with_its_reading_and_its_trouble(service):
         "adc",
         "csi",
         "microphone",
+        "ble",
         "dummy",
     ]
     node = page["nodes"][0]

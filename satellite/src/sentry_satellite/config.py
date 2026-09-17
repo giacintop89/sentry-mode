@@ -44,6 +44,8 @@ I2C_LINES = {1: (2, 3)}
 I2S_LINES = (18, 19, 20, 21)
 CSI_SIZES = ((320, 240), (640, 480), (1280, 720))
 ALSA_DEVICE = r"^[A-Za-z0-9_][A-Za-z0-9_:=,.-]{0,63}$"
+BLE_ADDRESS = r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$"
+BEACON_UUID = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
 
 def _between(low: float, high: float) -> Any:
@@ -68,6 +70,12 @@ def _alsa_device(value: str) -> str | None:
     if re.fullmatch(ALSA_DEVICE, value):
         return None
     return "must be an ALSA device name, such as default or plughw:CARD=sndrpii2scard"
+
+
+def _pattern(pattern: str, example: str) -> Any:
+    return lambda value: (
+        None if value == "" or re.fullmatch(pattern, value) else f"must look like {example}"
+    )
 
 
 def _onewire_id(value: str) -> str | None:
@@ -130,6 +138,27 @@ OPTIONS: dict[str, dict[str, tuple]] = {
         "activity_hold_seconds": (float, 3.0, _between(0.5, 120)),
         "event_kind": (str, "audio.activity", _kind),
     },
+    # One device, by its address or its iBeacon, through BlueZ. See presence/service.py.
+    "ble": {
+        "adapter": (
+            str,
+            "hci0",
+            lambda v: (
+                None
+                if re.fullmatch(r"hci[0-9]{1,2}", v)
+                else "must be an adapter name such as hci0"
+            ),
+        ),
+        "address": (str, "", _pattern(BLE_ADDRESS, "AA:BB:CC:DD:EE:FF, in capitals")),
+        "ibeacon_uuid": (str, "", _pattern(BEACON_UUID, "a lowercase UUID")),
+        "ibeacon_major": (int, -1, _between(-1, 65535)),
+        "ibeacon_minor": (int, -1, _between(-1, 65535)),
+        "rssi_min": (int, -100, _between(-127, 0)),
+        "enter_sightings": (int, 3, _between(1, 20)),
+        "enter_window_seconds": (float, 10.0, _between(1, 120)),
+        "absent_after_seconds": (float, 120.0, _between(10, 3600)),
+        "event_kind": (str, "presence.state", _kind),
+    },
 }
 
 
@@ -173,6 +202,26 @@ def check_conflicts(sources: "list[Source]") -> None:
     for source in sources:
         options = source.options
         if not options.get("enabled", True):
+            continue
+        if source.kind == "ble":
+            if bool(options["address"]) == bool(options["ibeacon_uuid"]):
+                raise ConfigError(f"{source.id} needs exactly one of address or ibeacon_uuid")
+            if options["address"] and (
+                options["ibeacon_major"] >= 0 or options["ibeacon_minor"] >= 0
+            ):
+                raise ConfigError(f"{source.id}: ibeacon_major and minor go with ibeacon_uuid")
+            device = (
+                options["adapter"],
+                options["address"],
+                options["ibeacon_uuid"],
+                options["ibeacon_major"],
+                options["ibeacon_minor"],
+            )
+            if ("ble",) + device in parts:
+                raise ConfigError(
+                    f"{source.id} and {parts[('ble',) + device]} watch the same device"
+                )
+            parts[("ble",) + device] = source.id
             continue
         if source.kind == "csi":
             if (options["width"], options["height"]) not in CSI_SIZES:

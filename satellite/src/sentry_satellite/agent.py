@@ -369,6 +369,8 @@ class Agent:
                 entry["audio"] = None if publisher is None else publisher.status()
                 entry["capture"] = state.driver.capture.status()
                 entry["level_dbfs"] = state.driver.level_dbfs
+            if hasattr(state.driver, "presence"):
+                entry["presence"] = state.driver.presence()
             sources[source_id] = entry
         return sources
 

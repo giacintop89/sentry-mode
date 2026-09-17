@@ -27,7 +27,7 @@ fit the first version.
   characters. Renaming a rule changes `name` and leaves `id` alone. The engine's state,
   the event log and the context of every queued action are keyed by `id`.
 - `trigger` is one of the types below. Only `vision`, `sensor_event`, `threshold`,
-  `sequence` and `audio_event` can be armed today. The others can be saved, so an editor can prepare them, but arming
+  `sequence`, `audio_event` and `presence_state` can be armed today. The others can be saved, so an editor can prepare them, but arming
   refuses them and says why.
 - `photo` and `video` actions take `source_id`, the camera to use (`legacy-primary` by
   default). See [where the evidence comes from](#where-the-evidence-comes-from).
@@ -43,7 +43,7 @@ fit the first version.
 | `threshold` | a measurement stays past a limit for `for_seconds` | `source_id`, `kind`, exactly one of `above` / `below`, `hysteresis`, `for_seconds` |
 | `sequence` | a sensor event, then a camera confirming it within the window | `steps` (a `sensor_event`, then a `vision`), `within_seconds` (1–60, default 5), `time_basis`, `same_zone` |
 | `audio_event` | a satellite microphone reports sound | `source_id`, `kind` (`audio.activity`); `min_level` is refused |
-| `presence_state` | not armable yet | `source_id`, `state` |
+| `presence_state` | a device the satellites watch for arrives or leaves | `source_id`, `state` = `present` or `absent`, `kind` (`presence.state`), `observers` (up to seven other sources watching the same device) |
 | `health_event` | not armable yet | `node_id`, `state` |
 
 ### What counts
@@ -120,6 +120,37 @@ and so is this hub's own microphone, which reports no events.
 While this hub is playing a sound, and for two seconds after it stops, such an event is
 logged as *…heard sound while this hub was playing its own; nothing was done.* and the
 rule does not run, so a tune or a spoken warning cannot set off the rule that played it.
+
+## A device arriving or leaving
+
+A `presence_state` rule fires when a device a satellite watches for over Bluetooth
+arrives, or when it leaves. It is a device, not a person: a rule may greet it, light
+something or send a message, but nothing disarms Sentry on a presence, and this hub, which
+scans for nothing itself, is refused as the source.
+
+```json
+{"type": "presence_state", "source_id": "zero-hall.tag", "state": "present",
+ "observers": ["zero-garage.tag"]}
+```
+
+`observers` names other sources watching the same device, on other nodes. The hub puts
+what they say together the only way that is safe:
+
+- **present** as soon as one of them sees it, wherever it is;
+- **absent** only once every source named in the rule says so;
+- **unknown** otherwise — a source that has said nothing yet, or whose scanner cannot see,
+  holds the answer there.
+
+A rule fires on the change into the state it asks for, so a device that stays is not an
+arrival every time a node repeats it, and a device seen in the hall and then in the garage
+never leaves. Unknown sets nothing off, and it is where every rule starts: arming a rule on
+a device already at home does not fire it. `state: "absent"` with several observers is the
+one to think about twice — it waits for all of them, which is what you want for a door,
+and is slower than one node alone.
+
+What the node itself decides — how many sightings make a presence, how long without one
+makes an absence, and when it gives up and says unknown — is in
+[presence](satellites.md#presence).
 
 ## A sensor confirmed by a camera
 

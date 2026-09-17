@@ -52,14 +52,18 @@ def test_validate_accepts_a_node_it_could_run(installation, capsys, tmp_path):
 
 
 def test_validate_says_which_driver_does_not_exist_yet(installation, capsys, tmp_path):
-    installation.write_text(installation.read_text().replace('kind = "dummy"', 'kind = "ble"'))
+    installation.write_text(
+        installation.read_text()
+        .replace('profile = "sensor-presence"', 'profile = "camera-sensor"')
+        .replace('kind = "dummy"', 'kind = "uvc"')
+    )
     assert (
         cli.main(
             ["--config", str(installation), "--identity", str(tmp_path / "id.json"), "validate"]
         )
         == 1
     )
-    assert "PR-12" in capsys.readouterr().err
+    assert "USB camera" in capsys.readouterr().err
 
 
 def test_validate_refuses_a_file_it_cannot_use(tmp_path, capsys):
@@ -77,6 +81,19 @@ def test_doctor_reports_without_contacting_anything(installation, capsys, tmp_pa
     assert code == 1  # there is no identity yet, and these certificates are not real
     assert "python" in printed
     assert "clock" in printed
+
+
+def test_doctor_says_whether_the_adapter_a_scanner_wants_is_there(installation, capsys, tmp_path):
+    installation.write_text(
+        installation.read_text().replace(
+            'kind = "dummy"', 'kind = "ble"\naddress = "AA:BB:CC:DD:EE:FF"'
+        )
+    )
+    cli.main(["--config", str(installation), "--identity", str(tmp_path / "id.json"), "doctor"])
+    printed = [line for line in capsys.readouterr().out.splitlines() if " hci0 " in line]
+    assert len(printed) == 1
+    # Either answer is the truth about the machine running the tests; a guess is not.
+    assert "present" in printed[0] or "not found" in printed[0] or "blocked" in printed[0]
 
 
 def test_nothing_ever_prints_the_key_itself(installation, capsys, tmp_path):

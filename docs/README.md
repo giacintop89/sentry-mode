@@ -57,3 +57,4 @@ Records of what was measured and what was fixed; a decision here binds the code.
 - [Rules, second version](adr/rules-v2.md) — stable rule IDs, what each arming needs, and a way back.
 - [Satellite video profile](adr/satellite-video-profile.md) — H.264 over mutual TLS to the hub's gateway, and what was measured.
 - [Satellite audio profile](adr/satellite-audio-profile.md) — numbered PCM blocks through the same gateway, and what a hub must not hear.
+- [Presence](adr/satellite-presence.md) — one known device over BlueZ, what counts as a sighting, and why Wi-Fi stays optional.

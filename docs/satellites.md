@@ -328,6 +328,56 @@ audio** has a list of microphones once there is more than one.
 The node's own health reports, for each microphone, whether its capture runs, its last
 error and its level.
 
+## Presence
+
+A `sensor-presence` node can watch for one known device over Bluetooth LE: a beacon, or a
+tag whose address does not change. It is a device, not a person, and nothing it says
+disarms anything.
+
+```toml
+[[sources]]
+id = "presence"
+kind = "ble"
+address = "AA:BB:CC:DD:EE:FF"  # or ibeacon_uuid, for a beacon that changes address
+rssi_min = -95                 # weaker than this is another room, not this one
+enter_sightings = 3            # sightings, spread out, before it counts as here
+enter_window_seconds = 10.0
+absent_after_seconds = 120.0   # of real scanning without a sighting
+```
+
+| Option | What it does |
+|---|---|
+| `adapter` | Which adapter to scan with, `hci0` by default. Several sources may share one. |
+| `address` | The device to watch, in capitals. Exactly one of this and `ibeacon_uuid`. |
+| `ibeacon_uuid`, `ibeacon_major`, `ibeacon_minor` | An iBeacon instead of an address; the major and minor are optional and only narrow it. |
+| `rssi_min` | Sightings weaker than this are ignored, −100 by default. |
+| `enter_sightings`, `enter_window_seconds` | How many sightings, in how long, make it present. Several in the same second count once. |
+| `absent_after_seconds` | How long the scanner has to run, seeing nothing, before it says absent. |
+| `event_kind` | `presence.state` unless you change it. |
+
+It needs BlueZ running (`bluetoothd`, already there on Raspberry Pi OS), the service user
+in the `bluetooth` group, and the adapter not blocked — `rfkill list bluetooth`, and
+`sudo rfkill unblock bluetooth` if it is. `sentry-satellite doctor` says which of these is
+missing. Scanning is not qualified on a board that also streams video or sound, so the
+`camera-sensor` and `audio-sensor` profiles refuse it.
+
+The node sends `presence.state` with `present` or `absent`, and nothing else: no address,
+no signal strength, and no word about any other device in the air. What it saw stays on
+the node. Two rules matter and both are about not guessing:
+
+- **A sighting is a sighting.** BlueZ keeps devices it has seen before, and reading one of
+  those again is not news; only an advertisement received while this scan is running
+  counts. Sightings have to be spread out, so one burst of packets is one sighting.
+- **Silence is not absence.** Absence needs `absent_after_seconds` of scanning that really
+  ran. If the adapter is blocked, the scan stops, `bluetoothd` restarts or the node is not
+  connected to the hub, the source goes to `unknown` and stays there until scanning works
+  again. The node's health says whether the scanner is up, what stopped it and when it
+  last saw the device.
+
+A rule is set off by it as [a device arriving or leaving](rules-v2.md#a-device-arriving-or-leaving),
+which can name several nodes watching the same device. Why BlueZ over D-Bus, and what a
+scan costs on a Zero W, are in [presence](adr/satellite-presence.md).
+
 ## Changing a node's sources from the hub
 
 The **Satellites** page, in the menu once satellites are on, lists every node: whether it
@@ -336,8 +386,8 @@ reading, and what went wrong recently.
 
 An approved, online node can be given a new list of sources from its card. Open *Change
 sources*, edit the list — it is the node's `[[sources]]` written as JSON — and send it.
-Only the kinds in the tables above can be sent; a USB camera or Bluetooth are
-refused with a note on when they arrive. The network, the certificates and the hub address
+Only the kinds in the tables above can be sent; a USB camera is refused with a note on
+when it arrives. The network, the certificates and the hub address
 cannot be changed this way, on purpose.
 
 Each change has a revision number, higher than the last. The node checks the whole list

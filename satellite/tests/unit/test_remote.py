@@ -135,7 +135,7 @@ def test_the_old_drivers_stop_before_the_new_ones_take_the_line(tmp_path):
 @pytest.mark.parametrize(
     ("sources", "reason"),
     [
-        ([{"id": "tag-1", "kind": "ble"}], "no ble driver installed"),
+        ([{"id": "tag-1", "kind": "uvc"}], "a sensor-presence node has no uvc sources"),
         ([pir("a"), pir("b")], "both use BCM line 17"),
         ([pir(line=2), {"id": "t", "kind": "bme280", "measure": "temperature"}], "i2c-1"),
         ([pir(line=99)], "line must be from 0 to 53"),
@@ -263,7 +263,7 @@ def test_the_overlay_replaces_the_installed_sources_on_the_next_start(tmp_path):
         json.dumps({"node_id": "zero-entrance", "revision": True, "sources": []}),
         json.dumps({"node_id": "zero-entrance", "revision": 2, "sources": [{"kind": "csi"}]}),
         json.dumps(
-            {"node_id": "zero-entrance", "revision": 2, "sources": [{"id": "x", "kind": "ble"}]}
+            {"node_id": "zero-entrance", "revision": 2, "sources": [{"id": "x", "kind": "uvc"}]}
         ),
     ],
 )

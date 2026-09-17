@@ -8,11 +8,12 @@ simulation and nothing is executed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from sentry_mode.sentry.config import (
     AudioEventTrigger,
+    PresenceStateTrigger,
     SensorEventTrigger,
     ThresholdTrigger,
     VisionTrigger,
@@ -50,8 +51,11 @@ class RuleState:
     phase: str = "unknown"
     """For thresholds: `unknown` until the first good reading, then `clear`, `pending`
     (past the limit, waiting out `for_seconds`) or `active` (fired, or already past the
-    limit when watching began)."""
+    limit when watching began). For presence: where the device stands across its
+    observers, `unknown` until they agree."""
     pending_since: float | None = None
+    seen: dict[str, str] = field(default_factory=dict)
+    """For presence: what each observer last said about the device."""
     candidate: Candidate | None = None
     """For sequences: the sensor event waiting for the camera, if any."""
     opened_until: float = float("-inf")
@@ -105,6 +109,32 @@ def sensor_fires(trigger: SensorEventTrigger, event: Observed) -> bool:
 def sound_fires(trigger: AudioEventTrigger, event: Observed) -> bool:
     """A microphone that has just become loud. Its going quiet again is not news."""
     return is_for(trigger, event) and event.quality == "valid" and event.value is True
+
+
+PRESENT, ABSENT, UNKNOWN = "present", "absent", "unknown"
+
+
+def presence_fires(trigger: PresenceStateTrigger, state: RuleState, event: Observed) -> bool:
+    """Where the device stands, put together from every observer the rule names.
+
+    Present as soon as one observer says so; absent only when they all do. An observer
+    that has said nothing yet, or whose scanner cannot see, holds the answer at unknown,
+    and unknown sets nothing off.
+    """
+    watching = (trigger.source_id, *trigger.observers)
+    if event.ref.id not in watching or event.kind != trigger.kind:
+        return False
+    said = event.value if event.quality == "valid" and event.value in (PRESENT, ABSENT) else UNKNOWN
+    state.seen[event.ref.id] = str(said)
+    said_by = [state.seen.get(one, UNKNOWN) for one in watching]
+    if PRESENT in said_by:
+        combined = PRESENT
+    elif all(one == ABSENT for one in said_by):
+        combined = ABSENT
+    else:
+        combined = UNKNOWN
+    before, state.phase = state.phase, combined
+    return combined != before and combined == trigger.state
 
 
 def _number(event: Observed) -> float | None:

@@ -79,12 +79,14 @@
     if(t.type==='threshold')return sourceName(t.source_id)+(t.above!=null?' > '+t.above:' < '+t.below);
     if(t.type==='sequence')return sourceName(t.steps[0].source_id)+' → '+t.steps[1].object+' on '+sourceName(t.steps[1].source_id)+' within '+t.within_seconds+' s';
     if(t.type==='audio_event')return 'sound on '+sourceName(t.source_id);
+    if(t.type==='presence_state')return sourceName(t.source_id)+(t.state==='absent'?' leaves':' arrives');
     return t.type.replace('_',' ');
   }
   // Only the fields of the chosen trigger take part in the form: the others are disabled,
   // so a hidden required field can never block saving.
   function showTrigger() {
-    const type=$('rule-trigger').value,sequence=type==='sequence',sound=type==='audio_event',sensor=type==='sensor_event'||type==='threshold'||sequence||sound;
+    const type=$('rule-trigger').value,sequence=type==='sequence',sound=type==='audio_event',presence=type==='presence_state';
+    const sensor=type==='sensor_event'||type==='threshold'||sequence||sound||presence;
     $('trigger-vision').hidden=$('trigger-vision').disabled=type!=='vision'&&!sequence;
     $('trigger-sensor').hidden=$('trigger-sensor').disabled=!sensor;
     $('trigger-sequence').hidden=$('trigger-sequence').disabled=!sequence;
@@ -93,18 +95,35 @@
       box.hidden=!box.dataset.trigger.split(' ').includes(type);
       for(const control of box.querySelectorAll('input,select'))control.disabled=box.hidden;
     }
-    const kind=$('rule-kind'),sounding=kind.value==='audio.activity';
-    if(sensor&&(!kind.value||sound!==sounding))kind.value=sound?'audio.activity':type==='threshold'?'climate.temperature':'sensor.motion';
-    $('rule-source-label').textContent=sound?'Microphone':'Sensor';
-    if(sound!==($('rule-source').dataset.sound==='1'))fillSources($('rule-source').value);
+    // A kind that belongs to one trigger only is replaced when the trigger changes; a
+    // kind any sensor could send, such as a temperature, survives the change.
+    const kind=$('rule-kind'),mine=OWN_KIND[type]||'',others=Object.values(OWN_KIND).filter(k=>k!==mine);
+    if(sensor&&(!kind.value||others.includes(kind.value)||(mine&&kind.value!==mine)))
+      kind.value=mine||(type==='threshold'?'climate.temperature':'sensor.motion');
+    $('rule-source-label').textContent=sound?'Microphone':presence?'Device':'Sensor';
+    if(listKind()!==$('rule-source').dataset.list)fillSources($('rule-source').value);
+    if(presence)fillObservers();
     $('trigger-help').textContent=sound
       ?(sensors().length?'The satellite decides what loud is, with its own threshold, and says only that it heard something. Sound heard while this hub plays its own is ignored.'
         :'No satellite microphone is known yet. Add one with activity switched on, on the Satellites page.')
+      :presence
+      ?(sensors().length?'A device is here as soon as one satellite sees it, and away only once every satellite named here says so; a scanner that cannot see leaves the answer unknown, and unknown sets nothing off. Presence is a device, not a person, so no rule disarms anything with it.'
+        :'No satellite is scanning for a device yet. Add a Bluetooth source on the Satellites page.')
       :sensors().length?'Sensors come from satellites. A reading of doubtful quality never sets a rule off, and a state that was already there when Sentry started is not news.'
       :'No satellite sensor is known yet. Add one on the Satellites page; a rule can name it once the node has reported it.';
   }
-  // A sound trigger lists satellite microphones; the hub's own reports no sound events.
-  const sensors=()=>$('rule-trigger').value==='audio_event'?sources.filter(s=>s.kind==='microphone'&&s.source_id.includes('.')):sources.filter(s=>s.kind==='sensor');
+  const OWN_KIND={audio_event:'audio.activity',presence_state:'presence.state'};
+  // Sound and presence come from satellites only: this hub reports neither about itself.
+  const listKind=()=>({audio_event:'microphone',presence_state:'presence'})[$('rule-trigger').value]||'sensor';
+  const sensors=()=>listKind()==='sensor'?sources.filter(s=>s.kind==='sensor'):sources.filter(s=>s.kind===listKind()&&s.source_id.includes('.'));
+  // The other satellites watching the same device. The device itself is never one of them.
+  function fillObservers(selected=[...$('rule-observers').selectedOptions].map(o=>o.value)) {
+    const watched=$('rule-source').value,kept=selected.filter(id=>id!==watched);
+    const entries=sensors().filter(s=>s.source_id!==watched).map(s=>[s.source_id,sourceLabel(s)]);
+    for(const id of kept)if(!entries.some(([one])=>one===id))entries.push([id,'Missing device: '+id]);
+    const box=$('rule-observers');box.replaceChildren();
+    for(const [id,label] of entries)box.add(new Option(label,id,false,kept.includes(id)));
+  }
   const TRIGGER_CAMERA='trigger_source',PRIMARY_CAMERA='legacy-primary',PRIMARY_MIC='legacy-microphone';
   const sourceLabel=s=>s.display_name+(s.zone?' · '+s.zone:'')+(s.state!=='ready'?' · '+s.state:'');
   // A step names its camera; a rule set off by a camera may also say "that camera".
@@ -134,13 +153,14 @@
   }
   function fillSources(selected) {
     const entries=sensors().map(s=>[s.source_id,s.display_name+(s.zone?' · '+s.zone:'')+(s.state!=='ready'?' · '+s.state:'')]);
-    const sound=$('rule-trigger').value==='audio_event',noun=sound?'microphone':'sensor';
+    const noun={microphone:'microphone',presence:'device'}[listKind()]||'sensor';
     if(selected&&!entries.some(([id])=>id===selected))entries.unshift([selected,'Missing '+noun+': '+selected]);
     if(!entries.length)entries.push(['','No '+noun+'s yet']);
-    $('rule-source').dataset.sound=sound?'1':'';
+    $('rule-source').dataset.list=listKind();
     options($('rule-source'),entries,selected&&entries.some(([id])=>id===selected)?selected:entries[0][0]);
   }
   $('rule-trigger').addEventListener('change',showTrigger);
+  $('rule-source').addEventListener('change',()=>{if($('rule-trigger').value==='presence_state')fillObservers();});
   function renderRules() {
     $('rules').replaceChildren();
     config.rules.forEach((rule, index) => {
@@ -336,7 +356,7 @@
   }
   function loadRule(index) {
     editing=index;const r=config.rules[index]||{id:'',name:'',enabled:true,trigger:{type:'vision',object:'person'},cooldown_seconds:60,actions:[{type:'tts',text:'Hello. Please wait here.',voice:'en',rate:175,effects:{preset:'natural',pitch:0,volume:60}}]};
-    const t=r.trigger,seq=t.type==='sequence'?t:null,v=t.type==='vision'?t:seq?seq.steps[1]:{},sensor=['sensor_event','threshold','audio_event'].includes(t.type)?t:seq?seq.steps[0]:{};
+    const t=r.trigger,seq=t.type==='sequence'?t:null,v=t.type==='vision'?t:seq?seq.steps[1]:{},sensor=['sensor_event','threshold','audio_event','presence_state'].includes(t.type)?t:seq?seq.steps[0]:{};
     // The rule library already highlights the rule being edited, so the heading only
     // appears for a new rule, which is highlighted nowhere.
     $('rule-heading').textContent=index<0?'New rule':'Edit rule · '+r.name;$('rule-heading').hidden=index>=0;
@@ -346,10 +366,11 @@
     $('rule-enabled').checked=r.enabled;$('use-region').checked=!!v.region;
     ['left','top','right','bottom'].forEach((side,i)=>$('region-'+side).value=(v.region||[0,0,1,1])[i]*100);
     // A sound trigger with min_level is kept as saved: the editor has no field for it.
-    const editable=['vision','sensor_event','threshold','sequence'].includes(t.type)||(t.type==='audio_event'&&t.min_level==null);
+    $('rule-presence').value=sensor.state==='absent'?'absent':'present';
+    const editable=['vision','sensor_event','threshold','sequence','presence_state'].includes(t.type)||(t.type==='audio_event'&&t.min_level==null);
     $('rule-trigger').querySelector('[value=kept]').hidden=editable;
     $('rule-trigger').value=editable?t.type:'kept';
-    fillSources(sensor.source_id);fillTriggerCamera(seq?v.source_id:'');showTrigger();
+    fillSources(sensor.source_id);fillTriggerCamera(seq?v.source_id:'');fillObservers(sensor.observers||[]);showTrigger();
     setSteps(r.actions);
     ruleMessage('');dirty.delete('rule');showRegion();renderRules();
   }
@@ -460,6 +481,7 @@
       steps:[{...common,type:'sensor_event',edge:$('rule-edge').value},vision($('rule-camera').value)]};
     if(type==='sensor_event')return {...common,edge:$('rule-edge').value};
     if(type==='audio_event')return common;
+    if(type==='presence_state')return {...common,state:$('rule-presence').value,observers:[...$('rule-observers').selectedOptions].map(o=>o.value)};
     const limit={above:null,below:null};limit[$('rule-limit').value]=num('rule-value');
     return {...common,...limit,hysteresis:num('rule-hysteresis'),for_seconds:num('rule-for')};
   }

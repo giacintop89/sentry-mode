@@ -1,4 +1,4 @@
-# A board with sensors and, later, Bluetooth presence. Copy to /etc/sentry-satellite/node.toml.
+# A board with sensors and Bluetooth presence. Copy to /etc/sentry-satellite/node.toml.
 # Pins and debounce are examples: verify them against the sensor actually wired up.
 
 [node]
@@ -29,6 +29,15 @@ line = 17
 active_high = true
 debounce_ms = 100
 
+# One device watched over Bluetooth LE: a beacon or a tag whose address does not change.
+# Nothing else is collected, and the address stays on this board: the hub is told only
+# that this source is present, absent or unknown. Bluetooth scanning is not qualified on
+# a board that also streams video or sound, so it is refused there.
 [[sources]]
 id = "presence"
 kind = "ble"
+address = "AA:BB:CC:DD:EE:FF" # or ibeacon_uuid = "…" for a beacon that moves address
+rssi_min = -95               # weaker than this is another room, not this one
+enter_sightings = 3          # sightings, a second or more apart, to call it present
+enter_window_seconds = 10.0
+absent_after_seconds = 120.0 # of scanning without a sighting; a scanner that stops says unknown

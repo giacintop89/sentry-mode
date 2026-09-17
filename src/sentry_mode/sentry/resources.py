@@ -25,6 +25,7 @@ from sentry_mode.sentry.config import (
     AudioEventTrigger,
     HealthEventTrigger,
     PhotoAction,
+    PresenceStateTrigger,
     RuleV2,
     SensorEventTrigger,
     SequenceTrigger,
@@ -126,6 +127,7 @@ EXPECTED = {
     "sensor_event": SourceKind.SENSOR,
     "threshold": SourceKind.SENSOR,
     "audio_event": SourceKind.MICROPHONE,
+    "presence_state": SourceKind.PRESENCE,
 }
 
 
@@ -183,6 +185,15 @@ class ResourcePlanner:
                     else:
                         fail(f"{trigger.source_id} is not a camera this hub can watch")
                 elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger)):
+                    watched.add(trigger.source_id)
+                elif isinstance(trigger, PresenceStateTrigger):
+                    for observer in trigger.observers:
+                        used.add(observer)
+                        if not self._check(observer, SourceKind.PRESENCE, fail):
+                            continue
+                        watched.add(observer)
+                    if SourceRef.parse(trigger.source_id).is_local:
+                        fail(f"{trigger.source_id} watches for no devices; only satellites do")
                     watched.add(trigger.source_id)
                 elif isinstance(trigger, AudioEventTrigger):
                     if trigger.min_level is not None:
