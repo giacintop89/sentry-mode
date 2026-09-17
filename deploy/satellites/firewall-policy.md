@@ -8,6 +8,7 @@ will be updated rarely. It should be able to reach exactly one thing.
 | From | To | Port | Why |
 |---|---|---|---|
 | Satellite | Hub | 8883/tcp | MQTT over TLS. The only link the base profile needs. |
+| Satellite with a camera | Hub | 8555/tcp | Video, over TLS with the node's certificate, only while the hub has asked for it. |
 | Hub | Satellite | — | Nothing. Commands travel back through the broker, not to the node. |
 | Satellite | Anywhere else | — | Nothing. Not the internet, not each other, not the rest of the house. |
 
@@ -15,8 +16,9 @@ Nodes do not talk to nodes. Two satellites that cannot reach each other cannot b
 reach each other, and the broker's access control already makes sure neither can read the
 other's topics.
 
-The media ports belong to a later increment and are not opened here. When they are, they
-are opened per node, per lease, and never as a range.
+The media port is one port on the hub, not a range. It admits only a stream the hub has
+just opened for that node, so opening it to the camera nodes is enough; a board without a
+camera never needs it.
 
 ## On the hub
 

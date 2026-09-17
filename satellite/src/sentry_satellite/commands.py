@@ -2,12 +2,15 @@
 
 The list is short and it is closed. A command can grant a capability for a while, renew
 that grant, or take it away, and it can replace the list of sources with one made only of
-drivers this agent already has. It cannot name a program to run, a file to read, a rule to
-apply, or touch the network, the certificates or the installed packages. That is the difference
+drivers this agent already has. It can ask a camera to send video for a while, to a port
+on the hub this node already talks to. It cannot name a program to run, a file to read, a
+rule to apply, another host to send anything to, or touch the certificates or the installed
+packages. That is the difference
 between a peripheral and a second Sentry, and it is enforced here rather than trusted to
 the sender.
 """
 
+import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Literal
@@ -15,8 +18,22 @@ from typing import Literal
 from sentry_satellite.names import InvalidName, check_name
 
 CAPABILITIES = ("events", "video", "audio")
-ACTIONS = ("grant", "renew", "revoke", "stop", "configure")
+ACTIONS = (
+    "grant",
+    "renew",
+    "revoke",
+    "stop",
+    "configure",
+    "video_start",
+    "video_renew",
+    "video_stop",
+)
+VIDEO_ACTIONS = ("video_start", "video_renew", "video_stop")
 MAX_SOURCES = 32
+MAX_VIDEO_SECONDS = 600
+STREAM_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+VIDEO_FIELDS = {"stream_id", "source_id", "port", "token"}
 
 Outcome = Literal["received", "applied", "failed"]
 
@@ -37,6 +54,10 @@ class Command:
     sequence: int = 0
     revision: int = 0
     sources: tuple[dict, ...] = ()
+    stream_id: str | None = None
+    source_id: str | None = None
+    port: int = 0
+    token: str | None = None
 
 
 def parse(message: dict, *, node_id: str) -> Command:
@@ -53,6 +74,7 @@ def parse(message: dict, *, node_id: str) -> Command:
         "sequence",
         "revision",
         "sources",
+        *VIDEO_FIELDS,
     }
     if unknown:
         raise CommandError(f"a command does not take {', '.join(sorted(unknown))}")
@@ -91,6 +113,9 @@ def parse(message: dict, *, node_id: str) -> Command:
             raise CommandError("each configured source is an object")
     elif "revision" in message or "sources" in message:
         raise CommandError(f"a {action} command does not take a configuration")
+    video = _video(action, message, duration) if action in VIDEO_ACTIONS else {}
+    if action not in VIDEO_ACTIONS and VIDEO_FIELDS & set(message):
+        raise CommandError(f"a {action} command does not describe a stream")
     return Command(
         command_id=command_id,
         action=action,
@@ -102,7 +127,36 @@ def parse(message: dict, *, node_id: str) -> Command:
         sequence=sequence,
         revision=revision if action == "configure" else 0,
         sources=tuple(sources) if action == "configure" else (),
+        **video,
     )
+
+
+def _video(action: str, message: dict, duration: object) -> dict:
+    """The stream a video command is about. The host is never among them: it is the hub."""
+    stream_id = message.get("stream_id")
+    if not isinstance(stream_id, str) or not STREAM_ID.fullmatch(stream_id):
+        raise CommandError("a video command names its stream")
+    if action == "video_stop":
+        if set(message) & (VIDEO_FIELDS - {"stream_id"}):
+            raise CommandError("stopping a stream needs only its id")
+        return {"stream_id": stream_id}
+    if not 0 < duration <= MAX_VIDEO_SECONDS:  # type: ignore[operator]
+        raise CommandError(f"a stream lasts more than 0 and at most {MAX_VIDEO_SECONDS} s")
+    if action == "video_renew":
+        if set(message) & (VIDEO_FIELDS - {"stream_id"}):
+            raise CommandError("renewing a stream needs only its id and a duration")
+        return {"stream_id": stream_id}
+    try:
+        source_id = check_name(message.get("source_id", ""), "a source id")
+    except InvalidName as error:
+        raise CommandError(str(error)) from error
+    port = message.get("port")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
+        raise CommandError("the hub's media port is an unprivileged port number")
+    token = message.get("token")
+    if not isinstance(token, str) or not TOKEN.fullmatch(token):
+        raise CommandError("a stream carries a token from the hub")
+    return {"stream_id": stream_id, "source_id": source_id, "port": port, "token": token}
 
 
 class Seen:

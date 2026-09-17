@@ -183,7 +183,14 @@ class NodeControls:
             return None
         from sentry_mode.satellites.service import build
 
-        service = build(self.config.satellites, self.sources, on_event=self.sentry.observe_event)
+        service = build(
+            self.config.satellites,
+            self.sources,
+            on_event=self.sentry.observe_event,
+            cameras=self.cameras,
+            inference=self.inference,
+            detection=self.config.detection,
+        )
         try:
             assert service is not None
             service.start()

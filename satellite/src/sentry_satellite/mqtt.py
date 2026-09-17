@@ -7,6 +7,7 @@ tests use another.
 """
 
 import logging
+import socket
 import ssl
 import uuid
 from pathlib import Path
@@ -62,6 +63,26 @@ def tls_context(ca_file: Path, cert_file: Path, key_file: Path) -> ssl.SSLContex
     except (ssl.SSLError, OSError) as error:
         raise TransportError(f"{cert_file} and {key_file} are not a usable pair") from error
     return context
+
+
+def media_connector(config: Config, *, timeout: float = 10.0) -> Callable[[int], Any]:
+    """Connections to the hub's media port: the MQTT host, the node's certificate.
+
+    The host is the one in the configuration file. A command names a port and nothing
+    else, so the hub cannot point a camera at anybody but itself.
+    """
+
+    def connect(port: int) -> ssl.SSLSocket:
+        context = tls_context(config.tls.ca_file, config.tls.cert_file, config.tls.key_file)
+        context.minimum_version = ssl.TLSVersion.TLSv1_3
+        raw = socket.create_connection((config.hub.mqtt_host, port), timeout=timeout)
+        try:
+            return context.wrap_socket(raw, server_hostname=config.hub.mqtt_host)
+        except BaseException:
+            raw.close()
+            raise
+
+    return connect
 
 
 class MqttTransport:

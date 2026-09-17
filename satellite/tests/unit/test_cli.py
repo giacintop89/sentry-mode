@@ -124,3 +124,50 @@ def test_doctor_says_whether_each_bus_is_there(tmp_path, monkeypatch):
     assert found["1-wire 28-0123456789ab"].endswith("ready")
     assert found["i2c-7"].startswith("/dev/i2c-7 missing")
     assert "i2c-9" not in found and "libgpiod" not in found
+
+
+def camera_config(tmp_path):
+    from sentry_satellite import config as configuration
+
+    node = tmp_path / "node.toml"
+    node.write_text(
+        '[node]\nid = "zero-gate"\nprofile = "camera-sensor"\n'
+        '[hub]\nmqtt_host = "192.168.11.10"\n'
+        '[tls]\nca_file = "a"\ncert_file = "b"\nkey_file = "c"\n'
+        '[[sources]]\nid = "camera-1"\nkind = "csi"\n'
+    )
+    return configuration.load(node, identity_file=tmp_path / "missing.json")
+
+
+def test_doctor_asks_the_encoder_which_camera_is_attached(tmp_path, monkeypatch):
+    import subprocess
+
+    listing = (
+        "Available cameras\n-----------------\n"
+        "0 : imx219 [3280x2464 10-bit RGGB] (/base/soc/i2c0mux/i2c@1/imx219@10)\n"
+        "    Modes: 'SRGGB10_CSI2P' : 640x480 [200.16 fps - (1000, 752)/1280x960 crop]\n"
+    )
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout=listing, stderr=""),
+    )
+    assert cli._cameras(camera_config(tmp_path)) == [
+        ("camera", "0 : imx219 [3280x2464 10-bit RGGB]")
+    ]
+
+
+def test_doctor_says_when_no_camera_answers(tmp_path, monkeypatch):
+    import subprocess
+
+    config = camera_config(tmp_path)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    assert "rpicam-vid missing" in cli._cameras(config)[0][1]
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="No cameras available!\n"),
+    )
+    assert "no camera found" in cli._cameras(config)[0][1]

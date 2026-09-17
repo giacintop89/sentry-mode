@@ -15,5 +15,6 @@ REPOSITORY = SATELLITE.parent
 CONTRACTS = REPOSITORY / "contracts" / "satellite" / "v1"
 
 sys.path.insert(0, str(TESTS))
+sys.path.insert(0, str(TESTS / "unit"))  # so one test module can borrow another's fakes
 if SOURCE.is_dir():
     sys.path.insert(0, str(SOURCE))

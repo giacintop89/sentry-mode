@@ -610,8 +610,8 @@ def test_the_gpio_line_is_requested_with_the_configured_settings():
 
 
 def test_kinds_without_a_driver_still_say_which_increment_brings_them():
-    config = sources('[[sources]]\nid = "cam"\nkind = "csi"\nwidth = 640\n')
-    with pytest.raises(drivers.UnsupportedSource, match="PR-08"):
+    config = sources('[[sources]]\nid = "cam"\nkind = "uvc"\n')
+    with pytest.raises(drivers.UnsupportedSource, match="USB camera"):
         drivers.build(config)
 
 

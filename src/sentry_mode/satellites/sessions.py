@@ -263,6 +263,11 @@ class SessionManager:
         grant = session.grant_for(capability, self._clock())
         return grant is not None and grant.grant_id == grant_id
 
+    def granted(self, node_id: str, capability: str = "events") -> Grant | None:
+        """The live grant a node holds now, by this manager's clock."""
+        session = self.current(node_id)
+        return None if session is None else session.grant_for(capability, self._clock())
+
     def due_for_renewal(self) -> list[Grant]:
         """The grants that should be renewed now, before anybody notices them lapsing."""
         with self._lock:

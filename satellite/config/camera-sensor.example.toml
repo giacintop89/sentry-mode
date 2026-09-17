@@ -22,12 +22,14 @@ event_max_age_seconds = 300
 heartbeat_seconds = 15
 
 [[sources]]
-id = "zero-gate.camera-1"
+id = "camera-1"
 kind = "csi"
-profile = "qualified-csi-h264"
+profile = "h264-tls"  # hardware H.264 inside TLS, the profile qualified on the Zero W
 width = 640
 height = 480
 fps = 10
+bitrate_kbps = 1000
+keyframe_seconds = 2
 
 [[sources]]
 id = "pir-1"

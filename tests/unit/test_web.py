@@ -1246,7 +1246,7 @@ def test_a_satellite_configuration_is_checked_before_it_is_sent(web):
     assert code == 200 and data["message"] == "Configuration 4 sent to zero-entrance."
     assert controls.satellites.sent == [("zero-entrance", good["sources"])]
     for sources, reason in [
-        ([{"id": "cam", "kind": "csi"}], "camera profile"),
+        ([{"id": "cam", "kind": "uvc"}], "USB camera"),
         ([{"id": "x", "kind": "shell", "command": "rm"}], "cannot be configured"),
         ([{"id": "a", "kind": "dummy"}, {"id": "a", "kind": "dummy"}], "its own id"),
         ([{"id": "a", "kind": "gpio", "line": [17]}], "plain value"),

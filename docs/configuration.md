@@ -50,7 +50,7 @@ SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
 - `sentry` — initial rules, `detection_fps`, `test_mode`, `action_ttl_seconds`, SSH commands
   and Telegram settings. Used only until the editor writes its own state file.
 - `satellites` — `enabled` (off by default), `store_path`, `nodes_file`, and the `mqtt`,
-  `health`, `limits` and `sessions` blocks. What a failing source does to the armed rules
+  `health`, `limits`, `sessions` and `media` blocks. What a failing source does to the armed rules
   is `fault_policy` in the rules document ([rules, second version](rules-v2.md)).
   With this off the node behaves exactly as it did before there were satellites, and
   needs none of the optional dependencies. `mqtt.host` is the address the satellites
@@ -60,7 +60,12 @@ SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
   news (`accept_within_seconds`, at most a day), how far ahead a satellite's clock may
   be (`future_tolerance_seconds`), the depth of the queue towards the rules, and how
   long history (`journal_days`) and duplicate protection (`dedup_days`) are kept.
-  See [satellites](satellites.md).
+  `media` is where satellite cameras send video: `enabled`, `bind_host`, `port` (8555,
+  never below 1024), how long a stream lasts unrenewed (`stream_seconds`) and how often it
+  is renewed (`renew_every_seconds`, at most half of it), how long a node has to start
+  sending (`connect_timeout_seconds`), how long silence is tolerated (`stall_seconds`,
+  `handshake_seconds`), `max_streams`, the decoder's `backlog_bytes`, and the `ffmpeg`
+  program. See [satellites](satellites.md#cameras).
 - `logging` — level (`DEBUG` … `CRITICAL`).
 - `web_frame_origins` — up to 16 exact HTTP(S) origins allowed to embed the app, without
   paths; empty blocks embedding.

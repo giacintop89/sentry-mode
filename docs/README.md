@@ -55,4 +55,4 @@ Records of what was measured and what was fixed; a decision here binds the code.
 - [Sensor drivers](adr/satellite-sensors.md) — how each bus is read, and how the hub changes a node's sources.
 - [Shared inference](adr/shared-inference.md) — one model for every camera, leases, and per-camera samples.
 - [Rules, second version](adr/rules-v2.md) — stable rule IDs, what each arming needs, and a way back.
-- [Satellite video profile](adr/satellite-video-profile.md) — the encode and transport decision; pending.
+- [Satellite video profile](adr/satellite-video-profile.md) — H.264 over mutual TLS to the hub's gateway, and what was measured.

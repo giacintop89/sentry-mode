@@ -199,6 +199,57 @@ A few things worth knowing before wiring:
 
 The drivers and their choices are described in [sensor drivers](adr/satellite-sensors.md).
 
+## Cameras
+
+A board with a camera on its CSI port declares it as a source like any other, in the
+`camera-sensor` profile:
+
+```toml
+[[sources]]
+id = "camera-1"
+kind = "csi"
+width = 640          # 320x240, 640x480 or 1280x720
+height = 480
+fps = 10             # 1 to 15
+bitrate_kbps = 1000  # 100 to 4000
+keyframe_seconds = 2 # how soon the hub can join, or rejoin, a stream
+```
+
+A board has one camera port, so one `csi` source. It needs `rpicam-vid`
+(`sudo apt install rpicam-apps-core`) and the service user in the `video` group;
+`sentry-satellite doctor` names the sensor it finds, or says there is none.
+
+The camera sends nothing on its own. When it is declared, the hub adds it to its own
+cameras as `zero-entrance.camera-1`, and a rule can watch it for objects like the primary
+camera. Only while something holds it — an armed rule, for now — does the hub ask the node
+for video; the node encodes in the GPU and sends the H.264 as it comes, over TLS, to the
+hub's media port. The hub decodes it, runs the shared detector on it, and keeps only the
+newest frame. Photos and videos still come from the primary camera.
+
+On the hub, the media port is part of the satellite settings and uses the same
+certificates as the broker:
+
+```yaml
+satellites:
+  media:
+    port: 8555                 # the satellites connect here, as well as to 8883
+    stream_seconds: 60         # a stream nobody renews ends by itself on both sides
+    renew_every_seconds: 20
+    max_streams: 4
+```
+
+Nothing is needed per node: a stream is only accepted from the node it was opened for,
+with the certificate that node was approved with, carrying a one-off token the hub sent it
+a moment before. Revoking a node, or the node going offline, cuts a stream that is already
+running. If the port cannot be opened — taken by something else, say — the hub says so on
+the satellites status and carries on with events only.
+
+The `satellites.media` block of `/api/satellites` shows the open streams; each camera's
+own status says whether it is `starting`, `live`, `stale` (connected, nothing arriving) or
+`offline`, the rate actually delivered, and why the last stream ended. Why this is raw
+H.264 over TLS rather than RTSP is in [the video profile](adr/satellite-video-profile.md),
+with the measurements.
+
 ## Changing a node's sources from the hub
 
 The **Satellites** page, in the menu once satellites are on, lists every node: whether it
@@ -207,8 +258,8 @@ reading, and what went wrong recently.
 
 An approved, online node can be given a new list of sources from its card. Open *Change
 sources*, edit the list — it is the node's `[[sources]]` written as JSON — and send it.
-Only the kinds in the table above can be sent; a camera, a microphone or Bluetooth are
-refused with a note on when they arrive. The network, the certificates and the hub address
+Only the kinds in the tables above can be sent; a USB camera, a microphone or Bluetooth
+are refused with a note on when they arrive. The network, the certificates and the hub address
 cannot be changed this way, on purpose.
 
 Each change has a revision number, higher than the last. The node checks the whole list

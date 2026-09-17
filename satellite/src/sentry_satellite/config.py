@@ -42,6 +42,7 @@ ONEWIRE_ID = r"^28-[0-9a-f]{12}$"
 I2C_ADDRESSES = {"bme280": (0x76, 0x77), "adc": (0x48, 0x49, 0x4A, 0x4B)}
 I2C_LINES = {1: (2, 3)}
 I2S_LINES = (18, 19, 20, 21)
+CSI_SIZES = ((320, 240), (640, 480), (1280, 720))
 
 
 def _between(low: float, high: float) -> Any:
@@ -102,6 +103,16 @@ OPTIONS: dict[str, dict[str, tuple]] = {
         **INTERVAL,
     },
     "dummy": {"interval_seconds": (float, 1.0, _between(0.01, 3600))},
+    # The one profile qualified on the Zero W: hardware H.264, sent as it comes out of the
+    # encoder inside TLS. See docs/adr/satellite-video-profile.md on the hub.
+    "csi": {
+        "profile": (str, "h264-tls", _one_of("h264-tls")),
+        "width": (int, 640, _one_of(*sorted({w for w, _ in CSI_SIZES}))),
+        "height": (int, 480, _one_of(*sorted({h for _, h in CSI_SIZES}))),
+        "fps": (int, 10, _between(1, 15)),
+        "bitrate_kbps": (int, 1000, _between(100, 4000)),
+        "keyframe_seconds": (float, 2.0, _between(0.5, 10)),
+    },
 }
 
 
@@ -145,6 +156,16 @@ def check_conflicts(sources: "list[Source]") -> None:
     for source in sources:
         options = source.options
         if not options.get("enabled", True):
+            continue
+        if source.kind == "csi":
+            if (options["width"], options["height"]) not in CSI_SIZES:
+                sizes = ", ".join(f"{w}x{h}" for w, h in CSI_SIZES)
+                raise ConfigError(f"{source.id}: a CSI camera streams at {sizes}")
+            if ("csi",) in parts:
+                raise ConfigError(
+                    f"{source.id} and {parts[('csi',)]} both want the board's one camera port"
+                )
+            parts[("csi",)] = source.id
             continue
         if source.kind in ("bme280", "adc"):
             key = (options["bus"], options["address"])

@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from sentry_mode.satellites.config import SatellitesConfig
 from sentry_mode.satellites.health import HealthBoard
@@ -31,6 +31,12 @@ from sentry_mode.satellites.sessions import BrokerState, Freshness, SessionManag
 from sentry_mode.satellites.store import Store, StoreUnavailable
 from sentry_mode.sources.models import SourceKind, SourceRecord, SourceRef, SourceState
 from sentry_mode.sources.registry import SourceRegistry
+
+if TYPE_CHECKING:
+    from sentry_mode.config import DetectionConfig
+    from sentry_mode.sources.manager import SourceManager
+    from sentry_mode.vision.media_gateway import MediaGateway
+    from sentry_mode.vision.scheduler import InferenceScheduler
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +84,10 @@ class SatelliteService:
         transport: HubTransport | None = None,
         store: Store | None = None,
         on_event: Callable[[NormalizedEvent], None] | None = None,
+        cameras: SourceManager | None = None,
+        inference: InferenceScheduler | None = None,
+        detection: DetectionConfig | None = None,
+        gateway: MediaGateway | None = None,
     ) -> None:
         self.config = config
         self.sources = sources
@@ -104,6 +114,12 @@ class SatelliteService:
         self._lock = threading.RLock()
         self._reported: dict[str, dict] = {}
         self._configurations: dict[str, dict] = {}
+        # Video: satellite cameras become cameras of this hub, driven by leases.
+        self.cameras = cameras
+        self.inference = inference
+        self.detection = detection
+        self.gateway = gateway
+        self.media_error: str | None = None
         self._transport = transport or HubTransport(
             config.mqtt,
             on_message=self.handle,
@@ -129,12 +145,29 @@ class SatelliteService:
             target=self._housekeeping, name="satellite-housekeeping", daemon=True
         )
         self._keeper.start()
+        self._open_media()
         try:
             self._transport.start()
         except TransportError as error:
             self.sessions.broker_unavailable()
             log.error("the satellite link could not be started: %s", error)
             raise
+
+    def _open_media(self) -> None:
+        """Open the media port, or report why not and carry on with events only."""
+        media = self.config.media
+        if not media.enabled or self.cameras is None or self.inference is None:
+            return
+        try:
+            if self.gateway is None:
+                from sentry_mode.vision.media_gateway import MediaGateway, server_context
+
+                self.gateway = MediaGateway(media, server_context(self.config.mqtt), self.nodes)
+            self.gateway.start()
+        except Exception as error:  # noqa: BLE001 - cameras on this hub do not depend on it
+            self.gateway = None
+            self.media_error = str(error)
+            log.error("satellite video is unavailable: %s", error)
 
     def _open_journal(self) -> None:
         """Open the journal, or carry on without it and say so where it can be seen.
@@ -153,6 +186,8 @@ class SatelliteService:
         for record in self.nodes.of_status("approved"):
             self._command(record.node_id, {"action": "revoke", "capability": "events"})
         self._transport.stop()
+        if self.gateway is not None:
+            self.gateway.stop()
         self.sessions.broker_stopped()
         self._running.clear()
         self._stopping.set()
@@ -200,6 +235,7 @@ class SatelliteService:
         self.nodes.revoke(node_id, reason=reason)
         self.sessions.revoke(node_id)
         self.sessions.close(node_id, reason="revoked")
+        self._end_video(node_id, "the node was revoked")
         self._command(node_id, {"action": "revoke", "capability": "events"})
         self._transport.clear_retained_state(node_id)
         self.health.forget(node_id)
@@ -309,6 +345,7 @@ class SatelliteService:
         if not online:
             if self.sessions.close(message.node_id, connection_id=connection_id, reason="said so"):
                 log.info("%s went offline", message.node_id)
+                self._end_video(message.node_id, "the node went offline")
             else:
                 self._refuse(message.node_id, "stale_goodbye")
             return
@@ -322,6 +359,8 @@ class SatelliteService:
             # The session and its grant carry on; only the list of sources moves.
             self._adopt_sources(message.node_id, document.get("sources", []))
             return
+        # A new session: whatever was streaming belonged to the old one.
+        self._end_video(message.node_id, "the node started a new session")
         session = self.sessions.open(
             message.node_id,
             connection_id=connection_id or "unknown",
@@ -384,6 +423,8 @@ class SatelliteService:
                 self._refuse(node_id, "bad_source_id")
                 continue
             named.add(ref)
+            if entry.get("kind") == "csi" and entry.get("enabled") is not False:
+                self._adopt_camera(node_id, source_id, entry)
             state = SourceState.DISABLED if entry.get("enabled") is False else SourceState.READY
             existing = self.sources.get(ref)
             if existing is not None:
@@ -404,6 +445,109 @@ class SatelliteService:
         for record in self.sources.all():
             if record.ref.node == node_id and record.ref not in named:
                 self.sources.set_state(record.ref, SourceState.DISABLED)
+
+    def _adopt_camera(self, node_id: str, source_id: str, entry: dict) -> None:
+        """Make a satellite camera one of this hub's cameras, the first time it is declared.
+
+        It is registered with the camera table and does nothing until something leases it.
+        Its size is fixed when it is first seen; a node that changes it later is streamed
+        at the size the hub decodes, and scaled.
+        """
+        if self.cameras is None or self.inference is None or self.detection is None:
+            return
+        ref = f"{node_id}.{source_id}"
+        if ref in self.cameras:
+            return
+        from sentry_mode.vision.remote import RemoteCamera
+
+        options = entry.get("options")
+        if not isinstance(options, dict):
+            options = {}
+        camera = RemoteCamera(
+            node_id,
+            source_id,
+            options,
+            link=self,
+            scheduler=self.inference,
+            detection=self.detection,
+            media=self.config.media,
+            display_name=entry.get("display_name") or None,
+        )
+        try:
+            self.cameras.add(camera, register=False)
+        except ValueError:
+            return
+        log.info("%s is a camera of this hub now", ref)
+
+    # -- video -------------------------------------------------------------------
+
+    def start_video(
+        self,
+        node_id: str,
+        source_id: str,
+        connect: Callable[[], Any],
+        on_end: Callable[[str, bool], None],
+    ) -> str:
+        """Ask a node for one camera's video. The stream id comes back; the token does not."""
+        if self.gateway is None:
+            raise BlockingIOError(self.media_error or "satellite video is switched off")
+        record = self.nodes.get(node_id)
+        if record is None or record.status != "approved":
+            raise BlockingIOError(f"{node_id} is not approved")
+        session = self.sessions.current(node_id)
+        if session is None:
+            raise BlockingIOError(f"{node_id} is offline")
+        if self.sessions.granted(node_id) is None:
+            raise BlockingIOError(f"{node_id} has no current grant")
+        ticket = self.gateway.open(node_id, source_id, connect, on_end=on_end)
+        sent = self._command(
+            node_id,
+            {
+                "action": "video_start",
+                "hub_epoch": session.hub_epoch,
+                "stream_id": ticket.stream_id,
+                "source_id": source_id,
+                "port": ticket.port,
+                "token": ticket.token,
+                "duration_seconds": self.config.media.stream_seconds,
+            },
+        )
+        if not sent:
+            self.gateway.close(ticket.stream_id, "the command could not be sent")
+            raise BlockingIOError("the satellite link is down")
+        log.info("asked %s for video from %s as %s", node_id, source_id, ticket.stream_id)
+        return ticket.stream_id
+
+    def renew_video(self, node_id: str, stream_id: str) -> bool:
+        session = self.sessions.current(node_id)
+        if self.gateway is None or session is None:
+            return False
+        if not self.gateway.renew(stream_id):
+            return False
+        return self._command(
+            node_id,
+            {
+                "action": "video_renew",
+                "hub_epoch": session.hub_epoch,
+                "stream_id": stream_id,
+                "duration_seconds": self.config.media.stream_seconds,
+            },
+        )
+
+    def stop_video(self, node_id: str, stream_id: str) -> None:
+        if self.gateway is not None:
+            self.gateway.close(stream_id)
+        session = self.sessions.current(node_id)
+        if session is not None:
+            self._command(
+                node_id,
+                {"action": "video_stop", "hub_epoch": session.hub_epoch, "stream_id": stream_id},
+            )
+
+    def _end_video(self, node_id: str, reason: str) -> None:
+        """A publication already open ends too, not only the next one."""
+        if self.gateway is not None:
+            self.gateway.close_node(node_id, reason)
 
     def _on_health(self, message: Message, document: dict) -> None:
         """A heartbeat replaces the one before it. None of them reaches the journal."""
@@ -615,6 +759,11 @@ class SatelliteService:
             "revision": self.nodes.revision,
             "counters": self.counters.as_dict(),
             "journal": self.store.status(),
+            "media": {
+                "enabled": self.config.media.enabled,
+                "error": self.media_error,
+                "gateway": None if self.gateway is None else self.gateway.status(),
+            },
             "nodes": [
                 {
                     "node_id": record.node_id,

@@ -75,6 +75,19 @@
         "queue_depth": "int",
         "total_events_per_minute": "int"
       },
+      "media": {
+        "backlog_bytes": "int",
+        "bind_host": "str",
+        "connect_timeout_seconds": "float",
+        "enabled": "bool",
+        "ffmpeg": "str",
+        "handshake_seconds": "float",
+        "max_streams": "int",
+        "port": "int",
+        "renew_every_seconds": "int",
+        "stall_seconds": "float",
+        "stream_seconds": "int"
+      },
       "mqtt": {
         "host": "str",
         "keepalive_seconds": "int",

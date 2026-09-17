@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import signal
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from pathlib import Path
 from sentry_satellite import __version__, drivers, health, identity, remote
 from sentry_satellite import config as configuration
 from sentry_satellite.agent import Agent
-from sentry_satellite.mqtt import MqttTransport, TransportError, tls_context
+from sentry_satellite.mqtt import MqttTransport, TransportError, media_connector, tls_context
 from sentry_satellite.sensors.onewire import DEVICES
 
 log = logging.getLogger("sentry_satellite")
@@ -92,6 +93,8 @@ def doctor(arguments) -> int:
         note("node", f"{config.node_id} ({config.profile})")
         for name, value in _buses(config):
             note(name, value)
+        for name, value in _cameras(config):
+            note(name, value)
         try:
             tls_context(config.tls.ca_file, config.tls.cert_file, config.tls.key_file)
             note("tls", "certificate, key and CA are a usable set")
@@ -152,6 +155,27 @@ def _buses(config: configuration.Config) -> list[tuple[str, str]]:
     return found
 
 
+def _cameras(config: configuration.Config) -> list[tuple[str, str]]:
+    """Whether the camera port has a sensor on it, asked of the encoder itself."""
+    if not any(s.kind == "csi" and s.enabled for s in config.sources):
+        return []
+    binary = shutil.which("rpicam-vid")
+    if binary is None:
+        return [("camera", "rpicam-vid missing (apt install rpicam-apps-core)")]
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed binary, fixed argument
+            [binary, "--list-cameras"], capture_output=True, text=True, timeout=15
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return [("camera", f"could not be listed: {error}")]
+    sensors = [
+        line.strip() for line in result.stdout.splitlines() if line[:1].isdigit() and " : " in line
+    ]
+    if not sensors:
+        return [("camera", "no camera found (is the ribbon seated, camera_auto_detect=1?)")]
+    return [("camera", sensor.split(" (")[0]) for sensor in sensors]
+
+
 def show_identity(arguments) -> int:
     if arguments.create:
         try:
@@ -205,6 +229,7 @@ def run(arguments) -> int:
         builder=builder,
         overlay=overlay,
         revision=applied.revision,
+        connect_media=media_connector(config),
     )
 
     def asked_to_stop(signum, frame) -> None:

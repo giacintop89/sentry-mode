@@ -16,6 +16,7 @@ from threading import Event, Lock, Thread
 from typing import Any, Callable, Iterable, Protocol
 
 from sentry_satellite import __version__, commands, health, protocol, remote
+from sentry_satellite.camera.publisher import Connection, Publisher, Stream
 from sentry_satellite.config import Config
 from sentry_satellite.identity import Identity
 from sentry_satellite.mqtt import Transport, TransportError
@@ -92,6 +93,9 @@ class Agent:
     overlay: remote.Overlay | None = None
     revision: int = 0
     probe_seconds: float = 2.0
+    connect_media: Callable[[int], Connection] | None = None
+    """How a stream reaches the hub's media port. None: this node sends no video."""
+    publisher: Callable[..., Publisher] = Publisher
 
     _stop: Event = field(default_factory=Event, init=False, repr=False)
     _threads: list[Thread] = field(default_factory=list, init=False, repr=False)
@@ -102,6 +106,7 @@ class Agent:
     _driver_threads: dict[int, Thread] = field(default_factory=dict, init=False, repr=False)
     _swap: Lock = field(default_factory=Lock, init=False, repr=False)
     _configuring: Lock = field(default_factory=Lock, init=False, repr=False)
+    _videos: dict[str, Publisher] = field(default_factory=dict, init=False, repr=False)
     published: int = field(default=0, init=False)
     refused: int = field(default=0, init=False)
     unstopped: list[str] = field(default_factory=list, init=False)
@@ -137,6 +142,9 @@ class Agent:
         would make an unstoppable sensor look like a clean shutdown.
         """
         self._stop.set()
+        for publisher in self._end_videos():
+            if not publisher.join(self.join_seconds):
+                self.unstopped.append(f"video:{publisher.stream.source_id}")
         with self._swap:
             running = list(self.drivers)
         self._stop_drivers(running)
@@ -340,12 +348,22 @@ class Agent:
                 "drops": self.spool.drops.as_dict(),
                 "granted": self._granted(),
             },
-            sources={
-                source_id: state.as_dict(now) for source_id, state in dict(self._states).items()
-            },
+            sources=self._source_health(now),
             now=now,
         )
         self._publish_json(self._topic("health"), payload, qos=0, retain=False)
+
+    def _source_health(self, now: float) -> dict:
+        with self._lock:
+            videos = dict(self._videos)
+        sources = {}
+        for source_id, state in dict(self._states).items():
+            entry = state.as_dict(now)
+            if hasattr(state.driver, "argv"):
+                publisher = videos.get(source_id)
+                entry["video"] = None if publisher is None else publisher.status()
+            sources[source_id] = entry
+        return sources
 
     def _publish_json(self, topic: str, message: dict, *, qos: int, retain: bool) -> None:
         try:
@@ -461,6 +479,8 @@ class Agent:
 
     def _replace_drivers(self, config: Config) -> None:
         assert self.builder is not None
+        for publisher in self._end_videos():
+            publisher.join(self.join_seconds)
         with self._swap:
             old = list(self.drivers)
         for thread in self._stop_drivers(old):
@@ -499,7 +519,10 @@ class Agent:
         if command.action == "revoke":
             with self._lock:
                 self._grant = None
+            self._end_videos()
             return "applied", None
+        if command.action in commands.VIDEO_ACTIONS:
+            return self._video(command)
         if command.action in {"grant", "renew"}:
             if command.grant_id is None or command.capability is None:
                 return "failed", "a grant names a capability and has an id"
@@ -524,6 +547,83 @@ class Agent:
                 self._baselines()
             return "applied", None
         return "failed", "unknown action"
+
+    # -- video -------------------------------------------------------------------
+
+    def _video(self, command: commands.Command) -> tuple[commands.Outcome, str | None]:
+        """Start, extend or end one camera's stream.
+
+        Video rides on the events grant: a hub that has not granted this node in its
+        current epoch cannot ask for pictures either, and taking the grant away ends them.
+        """
+        now = self.clock()
+        with self._lock:
+            grant = self._grant
+            current = next(
+                (p for p in self._videos.values() if p.stream.stream_id == command.stream_id),
+                None,
+            )
+        if command.action == "video_stop":
+            if current is None:
+                return "applied", "that stream is not running"
+            self._end_video(current)
+            return "applied", None
+        if grant is None or not grant.valid(now) or grant.capability != GRANT_REQUIRED:
+            return "failed", "video needs a current grant"
+        if grant.hub_epoch != command.hub_epoch:
+            return "failed", "that command belongs to another run of the hub"
+        expires_at = now + command.duration_seconds
+        if command.action == "video_renew":
+            if current is None or not current.alive:
+                return "failed", "there is no such stream to renew"
+            current.renew(expires_at)
+            return "applied", None
+        if current is not None and current.alive:
+            current.renew(expires_at)
+            return "applied", "already streaming"
+        if self.connect_media is None:
+            return "failed", "this node was started without a way to reach the hub's media port"
+        assert command.source_id is not None and command.token is not None
+        assert command.stream_id is not None
+        with self._swap:
+            camera = next((d for d in self.drivers if d.source_id == command.source_id), None)
+        if camera is None or not hasattr(camera, "argv"):
+            return "failed", f"{command.source_id} is not a camera on this node"
+        try:
+            argv = camera.argv()
+        except RuntimeError as error:
+            return "failed", str(error)
+        stream = Stream(
+            stream_id=command.stream_id,
+            source_id=command.source_id,
+            port=command.port,
+            token=command.token,
+            hub_epoch=command.hub_epoch,
+        )
+        publisher = self.publisher(
+            stream, argv, self.connect_media, expires_at=expires_at, clock=self.clock
+        )
+        with self._lock:
+            previous = self._videos.get(command.source_id)
+            self._videos[command.source_id] = publisher
+        if previous is not None:
+            previous.stop()
+        publisher.start()
+        return "applied", None
+
+    def _end_video(self, publisher: Publisher) -> None:
+        with self._lock:
+            if self._videos.get(publisher.stream.source_id) is publisher:
+                del self._videos[publisher.stream.source_id]
+        publisher.stop()
+
+    def _end_videos(self) -> list[Publisher]:
+        with self._lock:
+            publishers = list(self._videos.values())
+            self._videos.clear()
+        for publisher in publishers:
+            publisher.stop()
+        return publishers
 
     def _baselines(self) -> None:
         """Tell a hub that has just granted us where every source stands.

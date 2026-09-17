@@ -8,14 +8,15 @@ Wants=network-online.target
 Type=simple
 User=sentry-satellite
 Group=sentry-satellite
-SupplementaryGroups=gpio i2c spi audio
+SupplementaryGroups=gpio i2c spi audio video
 ExecStart=/opt/sentry-satellite/venv/bin/sentry-satellite --config /etc/sentry-satellite/node.toml --identity /etc/sentry-satellite/identity.json --state-dir /var/lib/sentry-satellite run
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
 KillMode=mixed
 
-# The agent reads sensors and talks to one broker. It has no business anywhere else.
+# The agent reads sensors, talks to one broker and sends video to the same hub.
+# It has no business anywhere else.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

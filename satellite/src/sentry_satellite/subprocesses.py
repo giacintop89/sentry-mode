@@ -10,8 +10,10 @@ import logging
 import os
 import signal
 import subprocess
+from collections import deque
 from dataclasses import dataclass, field
-from threading import Lock
+from threading import Lock, Thread
+from typing import IO
 
 log = logging.getLogger(__name__)
 
@@ -28,9 +30,19 @@ class Child:
     name: str
     command: tuple[str, ...]
     grace_seconds: float = 3.0
+    capture: bool = False
+    """Hand the program's output to the caller instead of throwing it away."""
     _process: subprocess.Popen | None = field(default=None, init=False, repr=False)
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
     restarts: int = field(default=0, init=False)
+    complaints: deque[str] = field(default_factory=lambda: deque(maxlen=20), init=False)
+    """The last lines the program wrote to its error stream, read as they come so that a
+    chatty program can never fill the pipe and stall."""
+
+    @property
+    def stdout(self) -> IO[bytes] | None:
+        with self._lock:
+            return None if self._process is None else self._process.stdout
 
     @property
     def running(self) -> bool:
@@ -47,10 +59,21 @@ class Child:
             self._process = subprocess.Popen(  # noqa: S603 - the command is from configuration
                 self.command,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
+                stdout=subprocess.PIPE if self.capture else subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
             )
+            Thread(
+                target=self._drain,
+                args=(self._process.stderr,),
+                name=f"stderr:{self.name}",
+                daemon=True,
+            ).start()
+
+    def _drain(self, stream: IO[bytes]) -> None:
+        with stream:
+            for line in stream:
+                self.complaints.append(line.decode("utf-8", "replace").rstrip())
 
     def poll(self) -> int | None:
         """The exit status, or None while it is still running."""
@@ -63,6 +86,13 @@ class Child:
             self._process = None
         if process is None:
             return None
+        try:
+            return self._end(process)
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
+
+    def _end(self, process: subprocess.Popen) -> int | None:
         if process.poll() is not None:
             return process.returncode
         log.info("stopping %s", self.name)

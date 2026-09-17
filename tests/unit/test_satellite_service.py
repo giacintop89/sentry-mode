@@ -612,7 +612,14 @@ def test_the_page_shows_each_source_with_its_reading_and_its_trouble(service):
         )
     )
     page = overview({**service.status(), "error": None})
-    assert page["enabled"] and page["drivers"] == ["gpio", "onewire", "bme280", "adc", "dummy"]
+    assert page["enabled"] and page["drivers"] == [
+        "gpio",
+        "onewire",
+        "bme280",
+        "adc",
+        "csi",
+        "dummy",
+    ]
     node = page["nodes"][0]
     assert (node["display_name"], node["zone"], node["profile"]) == (
         "Ingresso",

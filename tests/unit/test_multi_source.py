@@ -245,3 +245,116 @@ def test_the_planner_knows_which_cameras_it_can_watch(hub):
     ]
     plan = sentry.planner.plan([looking("yard", "synthetic-a", "person")])
     assert plan.ok and plan.vision == {"synthetic-a": 0.5} and not plan.camera
+
+
+# -- a camera on a satellite, through the same leases -------------------------------------
+
+REMOTE = "zero-gate.camera-1"
+
+
+class Painting:
+    """A decoder stand-in: every chunk fed in comes out as one painted frame."""
+
+    def __init__(self, width, height, on_frame, **options):
+        self.on_frame = on_frame
+        self.frames = self.bytes_in = self.queued_bytes = 0
+        self.error = None
+
+    def start(self):
+        pass
+
+    def feed(self, data):
+        self.frames += 1
+        self.on_frame(image(data[0]))
+
+    def close(self):
+        pass
+
+
+class Node:
+    """A satellite that answers video_start by connecting and sending frames of one label."""
+
+    def __init__(self, label=2):
+        self.label = label
+        self.reachable = True
+        self.stopped = threading.Event()
+        self.asked = 0
+
+    def start_video(self, node_id, source_id, connect, on_end):
+        if not self.reachable:
+            raise BlockingIOError(f"{node_id} is offline")
+        self.asked += 1
+        self.stopped.clear()
+
+        def send():
+            decoder = connect()
+            while not self.stopped.wait(0.1):
+                decoder.feed(bytes([self.label]))
+
+        threading.Thread(target=send, daemon=True).start()
+        return f"stream-{self.asked}"
+
+    def renew_video(self, node_id, stream_id):
+        return True
+
+    def stop_video(self, node_id, stream_id):
+        self.stopped.set()
+
+
+@pytest.fixture
+def remote_hub(hub):
+    from sentry_mode.satellites.config import MediaConfig
+    from sentry_mode.vision.remote import RemoteCamera
+
+    sentry, shared, cameras, broken = hub
+    sentry.sources.register(
+        SourceRecord(
+            ref=SourceRef.parse(REMOTE),
+            kind=SourceKind.CAMERA,
+            display_name="Gate",
+            origin="satellite",
+            state=SourceState.READY,
+        )
+    )
+    node = Node()
+    camera = RemoteCamera(
+        "zero-gate",
+        "camera-1",
+        {"width": 64, "height": 48},
+        link=node,
+        scheduler=shared,
+        detection=DetectionConfig(budget_fps=10),
+        media=MediaConfig(connect_timeout_seconds=2),
+        decoder=Painting,
+    )
+    cameras.add(camera, register=False)
+    yield sentry, shared, camera, node
+
+
+def test_a_satellite_camera_is_watched_like_any_other(remote_hub):
+    sentry, shared, camera, node = remote_hub
+    use(sentry, looking("front", "legacy-primary", "person"), looking("gate", REMOTE, "dog"))
+    assert node.asked == 0
+    sentry.arm()
+    assert until(lambda: fired(sentry) >= {"front", "gate"})
+    assert shared.status(REMOTE)["inferences"] > 0
+    assert camera.status()["state"] == "live"
+    started = time.monotonic()
+    sentry.disarm()
+    assert time.monotonic() - started < 5
+    assert node.stopped.is_set()
+    assert camera.status()["state"] == "idle"
+
+
+def test_an_unreachable_satellite_camera_pauses_only_its_rule(remote_hub):
+    sentry, _, camera, node = remote_hub
+    node.reachable = False
+    use(sentry, looking("front", "legacy-primary", "person"), looking("gate", REMOTE, "dog"))
+    sentry.arm()
+    assert until(lambda: "gate" in sentry.suspended)
+    assert "offline" in sentry.suspended["gate"]
+    assert sentry.status()["armed"]
+    assert until(lambda: "front" in fired(sentry))
+    started = time.monotonic()
+    sentry.disarm()
+    assert time.monotonic() - started < 5

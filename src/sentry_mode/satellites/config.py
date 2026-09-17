@@ -85,15 +85,50 @@ class SessionsConfig(Section):
         return value
 
 
+class MediaConfig(Section):
+    """Video from satellite cameras: where it arrives, and how long a request for it lasts.
+
+    Video is sent only while a camera on this hub is leased, and a stream the hub stops
+    renewing ends on the satellite by itself. The media port uses the same certificates
+    as the MQTT link: the hub's own, and the node's, both issued by the satellites CA.
+    """
+
+    enabled: bool = True
+    bind_host: str = Field(default="0.0.0.0", min_length=1)
+    port: int = Field(default=8555, ge=0, le=65535)
+    stream_seconds: int = Field(default=60, ge=10, le=600)
+    renew_every_seconds: int = Field(default=20, ge=2, le=300)
+    connect_timeout_seconds: float = Field(default=20, ge=2, le=300)
+    stall_seconds: float = Field(default=5, ge=1, le=60)
+    handshake_seconds: float = Field(default=5, ge=1, le=60)
+    max_streams: int = Field(default=4, ge=1, le=32)
+    backlog_bytes: int = Field(default=4 * 1024 * 1024, ge=65536, le=64 * 1024 * 1024)
+    ffmpeg: str = Field(default="ffmpeg", min_length=1)
+
+    @field_validator("port")
+    @classmethod
+    def unprivileged(cls, value: int) -> int:
+        if 0 < value < 1024:
+            raise ValueError("a satellite only connects to a port from 1024 up")
+        return value
+
+    @field_validator("renew_every_seconds")
+    @classmethod
+    def renewal_comes_before_expiry(cls, value: int, info) -> int:
+        lasts = info.data.get("stream_seconds")
+        if lasts is not None and value * 2 > lasts:
+            raise ValueError("a stream is renewed at least twice within its lifetime")
+        return value
+
+
 class SatellitesConfig(Section):
     """Whether this node listens to other nodes at all.
 
     What Sentry does when a source fails is a property of the rules, so it lives in the
     rules document as `fault_policy`.
 
-    Everything the media path needs arrives with the increments that use it. A node with
-    `enabled: false` imports none of this, contacts nothing, and behaves exactly as it did
-    before there were satellites.
+    A node with `enabled: false` imports none of this, contacts nothing, listens on no
+    port, and behaves exactly as it did before there were satellites.
     """
 
     enabled: bool = False
@@ -103,3 +138,4 @@ class SatellitesConfig(Section):
     health: HealthConfig = Field(default_factory=HealthConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     sessions: SessionsConfig = Field(default_factory=SessionsConfig)
+    media: MediaConfig = Field(default_factory=MediaConfig)
