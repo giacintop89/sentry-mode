@@ -697,16 +697,21 @@ fails here, in a second, rather than at link time on a target with neither.
 
 ## What is not here, and what it waits on
 
-- Lifecycle and the watchdog. The device program loops and blinks; nothing restarts it
-  when it stops, and PICO-01 asks for a watchdog that has been seen to fire.
-- The flash itself: the linker layout, the erase and program calls, USB recovery, and the
-  certificates and private key a real provisioning tool writes. `store.cpp` says what a
-  record looks like and `pack_provisioning.py` writes one; neither has touched a sector.
-- Keeping the time, as opposed to getting it once. The board asks at boot and then every
-  hour, and a board that has been up for a day has not been watched: what the drift between
-  two answers is, what happens when the network goes away mid-interval, and whether a node
-  that has lost its clock should go back to `unsynced` rather than keep stamping readings
-  from a counter nobody has checked.
+- Why this board reset, anywhere but on the cable. `status` and the boot line say
+  `reset=watchdog` or `reset=power`, and the health message the hub reads says neither:
+  there is no field for it in the version 1 contract, and inventing one here would be a
+  change to something the Linux agent also writes. The hub can see that a node restarted —
+  it counts boot ids — but not what restarted it.
+- Keeping the time, as opposed to getting it once. There is a rule now: three of lwIP's
+  hourly polls with no answer and the node stops calling what it stamps `synced`, without
+  stopping stamping — the offset is still the best estimate it has, and `unknown` is the
+  honest word for what it is worth. That rule has never been watched happening. A board up
+  for a day, the drift between two answers, and a network that goes away mid-interval are
+  all still unexamined, and `T16`'s UTC jump is **not executed**.
+- A power cut, as opposed to a reset. Everything above was proved with the watchdog, which
+  resets the chip without taking the power off it. What a half-finished flash write does
+  when the supply actually sags — the part is mid-erase and the voltage is falling — is not
+  something a `tear` verb can stand in for.
 - Every driver in the hub's catalogue for this platform is now here: `board`, `gpio`,
   `adc` and `onewire`. A configuration naming anything else — a BME280, a camera, a
   microphone — is refused by name. Camera and microphone commands are

@@ -61,4 +61,34 @@ TEST(a_sync_that_would_put_this_node_before_1970_is_not_a_time) {
   CHECK(!time.unix_ms(0, stamped));
 }
 
+TEST(a_reading_from_a_callback_does_not_send_this_node_into_the_future) {
+  // The SNTP answer is stamped inside lwIP's callback and read on the next turn of the
+  // loop, by which time the loop has already extended a later reading. Handing that older
+  // value to `extend` would look like the counter going round: seventy-one minutes, once,
+  // in whichever direction nobody was looking.
+  sentry::Ticks ticks;
+  CHECK(ticks.extend(1000) == 1000);
+  CHECK(ticks.extend(5000) == 5000);
+  CHECK(ticks.just_before(4000) == 4000);
+  // And the extender has not moved: the next real reading is still where it should be.
+  CHECK(ticks.extend(6000) == 6000);
+}
+
+TEST(a_reading_from_before_the_counter_went_round_is_put_before_it) {
+  sentry::Ticks ticks;
+  CHECK(ticks.extend(0xFFFFFF00u) == 0xFFFFFF00u);
+  const uint64_t after = ticks.extend(0x00000100u);
+  CHECK(after == (UINT64_C(1) << 32) + 0x100u);
+  // A callback that ran just before the wrap, read just after it.
+  CHECK(ticks.just_before(0xFFFFFFF0u) == 0xFFFFFFF0u);
+  CHECK(ticks.just_before(0x50u) == (UINT64_C(1) << 32) + 0x50u);
+}
+
+TEST(a_reading_from_before_the_counter_ever_went_round_is_itself) {
+  sentry::Ticks ticks;
+  CHECK(ticks.extend(900) == 900);
+  CHECK(ticks.just_before(1000) == 1000);
+  CHECK(ticks.just_before(800) == 800);
+}
+
 int main() { return harness::run_all("timebase"); }

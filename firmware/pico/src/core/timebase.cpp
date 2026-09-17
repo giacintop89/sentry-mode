@@ -8,6 +8,14 @@ uint64_t Ticks::extend(uint32_t raw) {
   return high_ | raw;
 }
 
+uint64_t Ticks::just_before(uint32_t raw) const {
+  if (raw <= last_) return high_ | raw;
+  // Before the last time the counter went round. If it never has, there is no earlier
+  // period to put this in and the best answer is the raw value itself.
+  if (high_ == 0) return raw;
+  return (high_ - (UINT64_C(1) << 32)) | raw;
+}
+
 void Timebase::sync(int64_t unix_ms, uint64_t monotonic_us) {
   offset_us_ = unix_ms * 1000 - static_cast<int64_t>(monotonic_us);
   synced_at_us_ = monotonic_us;

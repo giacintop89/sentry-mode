@@ -87,6 +87,12 @@ constexpr uint32_t kJoinPatienceMs = 20000;
 // thing it ever does in one turn is a TLS handshake; eight seconds is what the hardware
 // allows and several times what a turn takes.
 constexpr uint32_t kWatchdogMs = 8000;
+// How long a time source may say nothing before this node stops calling what it stamps
+// synced. lwIP asks again every hour; three of those with no answer is a source that has
+// gone, not one that is slow. Nothing stops being stamped — the offset is still the best
+// estimate this board has — but what it claims about the stamp changes, and the hub reads
+// exactly that to decide whether an event is live.
+constexpr uint64_t kTimeGoesStaleUs = UINT64_C(3) * 3600 * 1000000;
 // Whoever runs the pool, rather than a vendor's own: a satellite that only ever reaches the
 // hub still has to agree with it about what time it is.
 constexpr const char* kTimeServer = "pool.ntp.org";
@@ -121,6 +127,8 @@ bool woke_from_watchdog = false;
 // without anybody at the cable: it joins, waits to be told the time, and connects. Nothing
 // here decides to do that on its own — it is what it was doing when the power went off.
 bool come_back_on_its_own = false;
+// When the last answer from the time source arrived, on this board's own clock.
+uint64_t time_answered_at_us = 0;
 char node_id[sentry::kMaxNodeIdText] = {};
 char boot_id[sentry::kUuidText] = {};
 char connection_id[sentry::kUuidText] = {};
@@ -613,9 +621,19 @@ uint32_t monotonic_ms() { return static_cast<uint32_t>(now_us() / 1000); }
 // loop, and not from lwIP's context.
 void take_the_time_if_it_arrived() {
   const net::TimeAnswers answers = net::time_answers();
-  if (answers.count == answers_seen || answers.count == 0) return;
+  if (answers.count == answers_seen || answers.count == 0) {
+    if (clock_.synced() && time_answered_at_us != 0 &&
+        now_us() - time_answered_at_us > kTimeGoesStaleUs) {
+      clock_.lost();
+    }
+    return;
+  }
   answers_seen = answers.count;
-  clock_.sync(answers.last_unix_ms, ticks.extend(static_cast<uint32_t>(answers.taken_at_us)));
+  // Read rather than extended: the answer was stamped inside lwIP's callback, before the
+  // loop's own last reading of the counter, and handing an older value to `extend` would
+  // look exactly like the counter going round.
+  time_answered_at_us = ticks.just_before(static_cast<uint32_t>(answers.taken_at_us));
+  clock_.sync(answers.last_unix_ms, time_answered_at_us);
   if (come_back_on_its_own && !wanted) {
     // Not before now: a certificate has dates on it, and a board that does not know what
     // time it is cannot tell an expired one from a good one.
@@ -1283,7 +1301,8 @@ void say_status() {
   std::printf("# node=%s provisioned=%s link=%s address=%s signal=%ld clock=%s answers=%lu\n",
               node_id, provisioned ? "yes" : "no", net::linked() ? "up" : "down",
               has_address ? address : "none", static_cast<long>(net::signal_strength()),
-              clock_.synced() ? "synced" : "unsynced", static_cast<unsigned long>(answers.count));
+              sentry::name_of(clock_.status_at(now_us())),
+              static_cast<unsigned long>(answers.count));
   std::printf("# heap_free=%lldkB uptime=%llus reset=%s\n",
               static_cast<long long>(free_heap_kb()),
               static_cast<unsigned long long>(now_us() / 1000000),

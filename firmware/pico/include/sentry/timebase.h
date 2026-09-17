@@ -26,6 +26,13 @@ class Ticks {
  public:
   uint64_t extend(uint32_t raw);
 
+  // A raw reading taken a moment ago, from an interrupt or a callback, which must not be
+  // allowed to move the extender: handing an older value to `extend` would look exactly
+  // like the counter going round and would put this node seventy-one minutes into the
+  // future. Anything newer than the last reading is taken as being just before it, because
+  // a reading from the past is what this is for.
+  uint64_t just_before(uint32_t raw) const;
+
  private:
   uint32_t last_ = 0;
   uint64_t high_ = 0;
