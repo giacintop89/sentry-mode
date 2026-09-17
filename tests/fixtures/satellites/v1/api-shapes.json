@@ -40,8 +40,11 @@
     },
     "captures_directory": "str",
     "detection": {
+      "budget_fps": "float",
       "confidence": "float",
       "enabled": "bool",
+      "inference_timeout_seconds": "float",
+      "isolation": "str",
       "max_fps": "float",
       "model": "str"
     },
@@ -274,12 +277,14 @@
     "capture_size": "null",
     "detection": {
       "available": "bool",
+      "effective_fps": "float",
       "enabled": "bool",
       "error": "null",
       "inference_ms": "null",
       "max_fps": "int",
       "model": "str",
-      "objects": []
+      "objects": [],
+      "requested_fps": "float"
     },
     "encoded_frames": "int",
     "error": "null",

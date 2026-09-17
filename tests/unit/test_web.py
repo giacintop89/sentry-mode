@@ -969,7 +969,7 @@ def test_the_video_view_records_to_the_captures_tab(web):
     with (
         patch.object(controls.video, "status", return_value={"running": True}),
         patch.object(controls.video, "recording_size", return_value=(1280, 720)),
-        patch.object(controls.video, "add_recording") as add_recording,
+        patch.object(controls.video, "hold_recording", wraps=controls.video.hold_recording) as hold,
         patch.object(controls.sentry.captures, "record_video", side_effect=record),
         patch.object(Microphone, "ffmpeg_input", return_value=["-f", "pulse", "-i", "default"]),
     ):
@@ -982,7 +982,8 @@ def test_the_video_view_records_to_the_captures_tab(web):
         "message": "Saved · 20260914-101500-250-manual-recording.mp4",
         "error": False,
     }
-    assert [c.args for c in add_recording.call_args_list] == [(1,), (-1,)]
+    assert [c.args for c in hold.call_args_list] == [("manual recording",)]
+    assert controls.video.recordings == 0 and not controls.video.demands.leases()
 
 
 def test_hardware_page_lists_devices_and_saves_the_choice(web, tmp_path, monkeypatch):

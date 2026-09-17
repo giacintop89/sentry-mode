@@ -35,6 +35,11 @@ detection:
   model: models/yolox/yolox_nano.onnx
   confidence: 0.45
   max_fps: 2
+  # Inferences a second for every camera together; one camera at up to 10 FPS is not slowed.
+  budget_fps: 10
+  # "process" runs the model in a child process that is replaced if it stops answering.
+  isolation: thread
+  inference_timeout_seconds: 10
 sentry_state_file: .local/sentry.json
 # Sentry photos and videos; only the newest 200 files are kept.
 captures_directory: .local/captures

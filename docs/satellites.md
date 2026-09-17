@@ -165,7 +165,7 @@ pin that a bus already uses.
 
 | Kind | What it reads | Options |
 |---|---|---|
-| `gpio` | A PIR or a contact on one pin. Sends `sensor.motion` (or `event_kind`) with `active` or `idle`. | `line_numbering = "bcm"` (required), `line`, `active_high`, `bias` (`disabled`, `pull_up`, `pull_down`, `as_is`), `debounce_ms`, `settle_seconds`, `chip` |
+| `gpio` | A PIR or a contact on one pin. Sends `sensor.motion` (or `event_kind`) with `true` (active) or `false` (idle). | `line_numbering = "bcm"` (required), `line`, `active_high`, `bias` (`disabled`, `pull_up`, `pull_down`, `as_is`), `debounce_ms`, `settle_seconds`, `chip` |
 | `onewire` | A DS18B20 probe, in °C. | `device` (`28-…`), `line` (the 1-Wire pin, default 4), `interval_seconds` |
 | `bme280` | Temperature (°C), humidity (%) or pressure (hPa) — one source per quantity. | `measure`, `bus`, `address` (`0x76` or `0x77`), `interval_seconds` |
 | `adc` | One channel of an ADS1115, for an LDR divider or another analogue part. | `channel`, `output` (`ratio` or `volts`), `reference_volts`, `bus`, `address`, `interval_seconds` |

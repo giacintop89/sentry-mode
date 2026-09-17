@@ -603,7 +603,7 @@ def test_test_mode_logs_photo_and_video_without_touching_the_camera(sentry):
         "Photos: 3 every 1.5 s",
     ]
     sentry.video.latest_frame.assert_not_called()
-    sentry.video.add_recording.assert_not_called()
+    sentry.video.hold_recording.assert_not_called()
 
 
 def test_photo_is_saved_and_video_records_beside_the_announcement(sentry):
@@ -643,7 +643,9 @@ def test_photo_is_saved_and_video_records_beside_the_announcement(sentry):
     assert "Video saved: 20260101-000000-000-person-at-entrance.mp4" in finished
     [photo] = sentry.captures.listing()["captures"]
     assert photo["kind"] == "photo" and photo["rule"] == "person-at-entrance"
-    assert [c.args for c in sentry.video.add_recording.call_args_list] == [(1,), (-1,)]
+    [call] = sentry.video.hold_recording.call_args_list
+    assert call.args == ("rule:Person at entrance",)
+    sentry.video.hold_recording.return_value.release.assert_called_once_with()
 
 
 def test_photo_series_is_spaced_in_the_background_and_stops_on_disarm(sentry):
@@ -834,7 +836,7 @@ def test_audio_action_records_from_the_microphone_in_the_background(sentry):
     assert not any(r.is_alive() for r in sentry.recorders)
     finished = [e["message"] for e in events(sentry, "action_finished")]
     assert "Audio saved: 20260101-000000-000-person-at-entrance.m4a" in finished
-    sentry.video.add_recording.assert_not_called()
+    sentry.video.hold_recording.assert_not_called()
 
 
 def test_a_silent_video_is_kept_when_the_microphone_is_missing(sentry):

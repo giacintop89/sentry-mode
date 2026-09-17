@@ -59,6 +59,12 @@ class DetectionConfig(Section):
     model: Path = Path("models/yolox/yolox_nano.onnx")
     confidence: float = Field(default=0.45, ge=0.1, le=0.95)
     max_fps: float = Field(default=2, ge=0.2, le=10)
+    # Inferences per second shared by every camera. A single camera at up to 10 FPS is not
+    # slowed by the default; more cameras share it.
+    budget_fps: float = Field(default=10, ge=0.2, le=30)
+    # "process" runs the model in a child process that is killed if it stops answering.
+    isolation: Literal["thread", "process"] = "thread"
+    inference_timeout_seconds: float = Field(default=10, ge=1, le=120)
 
 
 class SpeakerConfig(AudioConfig):

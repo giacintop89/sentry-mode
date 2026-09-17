@@ -13,6 +13,7 @@ reachable, but nothing is watching it.
 
 from __future__ import annotations
 
+from collections.abc import Container
 from dataclasses import dataclass, field
 
 from sentry_mode.sentry.config import (
@@ -47,6 +48,8 @@ class Plan:
     camera: bool = False
     """This node's camera has to run while armed: for the detector, or so a photo is ready."""
     min_confidence: float = 0.7
+    vision: dict[str, float] = field(default_factory=dict)
+    """Other cameras on this hub watched for objects, with the lowest confidence each needs."""
     watched: frozenset[str] = frozenset()
     """Satellite sources a trigger listens to."""
     needs: dict[str, frozenset[str]] = field(default_factory=dict)
@@ -65,6 +68,7 @@ class Plan:
         return {
             "detector": self.detector,
             "camera": self.camera,
+            "vision": sorted(self.vision),
             "watched": sorted(self.watched),
             "problems": [
                 {"rule_id": p.rule_id, "rule": p.rule_name, "message": p.message}
@@ -82,9 +86,17 @@ EXPECTED = {
 
 
 class ResourcePlanner:
-    def __init__(self, sources: SourceRegistry, *, satellites_enabled: bool) -> None:
+    def __init__(
+        self,
+        sources: SourceRegistry,
+        *,
+        satellites_enabled: bool,
+        cameras: Container[str] = (),
+    ) -> None:
         self.sources = sources
         self.satellites_enabled = satellites_enabled
+        self.cameras = cameras
+        """Cameras besides the primary one that this hub can drive itself."""
 
     def plan(self, rules: list[RuleV2]) -> Plan:
         problems: list[Problem] = []
@@ -92,6 +104,7 @@ class ResourcePlanner:
         watched: set[str] = set()
         detector = camera_for_actions = False
         confidences = []
+        vision: dict[str, float] = {}
 
         for rule in rules:
 
@@ -108,11 +121,15 @@ class ResourcePlanner:
                 used.add(trigger.source_id)
                 self._check(trigger.source_id, EXPECTED.get(trigger.type), fail)
             if isinstance(trigger, VisionTrigger):
-                if trigger.source_id != PRIMARY_CAMERA:
-                    fail("watching a satellite camera is not available yet")
-                else:
+                if trigger.source_id == PRIMARY_CAMERA:
                     detector = True
                     confidences.append(trigger.min_confidence)
+                elif trigger.source_id in self.cameras:
+                    vision[trigger.source_id] = min(
+                        trigger.min_confidence, vision.get(trigger.source_id, 1.0)
+                    )
+                else:
+                    fail("watching a satellite camera is not available yet")
             elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger)):
                 watched.add(trigger.source_id)
 
@@ -130,6 +147,7 @@ class ResourcePlanner:
             detector=detector,
             camera=detector or camera_for_actions,
             min_confidence=min(confidences, default=0.7),
+            vision=vision,
             watched=frozenset(watched),
             needs=needs,
             problems=tuple(problems),
@@ -153,8 +171,10 @@ class ResourcePlanner:
             if isinstance(action, (PhotoAction, VideoAction)):
                 used.add(action.source_id)
                 if self._check(action.source_id, SourceKind.CAMERA, fail):
-                    if SourceRef.parse(action.source_id).is_local:
+                    if action.source_id == PRIMARY_CAMERA:
                         camera = True
+                    elif SourceRef.parse(action.source_id).is_local:
+                        fail(f"photos and videos come only from {PRIMARY_CAMERA} for now")
                     else:
                         fail("recording from a satellite camera is not available yet")
             if isinstance(action, AudioAction) or (

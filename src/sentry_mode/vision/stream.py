@@ -7,8 +7,11 @@ from collections.abc import Callable
 from sentry_mode.config import CameraConfig, DetectionConfig
 from sentry_mode.core.errors import HardwareError
 from sentry_mode.hardware.camera import Camera
+from sentry_mode.sources.manager import DemandTable, Lease
+from sentry_mode.sources.models import PRIMARY_CAMERA
 from sentry_mode.vision.detection import DetectionWorker
 from sentry_mode.vision.recording import VIDEO_FPS, VIDEO_MAX_WIDTH
+from sentry_mode.vision.scheduler import InferenceScheduler
 
 # A device that re-enumerates takes a few seconds to come back; beyond that it is really gone.
 RECONNECT_ATTEMPTS = 6
@@ -16,8 +19,15 @@ RECONNECT_PAUSE = 1.0
 
 
 class VideoStream:
+    source_id = PRIMARY_CAMERA
+    display_name = "Primary camera"
+
     def __init__(
-        self, config: CameraConfig, camera_lock: LockType, detection: DetectionConfig | None = None
+        self,
+        config: CameraConfig,
+        camera_lock: LockType,
+        detection: DetectionConfig | None = None,
+        scheduler: InferenceScheduler | None = None,
     ):
         self.config = config
         self.camera_lock = camera_lock
@@ -31,7 +41,11 @@ class VideoStream:
         self.raw_frame = None
         self.error: str | None = None
         self.base_detection = detection or DetectionConfig()
-        self.detection = DetectionWorker(self.base_detection)
+        self.detection = DetectionWorker(self.base_detection, scheduler, PRIMARY_CAMERA)
+        # Preview and Sentry are still the two switches they always were; recordings are
+        # leases, so each recording gives back only its own.
+        self.demands = DemandTable(PRIMARY_CAMERA, on_change=self._recount)
+        self._unnamed: list[Lease] = []
         self.preview = False
         self.preview_detection = self.base_detection.enabled
         self.reconnects = 0
@@ -89,14 +103,14 @@ class VideoStream:
                     raise
             elif enabled:
                 self.detection.pause()
+                # The scheduler prefilters at the lowest confidence anyone asked for; the
+                # network itself is only ever reconfigured by the scheduler's worker.
                 self.detection.config = self.base_detection.model_copy(
                     update={
                         "max_fps": fps,
                         "confidence": min(self.base_detection.confidence, confidence),
                     }
                 )
-                if self.detection.detector is not None:
-                    self.detection.detector.config = self.detection.config
                 try:
                     self.detection.configure(True, False)
                     self.monitor_fps, self.monitoring = fps, True
@@ -120,8 +134,6 @@ class VideoStream:
     def _restore_detection(self):
         self.detection.pause()
         self.detection.config = self.base_detection
-        if self.detection.detector is not None:
-            self.detection.detector.config = self.base_detection
         self.detection.configure(
             self.preview_detection, self.preview and self.status()["capture_running"]
         )
@@ -184,9 +196,24 @@ class VideoStream:
         width = min(self.config.width, VIDEO_MAX_WIDTH)
         return width, max(1, round(self.config.height * width / self.config.width))
 
-    def add_recording(self, delta: int):
+    def hold(self, purpose: str, owner: str, **params) -> Lease:
+        if purpose != "recording":
+            raise ValueError("the primary camera's preview and Sentry use start() and set_sentry()")
+        return self.demands.hold(purpose, owner, **params)
+
+    def hold_recording(self, owner: str) -> Lease:
+        return self.hold("recording", owner)
+
+    def _recount(self):
         with self.condition:
-            self.recordings = max(0, self.recordings + delta)
+            self.recordings = self.demands.count("recording")
+
+    def add_recording(self, delta: int):
+        """The old counter, kept for callers that have no lease: never below zero."""
+        if delta > 0:
+            self._unnamed.extend(self.hold_recording("unnamed") for _ in range(delta))
+        for _ in range(min(-delta, len(self._unnamed))):
+            self._unnamed.pop().release()
 
     def latest_frame(self):
         with self.condition:

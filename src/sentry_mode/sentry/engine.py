@@ -15,8 +15,9 @@ import tempfile
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 
 from pydantic import SecretStr
@@ -68,6 +69,7 @@ from sentry_mode.sentry.triggers import (
     threshold_fires,
 )
 from sentry_mode.sources.legacy import register_legacy
+from sentry_mode.sources.manager import Lease, SourceManager
 from sentry_mode.sources.models import PRIMARY_CAMERA, SourceRef, SourceState
 from sentry_mode.sources.registry import SourceRegistry
 from sentry_mode.vision.detection import Detection
@@ -91,6 +93,21 @@ Action = (
 )
 
 
+MOTION_KINDS = frozenset({"sensor.motion", "motion.pir"})
+BOOST_FACTOR = 2.0
+BOOST_SECONDS = 10.0
+
+
+class _Others:
+    """The cameras the planner may watch besides the primary one, read when it plans."""
+
+    def __init__(self, cameras: SourceManager) -> None:
+        self.cameras = cameras
+
+    def __contains__(self, source_id: object) -> bool:
+        return source_id != PRIMARY_CAMERA and source_id in self.cameras
+
+
 @dataclass
 class Job:
     """One group of a rule's sequence: its steps start together, and the queue keeps the
@@ -110,6 +127,7 @@ class Sentry:
         video: VideoStream,
         audio_lock,
         sources: SourceRegistry | None = None,
+        cameras: SourceManager | None = None,
     ):
         self.settings, self.video, self.audio_lock = settings, video, audio_lock
         self.guard = threading.RLock()
@@ -119,7 +137,13 @@ class Sentry:
         self.sources = (
             sources if sources is not None else register_legacy(SourceRegistry(), settings)
         )
-        self.planner = ResourcePlanner(self.sources, satellites_enabled=settings.satellites.enabled)
+        self.cameras = cameras if cameras is not None else SourceManager(self.sources)
+        self.planner = ResourcePlanner(
+            self.sources,
+            satellites_enabled=settings.satellites.enabled,
+            cameras=_Others(self.cameras),
+        )
+        self.watching: dict[str, Lease] = {}
         self.plan: Plan | None = None
         self.arm_epoch = 0
         self.suspended: dict[str, str] = {}
@@ -135,7 +159,8 @@ class Sentry:
         self.events: deque[dict] = deque(maxlen=200)
         self.event_id = 0
         self.states: dict[str, RuleState] = {}
-        self.last_sample = 0.0
+        self.samples: dict[str, float] = {}
+        """The capture time of the last sample from each camera, in this arming."""
         self.active_labels: dict[int, str] = {}
         self.captures = Captures(settings.captures_directory)
         self.sounds = SoundLibrary(settings.sounds_directory)
@@ -429,14 +454,21 @@ class Sentry:
                 self.video.set_sentry(
                     True, self.config.detection_fps, plan.min_confidence, detect=plan.detector
                 )
+            try:
+                watching = self._watch(plan)
+            except Exception:
+                if plan.camera:
+                    self.video.set_sentry(False)
+                raise
             with self.guard:
+                self.watching = watching
                 self.cancelled = threading.Event()
                 self.jobs = queue.Queue(maxsize=16)
                 self.states = {rule.id: RuleState() for rule in rules}
                 self.suspended = {}
                 self.plan = plan
                 self.arm_epoch += 1
-                self.last_sample = 0
+                self.samples = {}
                 self.armed_at = time.monotonic()
                 self.error = None
                 self.armed = True
@@ -451,6 +483,43 @@ class Sentry:
                     else "Sentry started with actions enabled.",
                 )
                 return self.status()
+
+    def _watch(self, plan: Plan) -> dict[str, Lease]:
+        """Take a monitoring lease on every other camera a rule watches for objects."""
+        leases: dict[str, Lease] = {}
+        owner = f"sentry-{self.arm_epoch + 1}"
+        try:
+            for source_id, confidence in sorted(plan.vision.items()):
+                camera = self.cameras.camera(source_id)
+                if camera is None:
+                    raise HardwareError(f"{source_id} is no longer available.")
+                camera.detection.on_result = partial(self._observed, source_id)
+                leases[source_id] = camera.hold(
+                    "monitoring",
+                    owner,
+                    fps=self.config.detection_fps,
+                    confidence=confidence,
+                    detect=True,
+                )
+        except Exception:
+            for lease in leases.values():
+                lease.release()
+            raise
+        return leases
+
+    def _observed(self, source_id: str, detections: list[Detection], captured: float) -> None:
+        self.observe(detections, captured, source_id)
+
+    def _unwatch(self, source_ids=None) -> None:
+        with self.guard:
+            chosen = list(self.watching) if source_ids is None else list(source_ids)
+            leases = [self.watching.pop(s) for s in chosen if s in self.watching]
+        for lease in leases:
+            lease.release()
+
+    def _stop_cameras(self) -> None:
+        self.video.set_sentry(False)
+        self._unwatch()
 
     @staticmethod
     def _groups(
@@ -533,7 +602,7 @@ class Sentry:
                 raise HardwareError(
                     "A Sentry photo, video or audio recording is still being saved."
                 )
-            self.video.set_sentry(False)
+            self._stop_cameras()
             if was_armed:
                 self._event("disarmed", "Sentry stopped; pending actions discarded.")
             return self.status()
@@ -546,23 +615,35 @@ class Sentry:
             except queue.Empty:
                 return
 
-    def observe(self, detections: list[Detection], captured: float):
-        """Detections from this node's camera, one sample at a time."""
+    def observe(
+        self, detections: list[Detection], captured: float, source_id: str = PRIMARY_CAMERA
+    ):
+        """Detections from one camera, one sample at a time.
+
+        Each camera keeps its own clock of samples. A frame already seen, or older than the
+        last one, counts for nothing; a long gap resets only that camera's rules, and a slot
+        the scheduler skipped is not taken as an absence.
+        """
         with self.guard:
-            if not self.armed or captured <= max(self.last_sample, self.armed_at):
+            last = self.samples.get(source_id, 0.0)
+            if not self.armed or captured <= max(last, self.armed_at):
                 return
             max_gap = max(2.0, 3 / self.config.detection_fps)
             if time.monotonic() - captured > max_gap:
                 return
-            if self.last_sample and captured - self.last_sample > max_gap:
-                for state in self.states.values():
+            rules = [
+                rule
+                for rule in self._watching(VisionTrigger)
+                if isinstance(rule.trigger, VisionTrigger) and rule.trigger.source_id == source_id
+            ]
+            if last and captured - last > max_gap:
+                for rule in rules:
+                    state = self.states[rule.id]
                     state.hits, state.absent_since = 0, None
-            self.last_sample = captured
-            for rule in self._watching(VisionTrigger):
+            self.samples[source_id] = captured
+            for rule in rules:
                 trigger = rule.trigger
                 assert isinstance(trigger, VisionTrigger)
-                if trigger.source_id != PRIMARY_CAMERA:
-                    continue
                 count = sum(1 for d in detections if detection_matches(trigger, d))
                 state = self.states[rule.id]
                 for kind, message in confirm(rule, state, count, captured):
@@ -586,6 +667,8 @@ class Sentry:
             if now - event.received_monotonic > self.config.action_ttl_seconds:
                 self._event("expired", f"An event from {event.ref.id} arrived too late to act on.")
                 return
+            if event.kind in MOTION_KINDS and event.value is True and event.quality == "valid":
+                self._boost()
             for rule in self._watching(SensorEventTrigger, ThresholdTrigger):
                 trigger = rule.trigger
                 state = self.states[rule.id]
@@ -604,6 +687,18 @@ class Sentry:
                     "triggered", f"{event.kind} from {event.ref.id}: {event.value!r}.", rule.name
                 )
                 self._fire(rule, event.received_monotonic, (event.event_id,), event.zone)
+
+    def _boost(self) -> None:
+        """A motion sensor fired: look harder, for a while, with every watching camera."""
+        plan = self.plan
+        if plan is None:
+            return
+        if plan.detector:
+            self.video.detection.boost(BOOST_FACTOR, BOOST_SECONDS)
+        for source_id in self.watching:
+            camera = self.cameras.camera(source_id)
+            if camera is not None:
+                camera.detection.boost(BOOST_FACTOR, BOOST_SECONDS)
 
     def _watching(self, *kinds) -> list[RuleV2]:
         """Enabled, unsuspended rules armed in this run whose trigger is one of `kinds`."""
@@ -737,6 +832,18 @@ class Sentry:
                 failures[PRIMARY_CAMERA] = (
                     state["error"] or detection["error"] or "Camera or detector stopped."
                 )
+        for source_id in plan.vision if plan else ():
+            camera = self.cameras.camera(source_id)
+            seen = camera.status() if camera is not None else None
+            if (
+                seen is None
+                or not seen["capture_running"]
+                or not seen["detection"]["enabled"]
+                or seen["detection"]["error"]
+            ):
+                failures[source_id] = (
+                    seen and (seen["error"] or seen["detection"]["error"])
+                ) or f"{source_id} stopped."
         for source_id in plan.watched if plan else ():
             record = self.sources.get(source_id)
             if record is None or record.state in (SourceState.DISABLED, SourceState.FAILED):
@@ -751,7 +858,7 @@ class Sentry:
             self.cancelled.set()
             self._discard_jobs()
             self._event("fault", self.error)
-        self.video.set_sentry(False)
+        self._stop_cameras()
         return False
 
     def _isolate(self, plan: Plan, failures: dict[str, str]) -> bool:
@@ -763,21 +870,20 @@ class Sentry:
                     self._event("fault", f"Rule paused: {message}", rule.name)
             left = set(self.states) - set(self.suspended)
             if left:
+                lost = {s: c for s, c in plan.vision.items() if s not in failures}
+                self.plan = replace(plan, vision=lost)
                 if PRIMARY_CAMERA in failures and plan.camera:
                     # Nothing left needs the camera; let it go rather than retry it.
-                    self.plan = Plan(
-                        watched=plan.watched,
-                        needs=plan.needs,
-                        min_confidence=plan.min_confidence,
-                    )
+                    self.plan = replace(self.plan, detector=False, camera=False)
                     self.video.set_sentry(False)
+                self._unwatch(set(failures) & set(plan.vision))
                 return True
             self.error = "; ".join(failures.values())
             self.armed = False
             self.cancelled.set()
             self._discard_jobs()
             self._event("fault", "Every armed rule depends on something that failed.")
-        self.video.set_sentry(False)
+        self._stop_cameras()
         return False
 
     def _worker(self):
@@ -790,7 +896,7 @@ class Sentry:
                 continue
             self._run(job)
         if self.error:
-            self.video.set_sentry(False)
+            self._stop_cameras()
 
     def _run(self, job: Job):
         """Execute one group of a rule's sequence, whether an appearance or a test queued it.
@@ -967,7 +1073,7 @@ class Sentry:
 
     def _start_recording(self, rule: str, action: VideoAction):
         cancelled, seconds = self.cancelled, action.duration_seconds
-        self.video.add_recording(1)
+        lease = self.video.hold_recording(f"rule:{rule}")
 
         def record():
             try:
@@ -994,7 +1100,7 @@ class Sentry:
             except Exception as exc:
                 self._event("action_failed", f"Video recording failed: {exc}", rule)
             finally:
-                self.video.add_recording(-1)
+                lease.release()
 
         sound = " with sound" if action.audio else ""
         self._in_background(rule, f"Recording a {seconds}-second video{sound}.", record)

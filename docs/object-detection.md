@@ -22,6 +22,23 @@ needs the results.
 A separate worker examines the latest frame at up to two updates/second rather than draining
 a queue of old frames. Boxes can lag moving objects slightly and expire after 1.5 seconds.
 
+## More than one camera
+
+Every camera shares one loaded model. Each camera keeps only its newest frame, and the
+worker serves the camera whose turn is due, within `budget_fps` inferences a second for all
+of them together. A camera that asks for more frames gets more turns, never all of them.
+A frame that is replaced before its turn is skipped; the rules do not take a skipped frame
+as a sign that something left.
+
+The video status reports, under `detection`, the rate this camera asked for
+(`requested_fps`) and the rate it actually got (`effective_fps`). While Sentry is armed, a
+motion sensor that fires doubles the rate of every watching camera for ten seconds.
+
+With `isolation: process` the model runs in a child process. A frame it does not answer
+within `inference_timeout_seconds` gets the process killed; every camera using it reports
+the error, and the next start loads a fresh one. The default, `thread`, keeps the model in
+the dashboard's process as before. See [shared inference](adr/shared-inference.md).
+
 ## Limits worth knowing
 
 This is detection, not tracking or identification. Several people of the same category are
@@ -32,7 +49,8 @@ disarms Sentry.
 ## Configuration
 
 The `detection` YAML section sets startup enablement, model path, confidence threshold
-(0.45 by default) and maximum inference rate. Sentry's own rate and per-rule confidence are
+(0.45 by default), maximum inference rate per camera, `budget_fps` (10 by default, shared by
+all cameras), `isolation` (`thread` or `process`) and `inference_timeout_seconds` (10). Sentry's own rate and per-rule confidence are
 separate, in [Sentry rules](sentry-rules.md).
 
 See also: [camera and live video](camera-and-video.md), [Sentry rules](sentry-rules.md).

@@ -50,9 +50,11 @@ from sentry_mode.sentry.config import Rule, RuleV2, SentryConfig, SentryConfigV2
 from sentry_mode.sentry.engine import Sentry
 from sentry_mode.sentry.migration import SchemaUpgradeRequired
 from sentry_mode.sources.legacy import legacy_sources
+from sentry_mode.sources.manager import SourceManager
 from sentry_mode.sources.registry import SourceRegistry
 from sentry_mode.vision.capture import capture_image
 from sentry_mode.vision.recording import MAX_MESSAGE_BYTES, MEDIA_TYPES
+from sentry_mode.vision.scheduler import InferenceScheduler
 from sentry_mode.vision.stream import VideoStream
 
 if TYPE_CHECKING:  # the satellite subsystem is imported only where it is used
@@ -144,12 +146,18 @@ class NodeControls:
         self.monitor = AudioMonitor()
         self.https_port: int | None = None
         self.tls_ca: Path | None = None
-        self.video = VideoStream(config.camera, self.hardware_lock, config.detection)
+        # One model for every camera; each camera asks it for a share.
+        self.inference = InferenceScheduler(config.detection)
+        self.video = VideoStream(
+            config.camera, self.hardware_lock, config.detection, scheduler=self.inference
+        )
         self.soundboard = Soundboard(config.soundboard_file, config.soundboard_directory)
         self.sources = SourceRegistry()
         for record in legacy_sources(config):
             self.sources.register(record)
-        self.sentry = Sentry(config, self.video, self.audio_lock, self.sources)
+        self.cameras = SourceManager(self.sources)
+        self.cameras.add(self.video, register=False)
+        self.sentry = Sentry(config, self.video, self.audio_lock, self.sources, self.cameras)
         self.satellites_error: str | None = None
         self.satellites = self._open_satellites()
         self.runtime_lock = threading.Lock()
@@ -415,7 +423,7 @@ class NodeControls:
                 microphone, sound_error = Microphone(self.config.microphone).ffmpeg_input(), None
             except HardwareError as exc:
                 microphone, sound_error = None, str(exc)
-            self.video.add_recording(1)
+            lease = self.video.hold_recording("manual recording")
 
             def record():
                 try:
@@ -440,7 +448,7 @@ class NodeControls:
                         "error": True,
                     }
                 finally:
-                    self.video.add_recording(-1)
+                    lease.release()
 
             self.recording_result = None
             thread = threading.Thread(target=record, name="sentry-mode-manual-video")
@@ -1074,6 +1082,8 @@ def serve(
                 controls.stop_video_recording()
                 controls.sentry.disarm()
                 controls.video.close()
+                controls.cameras.close()
+                controls.inference.close()
                 controls.stop_satellites()
                 controls.stop_runtime()
     finally:

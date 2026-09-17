@@ -44,7 +44,9 @@ SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
   0 to 30) is how much quieter-than-full-scale phone audio may be lifted before it is played
   ([push-to-talk](push-to-talk.md)); `0` plays the phone's own level.
 - `detection` — startup enablement, model path, confidence threshold (0.45), maximum
-  inference rate.
+  inference rate per camera, the rate shared by all cameras (`budget_fps`), and whether the
+  model runs in its own process (`isolation`, `inference_timeout_seconds`); see
+  [object detection](object-detection.md).
 - `sentry` — initial rules, `detection_fps`, `test_mode`, `action_ttl_seconds`, SSH commands
   and Telegram settings. Used only until the editor writes its own state file.
 - `satellites` — `enabled` (off by default), `store_path`, `nodes_file`, and the `mqtt`,

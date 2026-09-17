@@ -1,14 +1,18 @@
-"""OpenCV DNN object detection and a latest-frame-only inference worker."""
+"""OpenCV DNN object detection, and each camera's client of the shared scheduler."""
 
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 from sentry_mode.config import DetectionConfig
 from sentry_mode.core.errors import HardwareError
+from sentry_mode.sources.models import PRIMARY_CAMERA
 from sentry_mode.vision.labels import CLASSES
+
+if TYPE_CHECKING:
+    from sentry_mode.vision.scheduler import InferenceScheduler
 
 
 @dataclass(frozen=True)
@@ -130,14 +134,31 @@ def annotate(frame, detections: list[Detection]):
 
 
 class DetectionWorker:
-    def __init__(self, config: DetectionConfig):
+    """One camera's view of the shared model: its demand, its latest boxes, its errors.
+
+    The worker no longer owns a thread or a network. It hands frames to the scheduler and
+    keeps what comes back for this camera, in this epoch, at this camera's confidence.
+    A worker made without a scheduler gets one of its own, which is what a single camera
+    always had.
+    """
+
+    def __init__(
+        self,
+        config: DetectionConfig,
+        scheduler: "InferenceScheduler | None" = None,
+        source_id: str = PRIMARY_CAMERA,
+    ):
+        from sentry_mode.vision.scheduler import InferenceScheduler
+
         self.config = config
         self.enabled = config.enabled
+        self.scheduler = scheduler if scheduler is not None else InferenceScheduler(config)
+        self.source_id = source_id
         self.condition = threading.Condition()
         self.stopped = threading.Event()
-        self.thread: threading.Thread | None = None
-        self.detector: ObjectDetector | None = None
-        self.pending: tuple[Any, float] | None = None
+        self.stopped.set()
+        self.epoch = 0
+        self.sequence = 0
         self.result: list[Detection] = []
         self.updated = 0.0
         self.inference_ms: float | None = None
@@ -145,10 +166,18 @@ class DetectionWorker:
         self.on_result: Callable[[list[Detection], float], None] | None = None
         self.on_error: Callable[[str], None] | None = None
 
+    @property
+    def detector(self):
+        return self.scheduler.detector
+
+    @property
+    def thread(self) -> threading.Thread | None:
+        return self.scheduler.thread
+
     def status(self) -> dict:
         with self.condition:
             fresh = time.monotonic() - self.updated < 1.5
-            return {
+            state = {
                 "enabled": self.enabled,
                 "error": self.error,
                 "available": self.config.model.is_file(),
@@ -157,6 +186,10 @@ class DetectionWorker:
                 "inference_ms": self.inference_ms,
                 "objects": [asdict(d) for d in self.result] if fresh and self.enabled else [],
             }
+        shared = self.scheduler.status(self.source_id)
+        state["requested_fps"] = shared["requested_fps"]
+        state["effective_fps"] = shared["effective_fps"]
+        return state
 
     def configure(self, enabled: bool, running: bool) -> None:
         if not enabled:
@@ -164,38 +197,53 @@ class DetectionWorker:
             self.pause()
             self.error = None
             return
-        if self.detector is None:
-            self.detector = ObjectDetector(self.config)
+        self.scheduler.load()
         self.enabled = True
         self.error = None
         if running:
             self.start()
 
     def start(self) -> None:
-        if not self.enabled or self.thread is not None and self.thread.is_alive():
+        if not self.enabled or not self.stopped.is_set():
             return
         try:
-            if self.detector is None:
-                self.detector = ObjectDetector(self.config)
-            self.stopped.clear()
-            self.thread = threading.Thread(target=self._run, name="sentry-mode-detection")
-            self.thread.start()
+            with self.condition:
+                self.epoch += 1
+                self.sequence = 0
+                epoch = self.epoch
+                self.stopped.clear()
+            self.scheduler.demand(
+                self.source_id,
+                self,
+                fps=self.config.max_fps,
+                confidence=self.config.confidence,
+                epoch=epoch,
+                on_result=self._deliver,
+                on_error=self._fail,
+            )
         except Exception as exc:
+            self.stopped.set()
             self.error = str(exc)
             self.enabled = False  # A detector failure must not stop plain live video.
+
+    def boost(self, factor: float, seconds: float) -> None:
+        self.scheduler.boost(self.source_id, factor, seconds)
 
     def submit(self, frame) -> None:
         if not self.enabled or self.stopped.is_set():
             return
         import cv2
 
+        from sentry_mode.vision.scheduler import FramePacket
+
         height, width = frame.shape[:2]
         small = cv2.resize(
             frame, (min(width, 640), max(1, round(height * min(width, 640) / width)))
         )
         with self.condition:
-            self.pending = (small, time.monotonic())
-            self.condition.notify_all()
+            self.sequence += 1
+            packet = FramePacket(self.source_id, self.epoch, self.sequence, time.monotonic(), small)
+        self.scheduler.offer(packet)
 
     def overlay(self, frame):
         with self.condition:
@@ -204,42 +252,32 @@ class DetectionWorker:
             )
         return annotate(frame, detections)
 
-    def _run(self):
-        try:
-            while not self.stopped.is_set():
-                with self.condition:
-                    self.condition.wait_for(
-                        lambda: self.pending is not None or self.stopped.is_set()
-                    )
-                    if self.stopped.is_set():
-                        break
-                    assert self.pending is not None
-                    frame, captured = self.pending
-                    self.pending = None
-                started = time.monotonic()
-                assert self.detector is not None
-                detections = self.detector.detect(frame)
-                elapsed = time.monotonic() - started
-                with self.condition:
-                    if not self.stopped.is_set():
-                        self.result, self.updated = detections, captured
-                        self.inference_ms = round(elapsed * 1000, 1)
-                if not self.stopped.is_set() and self.on_result is not None:
-                    self.on_result(detections, captured)
-                self.stopped.wait(max(0, 1 / self.config.max_fps - elapsed))
-        except Exception as exc:
-            with self.condition:
-                self.error, self.enabled, self.result = str(exc), False, []
-            if self.on_error is not None:
-                self.on_error(str(exc))
+    def _deliver(self, inference) -> None:
+        packet = inference.packet
+        detections = [d for d in inference.detections if d.confidence >= self.config.confidence]
+        with self.condition:
+            if self.stopped.is_set() or packet.epoch != self.epoch:
+                return  # a result for a frame from before the last restart
+            self.result, self.updated = detections, packet.captured
+            self.inference_ms = round(inference.elapsed * 1000, 1)
+        if self.on_result is not None:
+            self.on_result(detections, packet.captured)
+
+    def _fail(self, message: str) -> None:
+        with self.condition:
+            if self.stopped.is_set():
+                return
+            self.error, self.enabled, self.result = message, False, []
+            self.stopped.set()
+        if self.on_error is not None:
+            self.on_error(message)
 
     def pause(self):
-        self.stopped.set()
         with self.condition:
-            self.pending = None
+            self.stopped.set()
+            self.epoch += 1
             self.result = []
             self.updated = 0
             self.condition.notify_all()
-        if self.thread is not None:
-            self.thread.join(timeout=10)
+        self.scheduler.release(self.source_id, self)
         self.inference_ms = None
