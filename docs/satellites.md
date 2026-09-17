@@ -101,6 +101,11 @@ hub can see is an error on the page rather than a round trip that can only come 
 such a board can actually take — uptime, chip temperature, free memory — and no load
 average, because a zero there would be a number nobody measured.
 
+Beside those numbers the card counts how often a node has come back, and how often it came
+back as a different boot. A link that keeps dropping and a board that keeps resetting both
+look like a node that is there again, and they are not the same thing to whoever has to fix
+it: the only thing that tells them apart is whether the boot id changed.
+
 ## The broker
 
 Copy `deploy/satellites/mosquitto.conf.example` to `/etc/mosquitto/conf.d/`, and generate

@@ -129,6 +129,13 @@ def _node(node: dict) -> dict:
         "config_revision": reported.get("config_revision"),
         "last_seen": health.get("last_seen"),
         "clock_status": health.get("clock_status"),
+        # A node that reconnected and a node that restarted look the same from here — it
+        # is there again — and they are not the same thing to whoever has to fix it.
+        "comings": {
+            "connections": session.get("connections"),
+            "restarts": session.get("restarts"),
+            "restarted_seconds_ago": session.get("restarted_seconds_ago"),
+        },
         "platform": platforms.as_document(chosen),
         # Only what this kind of board can measure. A microcontroller has no load average,
         # and a page that showed one as 0 would be showing a number nobody took.

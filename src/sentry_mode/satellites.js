@@ -13,11 +13,15 @@
     const data = await r.json(); if (!r.ok) throw Error(data.error || 'Request failed.'); return data;
   }
   const f = (card, name) => card.querySelector('[data-f="' + name + '"]');
+  function span(seconds) {
+    if (seconds === null || seconds === undefined) return '—';
+    if (seconds < 90) return Math.round(seconds) + ' s';
+    if (seconds < 5400) return Math.round(seconds / 60) + ' min';
+    return Math.round(seconds / 3600) + ' h';
+  }
   function ago(seconds) {
     if (seconds === null || seconds === undefined) return '—';
-    if (seconds < 90) return Math.round(seconds) + ' s ago';
-    if (seconds < 5400) return Math.round(seconds / 60) + ' min ago';
-    return Math.round(seconds / 3600) + ' h ago';
+    return span(seconds) + ' ago';
   }
   function reading(source) {
     const last = source.last;
@@ -53,6 +57,23 @@
       node.last_seen ? 'heard ' + ago(Date.now() / 1000 - node.last_seen) : 'not heard yet',
       node.clock_status && 'clock ' + node.clock_status];
     f(item, 'meta').textContent = meta.filter(Boolean).join(' · ');
+    // The second line is what the node measured about itself, and only what this kind of
+    // board can measure: the hub leaves out what it cannot, rather than showing a zero.
+    const board = node.board || {}, queue = node.queue || {}, comings = node.comings || {};
+    const limits = [platform.streams && platform.streams.length ? null : 'no camera or microphone',
+      platform.manual_tests === false ? 'no on-demand test' : null];
+    const numbers = [
+      board.uptime_seconds != null && 'up ' + span(board.uptime_seconds),
+      board.temperature_c != null && board.temperature_c.toFixed(1) + ' °C',
+      board.memory_available_kb != null && board.memory_available_kb + ' kB free',
+      board.load1 != null && 'load ' + board.load1.toFixed(2),
+      board.throttled,
+      comings.restarts ? comings.restarts + ' restart' + (comings.restarts === 1 ? '' : 's')
+        + (comings.restarted_seconds_ago != null ? ', last ' + ago(comings.restarted_seconds_ago) : '') : null,
+      queue.events != null && queue.events + ' queued',
+      queue.drops && queue.drops.total ? queue.drops.total + ' dropped' : null,
+      ...limits];
+    f(item, 'board').textContent = numbers.filter(Boolean).join(' · ');
     f(item, 'caption').textContent = 'Sources of ' + node.display_name;
     f(item, 'table-region').setAttribute('aria-label', 'Sources of ' + node.display_name);
     const rows = node.sources.map(source => {

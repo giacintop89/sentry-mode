@@ -33,6 +33,7 @@
 // two slots `store.cpp` already describes.
 
 #include <cstdio>
+#include <malloc.h>
 #include <cstdlib>
 #include <cstring>
 
@@ -197,6 +198,22 @@ bool client_told = false;
 uint32_t attempts_since_online = 0;
 
 uint64_t now_us() { return ticks.extend(time_us_32()); }
+
+// What is left of the heap, in kilobytes. This program allocates nothing, but lwIP and
+// mbedTLS do, and a node whose heap is being eaten by a connection that keeps failing has
+// no other way of saying so before it stops. The arena is what the linker left between the
+// end of the data and the bottom of the stack; what is taken is what malloc says it has
+// handed out. Both are the SDK's own numbers, not an estimate.
+extern "C" char __StackLimit;  // NOLINT: the linker's, and spelled the linker's way
+extern "C" char __bss_end__;
+
+int64_t free_heap_kb() {
+  const struct mallinfo info = mallinfo();
+  const ptrdiff_t arena = &__StackLimit - &__bss_end__;
+  const ptrdiff_t taken = static_cast<ptrdiff_t>(info.uordblks);
+  if (arena <= 0 || taken < 0 || taken > arena) return 0;
+  return static_cast<int64_t>((arena - taken) / 1024);
+}
 
 // Where randomness on an RP2350 comes from: the SDK's own generator, seeded from the ring
 // oscillator and the board's unique identifier. The header that formats a UUID has no
@@ -764,6 +781,8 @@ bool write_a_health_report() {
   health.board.uptime_seconds = health.uptime_seconds;
   health.board.has_temperature = has_last_temperature;
   health.board.temperature_c = last_temperature;
+  health.board.has_free_heap = true;
+  health.board.memory_available_kb = free_heap_kb();
   health.sources = sources;
   health.source_count = running.size();
 
@@ -1220,6 +1239,7 @@ void say_status() {
               node_id, provisioned ? "yes" : "no", net::linked() ? "up" : "down",
               has_address ? address : "none", static_cast<long>(net::signal_strength()),
               clock_.synced() ? "synced" : "unsynced", static_cast<unsigned long>(answers.count));
+  std::printf("# heap_free=%lldkB\n", static_cast<long long>(free_heap_kb()));
   std::printf("# credentials=%s socket=%s mqtt=%s queued=%lu coalesced=%lu dropped=%lu\n",
               credentials.complete() ? "yes" : "no", socket_state, mqtt_state,
               static_cast<unsigned long>(spool.size()),

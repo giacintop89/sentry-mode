@@ -90,6 +90,26 @@ class Session:
         return grant if grant is not None and grant.live(now) else None
 
 
+@dataclass
+class Comings:
+    """How often a node has come back, and how often it came back as a different boot.
+
+    A node that reconnects has a new connection; a node that restarted has a new boot id
+    as well. Keeping the two apart is the difference between a flaky link and a board that
+    is resetting, and from the outside they look the same: the node is there again.
+    """
+
+    connections: int = 0
+    boots: int = 0
+    last_boot_id: str | None = None
+    restarted_at: float | None = None
+
+    @property
+    def restarts(self) -> int:
+        """Boots after the first one. The first is how the hub met it, not a restart."""
+        return max(self.boots - 1, 0)
+
+
 class SessionManager:
     """Hands out epochs and grants, and knows when to stop believing a node is there."""
 
@@ -108,6 +128,9 @@ class SessionManager:
         self._clock = clock
         self._new_id = new_id
         self._lock = RLock()
+        # Kept across sessions on purpose: a node that has reset six times has reset six
+        # times whether or not it is connected at the moment somebody looks.
+        self._comings: dict[str, Comings] = {}
         self._sessions: dict[str, Session] = {}
         self._broker = BrokerState.STOPPED
 
@@ -160,6 +183,13 @@ class SessionManager:
                 agent_version=agent_version,
             )
             self._sessions[node_id] = session
+            comings = self._comings.setdefault(node_id, Comings())
+            comings.connections += 1
+            if boot_id is not None and boot_id != comings.last_boot_id:
+                comings.boots += 1
+                if comings.last_boot_id is not None:
+                    comings.restarted_at = now
+                comings.last_boot_id = boot_id
             return session
 
     def current(self, node_id: str) -> Session | None:
@@ -314,6 +344,13 @@ class SessionManager:
                         "silent_for_seconds": round(now - session.last_seen, 1),
                         "closed": session.closed,
                         "close_reason": session.close_reason,
+                        "connections": self._comings[node_id].connections,
+                        "restarts": self._comings[node_id].restarts,
+                        "restarted_seconds_ago": (
+                            None
+                            if self._comings[node_id].restarted_at is None
+                            else round(now - self._comings[node_id].restarted_at, 1)
+                        ),
                         "grants": {
                             capability: {
                                 "grant_id": grant.grant_id,

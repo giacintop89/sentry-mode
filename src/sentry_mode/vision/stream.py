@@ -3,6 +3,7 @@
 import threading
 import time
 from _thread import LockType
+from collections import deque
 from collections.abc import Callable
 
 from sentry_mode.config import CameraConfig, DetectionConfig
@@ -17,6 +18,9 @@ from sentry_mode.vision.scheduler import InferenceScheduler
 # A device that re-enumerates takes a few seconds to come back; beyond that it is really gone.
 RECONNECT_ATTEMPTS = 6
 RECONNECT_PAUSE = 1.0
+# Frames the delivered rate is averaged over: long enough to ignore one slow frame, short
+# enough to follow a change in size or format within a couple of seconds.
+RATE_WINDOW = 20
 
 
 class VideoStream:
@@ -50,6 +54,8 @@ class VideoStream:
         self.preview = False
         self.preview_detection = self.base_detection.enabled
         self.reconnects = 0
+        self.frame_times: deque[float] = deque(maxlen=RATE_WINDOW)  # the capture thread's own
+        self.delivered_fps = 0.0
         self.monitoring = False
         self.monitor_fps = 2.0
         self.viewers = 0
@@ -65,7 +71,9 @@ class VideoStream:
             "capture_running": active,
             "monitoring": self.monitoring,
             "error": self.error,
-            "fps": min(self.config.fps, 10),
+            # What the preview is getting, measured, rather than what it is allowed.
+            "fps": round(self.delivered_fps, 1) if self.delivered_fps else self._rate(),
+            "fps_limit": self._rate(),
             "max_width": 960,
             "viewers": self.viewers,
             "encoded_frames": self.encoded_frames,
@@ -252,6 +260,13 @@ class VideoStream:
                 failure = exc
         raise failure
 
+    def _count_frame(self) -> None:
+        """One delivered frame, and the rate over the window it closes."""
+        self.frame_times.append(time.monotonic())
+        span = self.frame_times[-1] - self.frame_times[0]
+        # A single float, written here and read by status(), so no reader sees a half-window.
+        self.delivered_fps = (len(self.frame_times) - 1) / span if span > 0 else 0.0
+
     def _capture(self):
         try:
             selected = self._camera_config().model_copy()
@@ -265,6 +280,8 @@ class VideoStream:
                         camera.config = desired
                         camera.open()
                         selected = desired.model_copy()
+                        self.frame_times.clear()
+                        self.delivered_fps = 0.0
                         for _ in range(5 if self.preview else 2):
                             frame = self._frame(camera)
                     self.capture_size = (selected.width, selected.height)
@@ -284,6 +301,7 @@ class VideoStream:
                     if self.stopped.wait(1 / self._rate()):
                         break
                     frame = self._frame(camera)
+                    self._count_frame()
         except Exception as exc:
             self.error = str(exc)
             if self.on_error is not None:

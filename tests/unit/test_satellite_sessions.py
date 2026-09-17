@@ -183,3 +183,23 @@ def test_the_status_keeps_the_link_and_the_nodes_apart(manager):
     node = status["nodes"]["zero-entrance"]
     assert node["freshness"] == "live"
     assert node["grants"]["events"]["sequence"] == 0
+
+
+def test_a_node_that_reconnected_and_one_that_restarted_are_counted_apart(manager):
+    """From the outside both are "it is back", and to whoever has to fix it they are not.
+
+    A link that keeps dropping and a board that keeps resetting need different things
+    looked at, and the only thing that tells them apart is whether the boot id changed.
+    """
+    manager.open("zero-entrance", connection_id="c1", boot_id="boot-1")
+    manager.open("zero-entrance", connection_id="c2", boot_id="boot-1")
+    node = manager.status()["nodes"]["zero-entrance"]
+    assert node["connections"] == 2
+    assert node["restarts"] == 0
+    assert node["restarted_seconds_ago"] is None
+
+    manager.open("zero-entrance", connection_id="c3", boot_id="boot-2")
+    node = manager.status()["nodes"]["zero-entrance"]
+    assert node["connections"] == 3
+    assert node["restarts"] == 1
+    assert node["restarted_seconds_ago"] is not None

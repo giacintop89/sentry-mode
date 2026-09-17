@@ -128,7 +128,7 @@ What it listens for on the serial line:
 | `connect` | Opens the one connection this node makes, and keeps making it again if it drops. |
 | `disconnect` | Says goodbye on it, then closes it and stops trying. |
 | `command <json>` | One command, down the same path a command from the broker takes: the lease, the answer, and the baseline if it is a new grant. For a bench with no hub at the other end. |
-| `status` | Address, signal, clock, credentials, socket, what the client thinks, what is queued, the lease, and every source in the running plan. |
+| `status` | Address, signal, clock, credentials, socket, free heap, what the client thinks, what is queued, the lease, and every source in the running plan. |
 | `time <unix_ms>` | The time, for a board with no network to ask. |
 | `sample` | Every source read now, rather than at the next interval. |
 | `drive <pin> <0|1>` | Drives a pin the plan holds, as a sensor on it would. A board with nothing wired to it can still be made to have something happen. |
