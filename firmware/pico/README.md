@@ -877,12 +877,12 @@ no BTstack in it at all.
 
 ### Something was loud
 
-`PICO-07` asks for a microphone on the board and for nothing but activity to come off it.
-Both halves matter, and the second one is a promise rather than an omission: there is no
-encoder here, no room to hold a second of sound and no stream for one to go out on. A
-microphone on this board produces `audio.activity` — `true` when it has been loud for long
-enough, `false` when it has been quiet for long enough — and that is the whole of what
-leaves it. An `audio.start` command is refused with `this node sends no sound`.
+`PICO-07` asks for a microphone on the board and for an activity event to come off it. A
+microphone here produces `audio.activity` — `true` when it has been loud for long enough,
+`false` when it has been quiet for long enough — and that is what it produces whether or not
+anybody is listening. Sending the sound itself is `PICO-08`, below; this increment is the
+judgement, and the judgement is made on the board in every case, because a node that only
+knew it had been loud while somebody was watching would not be a sensor.
 
 The judgement is the agent's, written again in `src/core/acoustic.cpp` and tested against
 the same numbers: the level of a block in dB full scale, a threshold, `activity_min_seconds`
@@ -963,6 +963,80 @@ microphone meant, whether the channel is the channel and whether a loud room rea
 room. The PIO program is written to the Philips timing and the arithmetic is tested against
 synthetic tones, and neither of those is a microphone.
 
+### Sound the hub can hear
+
+`PICO-08` is the other half: a browser opens `pico-ingresso.hall-noise` and the board sends
+the sound while it is open. It is a second TLS connection, made when somebody starts
+listening and dropped when nobody is, and the broker's connection is never touched to make
+room for it — the lease, the commands and the events go on over the first one while the
+second is carrying audio.
+
+What goes over it is the same format a Pi sends, written in `src/protocol/audio.cpp`: a
+thirty-byte header — `SMA1`, the version, a flag that says a block was lost before this one,
+a sequence, the sample this block starts at, when it was captured, and how many samples it
+carries — and then the samples themselves, signed 16-bit little-endian at 16 kHz. Eight
+tests cover the writer, and `tools/audio_check.py` feeds what it writes to the hub's own
+`Reassembler`, a byte at a time as well as whole, so the check is against the reader that
+will actually read it rather than against a second opinion written here.
+
+Measured on a Pico 2 W against the running hub, listening through `/api/audio/monitor`:
+
+```
+{'blocks': 271, 'duplicates': 0, 'gaps': 0, 'node_gaps': 0, 'lost_samples': 0, 'filled_samples': 0}
+# audio=idle blocks=271 dropped=0 connections=1 last=the hub asked it to stop
+# credentials=yes socket=open mqtt=online queued=0 coalesced=0 dropped=0
+```
+
+271 blocks of 1600 samples is 27 seconds of sound in the 30 the listener was open, the rest
+being the dial and the handshake; the hub counted every one of them and had to invent
+nothing. Then a run of 97 seconds across four renewals, five connections in a row, and the
+hub killed in the middle of a stream: the board kept its broker connection, let the grant
+expire, queued its events, and picked the microphone up again when the hub came back. Free
+heap stayed at 307 kB throughout.
+
+Three things had to be fixed to get there, and all three were found by the board rather than
+by a test:
+
+**The hub would not speak 1.2.** `media_gateway.py` requires TLS 1.3 and this firmware had
+only 1.2 compiled in, so every attempt ended in `UNSUPPORTED_PROTOCOL` before a byte of
+sound. The plan's rule for this gate is that the hub's security does not come down to meet a
+microcontroller, so 1.3 went in instead: `MBEDTLS_SSL_PROTO_TLS1_3`, ephemeral key exchange
+only, PSA for the key schedule, and the four library sources the SDK's own CMake leaves out.
+It cost 28 kB of flash and 2 kB of RAM. The first handshake then died at the encrypted
+extensions with `ChangeCipherSpec invalid in TLS 1.3 without compatibility mode` — OpenSSL
+sends that empty record so that middleboxes written for 1.2 let the connection past, and a
+client has to be told to expect it.
+
+**A write bigger than a record stopped the program.** With 1.3 up, the first block reached
+`mbedtls_ssl_write`, which took one record's worth and said so, and the layer between
+mbedTLS and lwIP treats a short write as impossible: `*** PANIC *** ret <= 0`, and a board
+that rebooted every time the hub asked for sound. Nothing here hands it more than a record
+will hold now, and under 1.3 that is less than the buffer — the record also carries the real
+content type and padding to the next step of sixteen. An MQTT packet has to fit in one
+record because it goes whole or not at all, and a `static_assert` in `net.cpp` says so
+against `kMaxPacketBytes` rather than leaving it to be discovered again.
+
+**The sequence restarted under the hub's feet.** Blocks are captured while the connection is
+still being made, so some are already queued when the gateway answers; the code reset the
+sequence to zero at that moment, and the hub saw three blocks it had already counted followed
+by a hole where they should have been. The count belongs to the stream, not to the
+connection — a connection that drops and is remade gets a fresh reader at the other end
+anyway — so it is set once, when the stream starts. Before and after, on the same board:
+
+```
+{'blocks': 236, 'duplicates': 6, 'gaps': 2, 'lost_samples': 9600, 'filled_samples': 9600}
+{'blocks': 236, 'duplicates': 0, 'gaps': 0, 'lost_samples': 0,    'filled_samples': 0}
+```
+
+The same run found one on the hub: a connection's counts were added to the totals twice,
+once by the gateway closing the sink and once by the stream that asked for it, so every
+number in `/api/microphones` was doubled. A sink now hands its count over and keeps an empty
+one, so it is counted once however many times it is closed.
+
+**Still no microphone attached.** The sound above is the silence of three bare pins, sent
+end to end and reassembled. Everything about the transport has been measured; nothing about
+what a microphone would put on the wire has.
+
 ## What is in here
 
 | Path | What it is |
@@ -997,7 +1071,9 @@ synthetic tones, and neither of those is a microphone.
 | `src/device/btstack_config.h` | What of BTstack is compiled in: a scanner, no bonding, no flash storage — the sectors that would take are the vault's. |
 | `include/sentry/acoustic.h`, `src/core/acoustic.cpp` | What a level is and what makes it an event: dB full scale over a block, a threshold with six decibels of hysteresis under it, and the seconds either side. The agent's numbers, and no pin anywhere in it. |
 | `src/device/i2s.pio`, `src/device/i2s.h`, `src/device/i2s.cpp` | The microphone: a state machine clocking a Philips I²S frame and two DMA channels that start each other, so no sound is lost between one block and the next. A block is read once and handed straight back; nothing here keeps audio. |
-| `tests/` | The twenty-one suites, and a tiny harness rather than a test framework. |
+| `include/sentry/audio.h`, `src/protocol/audio.cpp` | The shape sound leaves in: the thirty-byte block header, the line the gateway is greeted with, and the reading of its one-line answer. Checked against the published contract and against the hub's own reader. |
+| `src/device/media.h`, `src/device/media.cpp` | The second connection: dial, greet, and send while the hub is listening. Four blocks of queue, the oldest unsent one dropped when it fills, and the hole marked so the hub can fill it. |
+| `tests/` | The twenty-two suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful
@@ -1025,9 +1101,8 @@ fails here, in a second, rather than at link time on a target with neither.
   something a `tear` verb can stand in for.
 - Every driver in the hub's catalogue for this platform is now here: `board`, `gpio`,
   `adc`, `onewire`, `ble` and `microphone`. A configuration naming anything else — a
-  BME280, a camera — is refused by name. So are the stream commands, and they will stay
-  refused: there is no camera on this board, and the microphone that may be on it has
-  nowhere to put a second of sound.
+  BME280, a camera — is refused by name. So is `video.start`, and it will stay refused:
+  there is no camera on this board and no encoder to put a frame through.
 - How long a reading waited. Every event goes out with `queued_ms: 0`, because the queue
   does not record when something was put in it. A reading that waited forty seconds says
   so only through its own `occurred_at`, which is the honest field but not the one the

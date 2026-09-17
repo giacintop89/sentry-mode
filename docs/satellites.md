@@ -65,9 +65,8 @@ the name it authenticated as, and the name inside its messages all have to agree
 
 Not every satellite is a small Linux computer. A microcontroller running the Sentry
 firmware has the drivers that were compiled into it, a few kilobytes for its configuration,
-no filesystem for a path to point into, no camera, and a microphone it can only tell you
-something was loud with. The hub has to know which kind it is talking to before it sends
-anything, so a node is registered as one:
+no filesystem for a path to point into, and no camera. The hub has to know which kind it is
+talking to before it sends anything, so a node is registered as one:
 
     python scripts/satellite_admin.py platforms
     python scripts/satellite_admin.py register --node pico-ingresso --platform pico-w-sensor
@@ -75,8 +74,8 @@ anything, so a node is registered as one:
 | Platform | Board | Drivers | Sources | Configuration | Streams |
 | --- | --- | --- | --- | --- | --- |
 | `linux-agent` | Pi Zero W or similar, running the Python agent | gpio, onewire, bme280, adc, csi, microphone, ble, board, dummy | 32 | 64 KiB | video, audio |
-| `pico-w-sensor` | Pico W (RP2040) | gpio, onewire, adc, ble, microphone, board | 16 | 4 KiB | none |
-| `pico-2w-sensor` | Pico 2 W (RP2350) | gpio, onewire, adc, ble, microphone, board | 24 | 8 KiB | none |
+| `pico-w-sensor` | Pico W (RP2040) | gpio, onewire, adc, ble, microphone, board | 8 | 2 KiB | audio |
+| `pico-2w-sensor` | Pico 2 W (RP2350) | gpio, onewire, adc, ble, microphone, board | 8 | 2 KiB | audio |
 
 `--platform` defaults to `linux-agent`, which is what every node registered before this
 existed is, and what the page goes on showing them as. If a node turns out to be something
@@ -415,10 +414,15 @@ error and its level.
 
 A Pico W or Pico 2 W takes a microphone too, and reports the same `audio.activity` with the
 same thresholds and the same hysteresis — the firmware carries its own copy of those rules
-for the same reason it carries the presence ones. What it does not do is send sound, and
-that is a promise rather than a gap: there is no encoder on the board, nowhere to hold a
-second of audio, and an `audio.start` for one of these nodes is refused with `this node
-sends no sound`. It does not appear in `/api/microphones` and no browser can listen to it.
+for the same reason it carries the presence ones. It can also be listened to. The hub shows
+it in `/api/microphones` as `pico-ingresso.hall-noise` like any other satellite microphone,
+and a browser that opens it makes the board dial the media gateway on a second TLS
+connection and send the same blocks of sound a Pi sends.
+
+Nothing is kept on the board. A block is measured, handed to that connection if somebody is
+listening, and then overwritten — there is no recording on a microcontroller and no way to
+ask one for what it heard a minute ago. When nobody is listening there is no second
+connection at all, and the only thing the microphone produces is `audio.activity`.
 
 ```json
 {"id": "hall-noise", "kind": "microphone", "pin": 6, "clock_pin": 7,
@@ -437,6 +441,10 @@ sends no sound`. It does not appear in `/api/microphones` and no browser can lis
 - One microphone to a board. There is one state machine clocking I²S and one pair of
   buffers behind it, so a second source is refused before it is sent rather than quietly
   started on the first one's clock.
+- While the hub is listening, the board holds four blocks — four hundred milliseconds. If
+  the connection falls behind, the oldest block that has not started going out is dropped
+  and the hole is marked, so the hub fills it with silence and the sound after it stays
+  where it happened. The half-sent block is never the one thrown away.
 
 ## Presence
 
