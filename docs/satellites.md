@@ -113,8 +113,12 @@ own word — there is no field on the wire in which a node declares what it supp
 A configuration is checked against the node's platform before it is sent, and refused with
 a reason: a driver the firmware does not have, more sources than the board takes, an option
 naming a file or an ALSA device on a board that has neither, a list too large to hold, a
-source that names no pin when its driver is a pin, or an option the driver has no place for
-— `interval_seconds` on a wire that only speaks when it changes. The same word can belong
+source that names no pin when its driver is a pin, an option the driver has no place for
+— `interval_seconds` on a wire that only speaks when it changes — or more than eight
+settings on one source, which is what the firmware keeps room for beside a source's name
+and kind. That last one is not a setting the node would drop: a ninth makes it give up on
+the command it arrived in, so one crowded source would take the whole configuration with
+it. A `ble` source is the one that can reach nine, having that many to choose from. The same word can belong
 to one driver and not another, and is judged per driver: `device` on a 1-Wire source is a
 probe on a bus rather than a sound card. The node checks all of it again and has the last
 word; this is here so that a mistake the hub can see is an error on the page rather than a

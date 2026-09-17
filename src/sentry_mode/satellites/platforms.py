@@ -174,6 +174,15 @@ def known(name: str) -> bool:
 #
 # `enabled` is left out on purpose. It is a field of every source rather than an option of
 # any driver, and both sides treat it that way.
+# The most settings one source may carry to a board. `kMaxOptions` in the firmware's
+# `command.h` is eight, and everything written beside `id` and `kind` is one of them —
+# `enabled` included, because the node reads its own file back the way it arrived. A ninth
+# is not quietly dropped: the parser gives up on the command it is inside, so one crowded
+# source would take the whole configuration down with it, which is why this is caught
+# before anything is sent. A `ble` source is the one that can reach it, having nine
+# settings to choose from.
+MAX_FIRMWARE_OPTIONS = 8
+
 FIRMWARE_OPTIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "board": ((), ("measure", "interval_seconds")),
     "gpio": (
@@ -250,6 +259,13 @@ def check_configuration(chosen: Platform, entries: list[dict]) -> list[str]:
         # What this driver has a place for. A kind the firmware does not have at all has
         # been refused by name already, and nothing more can be said about its options.
         needed, known = FIRMWARE_OPTIONS.get(kind, ((), ()))
+        carried = [option for option in entry if option not in ("id", "kind")]
+        if len(carried) > MAX_FIRMWARE_OPTIONS:
+            reasons.append(
+                f"{name}: {len(carried)} settings beside its name and kind; a "
+                f"{chosen.name} takes {MAX_FIRMWARE_OPTIONS}, and the one too many is "
+                "refused along with the rest of the configuration"
+            )
         for option in needed:
             if entry.get(option) is None:
                 reasons.append(f"{name}: a {kind} source needs {option}, and this one names none")

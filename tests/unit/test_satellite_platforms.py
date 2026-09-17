@@ -547,3 +547,31 @@ def test_a_node_can_be_registered_as_a_microcontroller_from_a_shell(capsys, tmp_
 def test_a_kind_no_satellite_has_a_driver_for_never_becomes_a_request():
     with pytest.raises(ValueError, match="cannot be configured"):
         ConfigureRequest(node_id="pico-1", sources=[{"id": "x", "kind": "lidar"}])
+
+
+def test_a_source_with_more_settings_than_the_firmware_can_hold_is_refused():
+    # Nine, which is what a `ble` source watching a beacon reaches when it is also told it
+    # is enabled. The firmware keeps eight per source and refuses the whole command when a
+    # ninth arrives, so this is the difference between an error on the page and a
+    # configuration that comes back `failed` in its entirety.
+    beacon = {
+        "id": "ghost",
+        "kind": "ble",
+        "ibeacon_uuid": "e2c56db5-dffb-48d2-b060-d0f5a71096e0",
+        "ibeacon_major": 1,
+        "ibeacon_minor": 7,
+        "rssi_min": -80,
+        "enter_sightings": 2,
+        "enter_window_seconds": 10,
+        "absent_after_seconds": 60,
+        "event_kind": "presence.person",
+    }
+    assert platforms.check_configuration(PICO, [beacon]) == []
+    wrong = platforms.check_configuration(PICO, [{**beacon, "enabled": True}])
+    assert wrong == [
+        "ghost: 9 settings beside its name and kind; a pico-w-sensor takes 8, and the one "
+        "too many is refused along with the rest of the configuration"
+    ]
+    # The same source on a machine with a Python agent in front of it is nobody's business
+    # here: it reads a dictionary, not eight fixed slots.
+    assert platforms.check_configuration(platforms.LINUX, [{**beacon, "enabled": True}]) == []

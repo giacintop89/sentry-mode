@@ -478,6 +478,19 @@ The first of those came back to the hub as the `detail` of a `failed` ack while 
 went on running the three sources it already had, which is the whole-or-nothing rule seen
 from the other end.
 
+There is a limit on the other side of that rule which the hub had not been checking. A
+source here holds eight settings beside its `id` and its `kind` — `kMaxOptions` in
+`command.h` — and everything written next to those two is one of them, `enabled` included.
+A ninth is not a setting the board ignores: the parser gives up on the command it is inside,
+so one crowded source takes the whole configuration down with it. A `ble` source is the one
+that can reach nine, having that many to choose from. The hub now says so before sending,
+measured against the running hub:
+
+```
+400 {"error": "pir-1: 9 settings beside its name and kind; a pico-2-wired takes 8, and the
+     one too many is refused along with the rest of the configuration; …"}
+```
+
 The fourth is a bus rather than a pin. A `onewire` source is a DS18B20 on a GPIO, named
 the way the Linux agent names one — `28-0123456789ab`, which is the kernel's spelling of
 its ROM code — or left unnamed, which means the one probe on the bus. The name is worth
