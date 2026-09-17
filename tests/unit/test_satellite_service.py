@@ -380,6 +380,26 @@ def test_a_deliberate_refusal_is_acknowledged_so_it_is_not_sent_for_ever(service
     assert service._transport.settled[-1].endswith("/events")
 
 
+def test_a_heartbeat_is_acknowledged_so_the_brokers_window_does_not_fill(service):
+    """Nothing about a heartbeat is written down, so nothing is gained by holding it.
+
+    A node that publishes its health at QoS 1 — the Pico firmware does — fills the
+    broker's in-flight window for the hub's own connection if the hub never acknowledges
+    one. What that looks like from the outside is a node that is publishing and a hub that
+    has stopped hearing it, with nothing in either log to say so.
+    """
+    online(service)
+    for channel, document in (
+        ("health", {"schema_version": 1, "node_id": "zero-entrance", "queue": {}}),
+        ("acks", {"schema_version": 1, "node_id": "zero-entrance", "command_id": "none"}),
+        ("state", hello()),
+    ):
+        settled = len(service._transport.settled)
+        service.handle(message(channel, document))
+        assert len(service._transport.settled) == settled + 1
+        assert service._transport.settled[-1].endswith(f"/{channel}")
+
+
 def test_a_node_over_its_budget_is_refused_and_the_others_are_not(tmp_path):
     config = SatellitesConfig(
         enabled=True,

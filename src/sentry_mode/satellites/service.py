@@ -290,6 +290,14 @@ class SatelliteService:
             self._settle(message)
             return
         handler(message, document)
+        if message.channel != "events":
+            # An event is acknowledged by the handler, once it is written down, so that one
+            # the hub could not keep is delivered again. Nothing else is written down, so
+            # there is nothing to redeliver it for — and a message left unacknowledged
+            # stays in the broker's window for this connection. When that window fills the
+            # broker stops delivering at QoS 1 altogether: a node whose heartbeat is sent
+            # that way goes quiet here while still publishing every fifteen seconds.
+            self._settle(message)
 
     def _settle(self, message: Message) -> None:
         try:
