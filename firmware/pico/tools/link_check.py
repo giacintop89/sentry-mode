@@ -93,7 +93,7 @@ def by_the_contract(raw: bytes) -> tuple[int, int, bytes]:
 
 def check_what_the_firmware_wrote(build: Path) -> int:
     written = emitted(build)
-    wanted = {"state", "event", "health", "ack", "empty", "longest", "top-counter"}
+    wanted = {"state", "event", "health", "ack", "said", "empty", "longest", "top-counter"}
     missing = wanted - set(written)
     if missing:
         raise SystemExit(f"the firmware wrote nothing for {sorted(missing)}")
@@ -150,29 +150,32 @@ def check_what_the_firmware_reads(build: Path) -> int:
     packed = {
         "hello": bridge.pack(bridge.Frame(bridge.Carries.HELLO, 0, b"")),
         "time": bridge.pack(bridge.Frame(bridge.Carries.TIME, 1, b'{"unix_ms":1789000000000}')),
+        # A line somebody typed at the board, which is how a wired one is provisioned.
+        "typed": bridge.pack(bridge.Frame(bridge.Carries.TYPED, 2, b"status")),
         "command": bridge.pack(
-            bridge.Frame(bridge.Carries.COMMANDS, 2, b'{"schema_version":1,"action":"stop"}')
+            bridge.Frame(bridge.Carries.COMMANDS, 3, b'{"schema_version":1,"action":"stop"}')
         ),
         # The board must refuse this one: only a bridge sends commands, so a frame of
         # events arriving from the bridge is a bridge doing something it never does.
-        "event-from-the-bridge": bridge.pack(bridge.Frame(bridge.Carries.EVENTS, 3, b"{}")),
+        "event-from-the-bridge": bridge.pack(bridge.Frame(bridge.Carries.EVENTS, 4, b"{}")),
     }
     # And one that arrived damaged, which has to cost that frame and nothing after it.
-    broken = bytearray(bridge.pack(bridge.Frame(bridge.Carries.COMMANDS, 4, b'{"a":1}')))
+    broken = bytearray(bridge.pack(bridge.Frame(bridge.Carries.COMMANDS, 5, b'{"a":1}')))
     broken[bridge.HEADER.size + 2] ^= 0xFF
     packed["damaged"] = bytes(broken)
     packed["after-the-damaged-one"] = bridge.pack(
-        bridge.Frame(bridge.Carries.COMMANDS, 5, b'{"after":true}')
+        bridge.Frame(bridge.Carries.COMMANDS, 6, b'{"after":true}')
     )
 
     heard, counts = read_back(build, packed)
     expected = {
         "hello": ("hello", 0, ""),
         "time": ("time", 1, '{"unix_ms":1789000000000}'),
-        "command": ("commands", 2, '{"schema_version":1,"action":"stop"}'),
+        "typed": ("typed", 2, "status"),
+        "command": ("commands", 3, '{"schema_version":1,"action":"stop"}'),
         "event-from-the-bridge": ("refused", 0, ""),
         "damaged": ("refused", 0, ""),
-        "after-the-damaged-one": ("commands", 5, '{"after":true}'),
+        "after-the-damaged-one": ("commands", 6, '{"after":true}'),
     }
     for name, want in expected.items():
         if heard.get(name) != want:

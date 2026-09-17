@@ -76,6 +76,8 @@ talking to before it sends anything, so a node is registered as one:
 | `linux-agent` | Pi Zero W or similar, running the Python agent | gpio, onewire, bme280, adc, csi, microphone, ble, board, dummy | 32 | 64 KiB | video, audio |
 | `pico-w-sensor` | Pico W (RP2040) | gpio, onewire, adc, ble, microphone, board | 8 | 2 KiB | audio |
 | `pico-2w-sensor` | Pico 2 W (RP2350) | gpio, onewire, adc, ble, microphone, board | 8 | 2 KiB | audio |
+| `pico-wired` | Pico (RP2040), no radio, reached by a bridge | gpio, onewire, adc, microphone, board | 8 | 2 KiB | — |
+| `pico-2-wired` | Pico 2 (RP2350), no radio, reached by a bridge | gpio, onewire, adc, microphone, board | 8 | 2 KiB | — |
 
 `--platform` defaults to `linux-agent`, which is what every node registered before this
 existed is, and what the page goes on showing them as. If a node turns out to be something
@@ -83,9 +85,17 @@ else, correct the record rather than re-registering it:
 
     python scripts/satellite_admin.py describe --node pico-ingresso --platform pico-2w-sensor
 
-Both microcontroller entries are marked **experimental** everywhere they appear, on the
-page and in the shell. A Pico 2 W has been run against this hub — provisioned, connected,
-configured, and read from; a Pico W has not, and no board has been through the whole
+The two wired entries are the same chips without a radio. They are not a lesser Pico W:
+they cannot reach a broker at all, and are reached over the USB cable that powers them by
+`scripts/pico_bridge.py`, below. What changes is what they can be asked for — no Bluetooth,
+so no `ble` source, and no live audio, because the hub hears a board's microphone over a
+second TLS connection the board makes and a board with no radio cannot make one. A
+microphone is still a source on them: saying something was loud happens where the sound is.
+
+Every microcontroller entry is marked **experimental** everywhere it appears, on the page
+and in the shell. A Pico 2 W has been run against this hub — provisioned, connected,
+configured, and read from — and a Pico 2 has been run as a wired node, bridged, configured
+and read from. A Pico W and a Pico have not, and no board has been through the whole
 acceptance matrix. `firmware/pico/README.md` says which parts were executed on hardware and
 which were not.
 
@@ -128,6 +138,65 @@ the most reassuring of the answers it could have given; the Linux agent does not
 at all. Which reset it was decides who has to look: a board that keeps coming back on the
 watchdog has a fault in it, and one that keeps coming back on a brown-out has a power
 supply problem that no change to this hub will fix.
+
+## A board with no radio
+
+A Pico or Pico 2 without a W has no radio, so it cannot be a satellite on its own. It can
+still be one: plug it into a machine that already is, and run the bridge there.
+
+    pip install -e '.[bridge]'
+    python scripts/pico_bridge.py --config /etc/sentry-mode/pico-bridge.json
+
+The file says which port is which node, and holds that node's own certificate:
+
+```json
+{
+  "broker": {"host": "hub.local", "port": 8883, "ca": "/etc/sentry-mode/satellites/ca.crt"},
+  "nodes": [
+    {
+      "node_id": "pico-cablato",
+      "port": "/dev/serial/by-id/usb-Raspberry_Pi_Pico_2_E66...",
+      "certificate": "/etc/sentry-mode/satellites/pico-cablato.crt",
+      "key": "/etc/sentry-mode/pico-cablato.key"
+    }
+  ]
+}
+```
+
+Issue that certificate and register the node exactly as for any other, with the platform
+the board is: `pico-wired` or `pico-2-wired`. Use a path under `/dev/serial/by-id/` rather
+than `/dev/ttyACM0`, which is whichever board enumerated first.
+
+**The bridge is not a second rule engine.** It does not read an event, decide anything
+about it, or change it. A frame's payload is published exactly as the board wrote it and a
+command is handed over exactly as the hub sent it; the rules run on the hub.
+
+**A board is trusted because somebody plugged it in and wrote it down.** A USB serial
+number is a string a device chooses for itself, so the identity comes from the mapping
+above and from nothing else. A board whose messages claim another node's name has those
+messages refused and counted, never published — otherwise anything plugged into that
+machine could speak as any satellite. The board says so from its side too: its retained
+state carries `reached_by: bridge`, and the page and `/api/satellites` show it, because a
+bridged node has a second thing that has to be running for it to be heard at all.
+
+**Unplugged is offline.** The bridge connects as the node with the node's own goodbye as
+its will, so a bridge that is killed reads on the hub exactly like a node that went away;
+when the cable goes, the goodbye is published straight away. Either way the session ends,
+the grant with it, and the node's sources go to unknown — nothing is reporting them.
+
+What crosses the cable is framed: a magic, a version, what it carries, a counter, a length
+and a CRC-32, written down in `contracts/satellite/v1/bridge.json`. The board's console is
+framed too, in both directions, so a line of diagnostics can never be read as a message and
+a message never lands in somebody's terminal. That is also how a wired board is
+provisioned, since the cable is the only way in:
+
+    python scripts/pico_bridge.py --config ... --console pico-cablato
+
+Anything typed then goes to the board's console, and everything the board prints is logged
+with its name in front of it. `status` on a wired board reports the cable rather than a
+radio: whether a host has the port open, whether a bridge has said hello, and how many
+frames were sent, read, thrown away or missed. Those last numbers are zero on a cable that
+is working.
 
 ## The broker
 

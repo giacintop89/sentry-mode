@@ -13,10 +13,12 @@
 // neither does a USB serial number. A device on this link is trusted because somebody
 // plugged it in and wrote it into the bridge's configuration, and for no other reason.
 //
-// What a frame carries is one of the five channels this node already has, plus two the
+// What a frame carries is one of the five channels this node already has, plus four the
 // cable needs and the air does not: the time, because a board with no radio has no SNTP to
-// ask, and a hello, which is the bridge saying it is here. The kind is also the direction,
-// and a frame from the wrong side is refused rather than acted on.
+// ask; a hello, which is the bridge saying it is here; and the two halves of the console,
+// because this board has one USB port and text sharing it unmarked is text that can be
+// read as a frame. The kind is also the direction, and a frame from the wrong side is
+// refused rather than acted on.
 //
 // Nothing here allocates and nothing here keeps a frame: the caller owns every buffer, as
 // everywhere else under `src/protocol`.
@@ -48,9 +50,11 @@ enum class Carries : uint8_t {
   kCommands = 5,
   kTime = 6,
   kHello = 7,
+  kSaid = 8,   // a line this board printed
+  kTyped = 9,  // a line somebody sent this board's console
 };
 
-// The four a board sends, and the three a bridge sends. Anything else is neither.
+// What a board sends, and what a bridge sends. Anything else is neither.
 bool from_the_node(Carries what);
 bool to_the_node(Carries what);
 

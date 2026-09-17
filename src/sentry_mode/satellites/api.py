@@ -126,6 +126,10 @@ def _node(node: dict) -> dict:
         "freshness": node.get("freshness"),
         "online": bool(session) and not session.get("closed"),
         "agent_version": reported.get("agent_version"),
+        # Nothing for a node that publishes for itself; "bridge" for one that is plugged
+        # into a machine carrying its messages, because that machine is a second thing
+        # that has to be running for this node to be heard at all.
+        "reached_by": reported.get("reached_by"),
         "config_revision": reported.get("config_revision"),
         "last_seen": health.get("last_seen"),
         "clock_status": health.get("clock_status"),

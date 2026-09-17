@@ -102,8 +102,11 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
   else()
     set(SENTRY_NET src/device/net_wired.cpp)
     set(SENTRY_BLE src/device/ble_none.cpp)
+    # And the cable it has instead: the USB port, carrying frames rather than text.
+    set(SENTRY_BRIDGE src/device/bridge.cpp)
   endif()
   add_executable(sentry_firmware src/device/main.cpp ${SENTRY_NET} ${SENTRY_BLE}
+                                 ${SENTRY_BRIDGE}
                                  src/device/onewire.cpp src/device/i2s.cpp src/device/media.cpp
                                  src/device/flash_vault.cpp src/device/reset_reason.cpp)
   # The I²S receiver is a PIO program, assembled at build time into a header this build
@@ -156,6 +159,13 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
     # Which makes cyw43_arch load the firmware with the controller in it. Without this the
     # chip comes up with Wi-Fi only and the transport has nothing to talk to.
     target_compile_definitions(sentry_firmware PRIVATE CYW43_ENABLE_BLUETOOTH=1)
+  endif()
+  # Which half of the firmware this board runs: a broker over TLS, or a bridge over the
+  # cable it is powered by. One is compiled and the other is not there at all.
+  if(PICO_CYW43_SUPPORTED)
+    target_compile_definitions(sentry_firmware PRIVATE SENTRY_BRIDGED=0)
+  else()
+    target_compile_definitions(sentry_firmware PRIVATE SENTRY_BRIDGED=1)
   endif()
   target_compile_options(sentry_firmware PRIVATE -Wall -Wextra -Wshadow -Werror)
   # Over USB, so one cable carries the power and everything this program says. The UART

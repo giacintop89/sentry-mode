@@ -227,6 +227,23 @@ def test_a_board_with_a_radio_is_the_only_one_offered_a_watch():
     ) == ["phone.pin: a ble source on a pico-w-sensor has no pin"]
 
 
+def test_a_board_with_no_radio_is_offered_neither_a_watch_nor_a_stream():
+    # The same chip without a CYW43 on it. It is not a lesser Pico W: there is no Bluetooth
+    # to watch with, and the hub's way of hearing a microphone live is a second TLS
+    # connection the board makes — which a board with no radio cannot make. A microphone
+    # is still a source, because saying something was loud happens where the sound is.
+    for name in ("pico-wired", "pico-2-wired"):
+        wired = platforms.CATALOGUE[name]
+        assert "ble" not in wired.drivers
+        assert "microphone" in wired.drivers
+        assert wired.streams == ()
+        assert wired.max_sources == PICO.max_sources
+        assert wired.max_config_bytes == PICO.max_config_bytes
+        assert platforms.check_configuration(
+            wired, [{"id": "phone", "kind": "ble", "address": "AA:BB:CC:DD:EE:FF"}]
+        ) == [f"phone: a {name} has no ble driver"]
+
+
 def test_a_board_listens_to_one_microphone_and_says_so_before_the_round_trip():
     # Three pins and a threshold. The board has one state machine clocking I²S and one
     # block of samples behind it, so a second microphone is refused by name rather than

@@ -31,11 +31,12 @@ uint16_t take16(const uint8_t* from) {
 
 bool from_the_node(Carries what) {
   return what == Carries::kEvents || what == Carries::kState || what == Carries::kHealth ||
-         what == Carries::kAcks;
+         what == Carries::kAcks || what == Carries::kSaid;
 }
 
 bool to_the_node(Carries what) {
-  return what == Carries::kCommands || what == Carries::kTime || what == Carries::kHello;
+  return what == Carries::kCommands || what == Carries::kTime || what == Carries::kHello ||
+         what == Carries::kTyped;
 }
 
 const char* name_of(Carries what) {
@@ -56,6 +57,10 @@ const char* name_of(Carries what) {
       return "time";
     case Carries::kHello:
       return "hello";
+    case Carries::kSaid:
+      return "said";
+    case Carries::kTyped:
+      return "typed";
   }
   return "unknown";
 }

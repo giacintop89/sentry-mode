@@ -108,6 +108,19 @@
       "default": null,
       "title": "Profile"
     },
+    "reached_by": {
+      "anyOf": [
+        {
+          "const": "bridge",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reached By"
+    },
     "config_revision": {
       "anyOf": [
         {

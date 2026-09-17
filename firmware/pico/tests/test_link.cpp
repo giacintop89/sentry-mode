@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "harness.h"
@@ -265,6 +266,37 @@ TEST(the_largest_payload_goes_through_whole) {
   CHECK(heard.what.size() == 1);
   CHECK(heard.payloads[0].size() == kMaxLinkPayload);
   CHECK(heard.payloads[0] == big);
+}
+
+TEST(the_console_travels_in_frames_and_only_in_the_direction_it_is_spoken) {
+  // This board has one USB port, so a line it prints goes down the same cable as its
+  // readings. Carried as what it is, it can never be read as a frame and a frame can never
+  // land in somebody's terminal — and the direction is still the direction: what this
+  // board prints, it does not receive.
+  LinkReader bridge_side(true);
+  const Heard said = feed(bridge_side, framed(Carries::kSaid, 0, "# ready\n"));
+  CHECK(said.what.size() == 1);
+  CHECK(said.what[0] == Carries::kSaid);
+  CHECK(said.payloads[0] == "# ready\n");
+
+  LinkReader board_side(false);
+  const Heard typed = feed(board_side, framed(Carries::kTyped, 0, "status"));
+  CHECK(typed.what.size() == 1);
+  CHECK(typed.payloads[0] == "status");
+
+  // And neither one the other way round.
+  LinkReader strict_board(false);
+  CHECK(feed(strict_board, framed(Carries::kSaid, 0, "# ready\n")).what.empty());
+  CHECK(strict_board.refused() == 1);
+  LinkReader strict_bridge(true);
+  CHECK(feed(strict_bridge, framed(Carries::kTyped, 0, "status")).what.empty());
+  CHECK(strict_bridge.refused() == 1);
+}
+
+TEST(a_frame_is_named_by_what_it_carries) {
+  CHECK(std::string(name_of(Carries::kSaid)) == "said");
+  CHECK(std::string(name_of(Carries::kTyped)) == "typed");
+  CHECK(std::string(name_of(static_cast<Carries>(99))) == "unknown");
 }
 
 int main() { return harness::run_all("link"); }

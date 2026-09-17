@@ -131,6 +131,19 @@ TEST(the_snapshot_is_the_same_message_with_the_optional_parts_filled_in) {
   CHECK(written.find(R"("options":{})") != std::string::npos);
 }
 
+TEST(a_board_with_no_radio_says_that_something_else_is_carrying_what_it_says) {
+  // A board that publishes for itself says nothing about how: that is the ordinary case,
+  // and a field saying "broker" on every message from every node would be noise. A board
+  // reached over a cable says so, because the hub cannot see the difference otherwise —
+  // and because there is then a second thing that has to be running for it to be heard.
+  State on_its_own = a_state();
+  CHECK(written_state(on_its_own).find("reached_by") == std::string::npos);
+
+  State carried = a_state();
+  carried.reached_by = "bridge";
+  CHECK(written_state(carried).find(R"("reached_by":"bridge")") != std::string::npos);
+}
+
 TEST(a_state_the_hub_would_refuse_is_never_written) {
   State bad_node = a_state();
   bad_node.node_id = "Pico_Ingresso";
@@ -138,6 +151,8 @@ TEST(a_state_the_hub_would_refuse_is_never_written) {
   bad_boot.boot_id = "41";
   State long_profile = a_state();
   long_profile.profile = "a-profile-name-far-longer-than-the-thirty-two-characters-allowed";
+  State long_reach = a_state();
+  long_reach.reached_by = "a-word-for-this-far-longer-than-the-thirty-two-characters-allowed";
   DeclaredSource wrong_driver[] = {{"pir-1", "GPIO", true, nullptr, 0}};
   State bad_driver = a_state();
   bad_driver.sources = wrong_driver;
@@ -147,7 +162,7 @@ TEST(a_state_the_hub_would_refuse_is_never_written) {
   bad_source.sources = joined;
   bad_source.source_count = 1;
 
-  const State cases[] = {bad_node, bad_boot, long_profile, bad_driver, bad_source};
+  const State cases[] = {bad_node, bad_boot, long_profile, long_reach, bad_driver, bad_source};
   char buffer[2048];
   for (const State& one : cases) {
     CHECK(write_state(one, buffer, sizeof(buffer)) == 0);

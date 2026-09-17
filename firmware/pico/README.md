@@ -114,16 +114,18 @@ that should not be in it. Four boards are built by the workflow and were built b
 
 | `PICO_BOARD` | Chip | Radio | UF2 |
 |---|---|---|---|
-| `pico2_w` | RP2350 | yes | 1.00 MB |
-| `pico_w` | RP2040 | yes | 1.05 MB |
-| `pico2` | RP2350 | no | 275 kB |
-| `pico` | RP2040 | no | 294 kB |
+| `pico2_w` | RP2350 | yes | 1.24 MB |
+| `pico_w` | RP2040 | yes | 1.30 MB |
+| `pico2` | RP2350 | no | 332 kB |
+| `pico` | RP2040 | no | 352 kB |
 
 The wired ones are a quarter of the size because they compile a different network module —
 `net_wired.cpp`, which answers "no radio" and nothing else — and with it no lwIP, no
-mbedTLS and no TLS stack at all. Everything else is the same firmware: the sources, the
-plan, the vault and the serial console all work on a board that cannot connect to anything,
-which is what `PICO-03`'s USB bridge will need. Only `pico2_w` has been run on hardware.
+mbedTLS and no TLS stack at all. What they compile instead is `bridge.cpp`: the USB port,
+carrying frames to the machine the board is plugged into. Everything else is the same
+firmware, and the same file writes the messages either way. `pico2_w` and `pico2` have both
+been run on hardware — the second one on the same board, which is a Pico 2 W with its radio
+never brought up.
 
 Nothing is compiled into any of them that belongs to a particular board.
 `tools/image_check.py` is what says so: it refuses an image carrying a PEM block with a
@@ -1037,6 +1039,62 @@ one, so it is counted once however many times it is closed.
 end to end and reassembled. Everything about the transport has been measured; nothing about
 what a microphone would put on the wire has.
 
+### A board with no radio
+
+`PICO-09` asks for the other kind of Pico to be a satellite: one without a W in its name,
+which cannot reach a broker at all. It reaches the machine that powers it instead, over the
+USB cable, and that machine — running `scripts/pico_bridge.py` — carries its messages the
+rest of the way.
+
+What crosses the cable is in `contracts/satellite/v1/bridge.json`: a magic, a version, what
+the frame carries, a counter, a length, the payload and a CRC-32 over all of it. The kind is
+also the direction, so a node that sent a command or a bridge that sent an event is refused
+rather than believed. `tools/link_check.py` runs both ends against each other in `make pico`
+— the firmware frames by hand at offsets it decides for itself, the bridge uses `struct` and
+`zlib`, and neither has read the other.
+
+The board has one USB port, so **the console goes down it too, inside frames**: `said` is a
+line the board printed, `typed` is a line somebody sent it. The alternative was text and
+frames sharing the channel unmarked, where a line of diagnostics can be read as a frame and
+a frame lands in somebody's terminal. `bridge.cpp` registers a stdio driver, so `printf` and
+`getchar` work exactly as they do on a board with a serial monitor, and provisioning a wired
+board is the same conversation it is on a wireless one.
+
+The messages themselves are written by the same functions as on a board with a radio —
+`serve_the_bridge` climbs the same ladder as `serve_the_broker`: the announcement first,
+then what the hub is waiting for, then a reading, and only if the lease allows it. Two
+things differ. There is no acknowledgement to wait for, so a frame written to an open port
+finishes that message; and there is no session to negotiate, because a bridge saying hello
+*is* the connection. The lease, the spool, the order and the goodbye are unchanged.
+
+**A Pico 2 was run against this hub on 2026-09-17** — as `pico-cablato`, on the same board
+as `pico-ingresso` with its radio never brought up. It was provisioned over the cable,
+announced itself, was granted, was configured from the hub twice, and reported board
+temperature, a GPIO and a microphone's activity into the journal. Over four and a half
+minutes: 54 frames out, 12 in, `discarded=0 missed=0 refused=0`, `heap_free=401kB` — a
+hundred kilobytes more than the same board with the TLS stack in it.
+
+Three things were tried on purpose:
+
+- **A board claiming to be another node.** Before it was provisioned it announced itself as
+  `pico-ingresso` on a port mapped to `pico-cablato`. Nothing was published, and the bridge
+  said what it had refused. That is the only identity check there is on this link: a USB
+  serial number is a string a device chooses for itself.
+- **The bridge killed with `SIGKILL`.** The hub saw the node go offline two seconds later,
+  from the will the bridge had registered as that node — which is why the bridge waits for
+  the board's first announcement before connecting, since until then there is no connection
+  id for a will to name.
+- **Ninety seconds with nobody on the cable.** The board went on reading, held what it had,
+  and delivered it when the bridge came back on a new connection id. Nothing was dropped and
+  the configuration survived.
+
+**What the hub is told, and by whom.** The board's retained state carries
+`reached_by: bridge`, and `/api/satellites` shows it. The node says it because the node is
+the only one that knows; the bridge forwards what it is handed and writes nothing into it.
+The two wired platforms are in the catalogue as `pico-wired` and `pico-2-wired`, with no
+`ble` driver and no stream: there is no Bluetooth on the chip, and the hub hears a
+microphone over a second TLS connection the board makes, which this board cannot make.
+
 ## What is in here
 
 | Path | What it is |
@@ -1073,7 +1131,9 @@ what a microphone would put on the wire has.
 | `src/device/i2s.pio`, `src/device/i2s.h`, `src/device/i2s.cpp` | The microphone: a state machine clocking a Philips I²S frame and two DMA channels that start each other, so no sound is lost between one block and the next. A block is read once and handed straight back; nothing here keeps audio. |
 | `include/sentry/audio.h`, `src/protocol/audio.cpp` | The shape sound leaves in: the thirty-byte block header, the line the gateway is greeted with, and the reading of its one-line answer. Checked against the published contract and against the hub's own reader. |
 | `src/device/media.h`, `src/device/media.cpp` | The second connection: dial, greet, and send while the hub is listening. Four blocks of queue, the oldest unsent one dropped when it fills, and the hole marked so the hub can fill it. |
-| `tests/` | The twenty-two suites, and a tiny harness rather than a test framework. |
+| `include/sentry/link.h`, `src/protocol/link.cpp` | What crosses the cable to a board with no radio: the frame, its counter and its CRC-32, and a reader that resynchronises on the magic rather than giving up. |
+| `src/device/bridge.h`, `src/device/bridge.cpp` | The USB port on a wired board: frames out, frames in, and the console carried inside them so that no text ever shares the channel unmarked. |
+| `tests/` | The twenty-three suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful

@@ -147,6 +147,18 @@ def test_a_node_may_not_claim_a_source_on_another_node():
         NodeState.model_validate(document)
 
 
+def test_a_node_says_when_something_else_is_carrying_what_it_says():
+    # A satellite with no radio is plugged into a machine that publishes for it. The node
+    # is what says so — the bridge forwards what it is handed and writes nothing into it —
+    # and there is one word for it, so that "reached over a cable" cannot arrive spelled
+    # five ways.
+    document = load(CONTROL / "fixtures/valid/state-online.json")
+    assert NodeState.model_validate(document).reached_by is None
+    assert NodeState.model_validate({**document, "reached_by": "bridge"}).reached_by == "bridge"
+    with pytest.raises(ValidationError):
+        NodeState.model_validate({**document, "reached_by": "usb"})
+
+
 def test_a_state_is_refused_for_more_sources_than_a_node_may_have():
     document = load(CONTROL / "fixtures/valid/state-online.json")
     document["sources"] = [{"source_id": f"pir-{index}", "kind": "gpio"} for index in range(1, 35)]

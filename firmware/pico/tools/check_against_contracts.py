@@ -73,6 +73,7 @@ def check_control(binary: Path) -> int:
     if not lines:
         raise SystemExit("the firmware wrote no control messages")
     said = set()
+    bridged = False
     for number, line in enumerate(lines, start=1):
         name, _, payload = line.partition("\t")
         if name not in MESSAGES:
@@ -83,6 +84,7 @@ def check_control(binary: Path) -> int:
             raise SystemExit(f"the {name} on line {number} is not JSON: {problem}") from problem
         judge(document, MESSAGES[name], schemas[name], f"the {name} on line {number}")
         said.add(name)
+        bridged = bridged or document.get("reached_by") == "bridge"
 
         # A goodbye is the will the broker holds, and lwIP writes a will with 8-bit
         # lengths: topic and payload together have to fit in 255 bytes.
@@ -101,6 +103,11 @@ def check_control(binary: Path) -> int:
     written = {name for name in MESSAGES if name != "command"}
     if said != written:
         raise SystemExit(f"the firmware never wrote a {', '.join(sorted(written - said))}")
+    # A board with no radio says that something else is carrying what it says, and the
+    # hub's model has one word for it. A firmware that stopped saying it, or started
+    # spelling it differently, would leave the hub unable to tell the two kinds apart.
+    if not bridged:
+        raise SystemExit("the firmware never said how a bridged node is reached")
     print(f"{len(lines)} control messages written by the firmware, taken by the hub too")
     return len(lines)
 

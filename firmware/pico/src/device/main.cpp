@@ -48,6 +48,9 @@
 #include <cstring>
 
 #include "ble.h"
+#if SENTRY_BRIDGED
+#include "bridge.h"
+#endif
 #include "i2s.h"
 #include "media.h"
 #include "flash_vault.h"
@@ -68,6 +71,7 @@
 #include "sentry/credentials.h"
 #include "sentry/event.h"
 #include "sentry/identity.h"
+#include "sentry/json.h"
 #include "sentry/sensors.h"
 #include "sentry/lease.h"
 #include "onewire.h"
@@ -233,9 +237,11 @@ uint32_t health_due_ms = 0;
 bool has_last_temperature = false;
 double last_temperature = 0.0;
 
+#if !SENTRY_BRIDGED
 // Bytes that have arrived and are not yet a whole packet.
 uint8_t incoming[sentry::mqtt::kMaxPacketBytes * 2] = {};
 size_t incoming_size = 0;
+#endif
 
 bool wanted = false;             // somebody asked this node to be connected
 uint32_t next_attempt_ms = 0;    // and the backoff says not before this
@@ -245,9 +251,11 @@ bool announced_this_connection = false;
 bool announcement_opens_the_connection = false;
 // What this node runs has changed and the retained state still says otherwise.
 bool owes_a_declaration = false;
+#if !SENTRY_BRIDGED
 // The client is told a connection opened once per connection. It stays offline until the
 // broker's CONNACK, so "it has not said it is connected" is not the same question.
 bool client_told = false;
+#endif
 // Connections that ended before this node was online, since the last one that worked. A
 // handshake the broker refuses fails before the MQTT client is told anything at all, so
 // the waiting between attempts is counted here rather than by the client: a board with a
@@ -335,8 +343,8 @@ bool moment_of(uint64_t& moment, char* stamped, size_t capacity, char* event_id)
   return true;
 }
 
-// One reading, written for a person to see on the cable and put in the queue for the
-// broker. Whether the hub may have it is the lease's business and is decided elsewhere:
+// One reading, put in the queue for the broker — and, on a board whose cable carries text,
+// written out for a person to see as well. Whether the hub may have it is the lease's business and is decided elsewhere:
 // what is taken is taken, and what is queued waits.
 void offer_the_reading(Live& state, const sentry::Reading& reading, bool initial,
                       sentry::Kept kept) {
@@ -365,9 +373,16 @@ void offer_the_reading(Live& state, const sentry::Reading& reading, bool initial
     std::printf("# refused to write that reading\n");
     return;
   }
+#if !SENTRY_BRIDGED
   std::fwrite(buffer, 1, size, stdout);
   std::fputc('\n', stdout);
   std::fflush(stdout);
+#else
+  // Not on a bridged board. The console shares the cable with the messages there, so a
+  // reading written out for a person to read is the same reading twice down one wire —
+  // and the second copy is the one that arrives as text and can never be published.
+  (void)size;
+#endif
 
   if (provisioned && !spool.offer(reading, kept, initial)) {
     std::printf("# the queue is full: %lu given up so far\n",
@@ -904,6 +919,7 @@ void take_the_time_if_it_arrived() {
 }
 
 
+#if !SENTRY_BRIDGED
 // A second, then two, up to a minute, plus a little of this board's own randomness so that
 // a houseful of them coming back after a power cut does not arrive in step.
 uint32_t wait_before_trying_again() {
@@ -915,6 +931,7 @@ uint32_t wait_before_trying_again() {
   if (wait > 60000) wait = 60000;
   return wait + (get_rand_32() % 500);
 }
+#endif
 
 // The three topics this node uses and the goodbye the broker holds on its behalf. Built
 // when a record arrives, because every one of them is made out of the node's own name.
@@ -1053,6 +1070,12 @@ bool write_announcement() {
   here.online = true;
   here.firmware_version = "pico-0.1.0";
   here.profile = "sensor-presence";
+#if SENTRY_BRIDGED
+  // Said by the node because the node is the only one that knows: the bridge forwards what
+  // it is handed and writes nothing into it. A hub reading this knows there is a second
+  // thing that has to be running for this node to be heard at all.
+  here.reached_by = "bridge";
+#endif
   // Below zero until a configuration has been applied: a board running what it boots with
   // has no revision to claim, and claiming one would be claiming somebody sent it.
   here.config_revision = config_revision;
@@ -1223,6 +1246,7 @@ bool write_the_front_of_the_queue() {
   return outgoing_size > 0;
 }
 
+#if !SENTRY_BRIDGED
 // Where what is in the buffer belongs, and whether the broker should keep it for whoever
 // subscribes next. Only what a node is — here and gone — is kept; answers and readings
 // are addressed to a hub that is listening now.
@@ -1245,7 +1269,9 @@ const char* where_it_goes(Saying what) {
 bool is_retained(Saying what) {
   return what == Saying::kAnnouncement || what == Saying::kFarewell;
 }
+#endif
 
+#if !SENTRY_BRIDGED
 void start_a_connection() {
   if (!make_uuid(connection_id) || !prepare_the_connection()) {
     std::printf("# this node cannot describe a connection of its own\n");
@@ -1267,7 +1293,9 @@ void start_a_connection() {
   std::printf("# connecting to %s:%u\n", provisioning.mqtt_host,
               static_cast<unsigned>(provisioning.mqtt_port));
 }
+#endif
 
+#if !SENTRY_BRIDGED
 void end_the_connection(const char* why) {
   if (broker.link() != sentry::Link::kOnline) ++attempts_since_online;
   const uint32_t wait = wait_before_trying_again();
@@ -1295,6 +1323,7 @@ void end_the_connection(const char* why) {
   spool.link_lost();
   next_attempt_ms = monotonic_ms() + wait;
 }
+#endif
 
 // One answer, written now and sent when there is a connection to send it on. Nothing is
 // thrown out to make room: the oldest answer is the one the hub has waited longest for.
@@ -1472,21 +1501,21 @@ void obey_a_command(const sentry::Command& command, const char* as_it_arrived,
 }
 
 // One command as it arrived from the broker.
-void a_command_arrived(const sentry::mqtt::Incoming& packet) {
+void a_command_arrived(const char* payload, size_t size) {
   sentry::Command command;
   sentry::Refusal why = sentry::Refusal::kNone;
-  if (!sentry::parse_command(reinterpret_cast<const char*>(packet.payload), packet.payload_size,
-                             node_id, command, why)) {
+  if (!sentry::parse_command(payload, size, node_id, command, why)) {
     // Not answered, and deliberately: a command this node cannot read has no id it can
     // answer about, and answering about one it guessed would tell the hub something that
     // did not happen.
     std::printf("# a command arrived that this node will not act on: %s\n", sentry::name_of(why));
     return;
   }
-  obey_a_command(command, reinterpret_cast<const char*>(packet.payload), packet.payload_size);
+  obey_a_command(command, payload, size);
 }
 
 // Everything the connection has to say, and everything this node has to say back.
+#if !SENTRY_BRIDGED
 void serve_the_broker() {
   const net::Socket socket = net::socket();
   if (socket == net::Socket::kClosed) {
@@ -1553,7 +1582,9 @@ void serve_the_broker() {
         end_the_connection("the broker refused this connection");
         return;
       case sentry::mqtt::Effect::kNothing:
-        if (packet.type == sentry::mqtt::Type::kPublish) a_command_arrived(packet);
+        if (packet.type == sentry::mqtt::Type::kPublish) {
+          a_command_arrived(reinterpret_cast<const char*>(packet.payload), packet.payload_size);
+        }
         break;
     }
   }
@@ -1629,6 +1660,201 @@ void serve_the_broker() {
     std::printf("# a packet could not be sent; the connection will be made again\n");
   }
 }
+#endif  // !SENTRY_BRIDGED
+
+#if SENTRY_BRIDGED
+// -- the cable, where a board with a radio has a broker ---------------------------------
+//
+// What goes down it is what would have gone to the broker: the same announcement, the same
+// acknowledgements, the same readings, the same health, written by the same functions. Two
+// things are different. There is no acknowledgement to wait for — the bridge is at the
+// other end of a wire, and a frame written to an open port is a frame it has — so a
+// message is finished when it is written. And there is no session to negotiate: a bridge
+// says hello, and that is the connection.
+//
+// What is the same matters more than what is not. The lease still decides whether a
+// reading may go, the spool still holds what cannot, an answer still goes before a
+// reading, and a node told to stop still says goodbye and then nothing. None of that
+// knows which of the two cables it is on.
+
+bool the_bridge_is_here = false;
+// Whether the port was open last time round, so that unplugging says so once rather than
+// every turn of the loop.
+bool the_port_was_open = false;
+
+void the_cable_went_quiet(const char* why) {
+  if (!the_bridge_is_here) return;
+  the_bridge_is_here = false;
+  media::stop(nullptr, why);
+  bridge::forget();
+  outgoing_size = 0;
+  saying = Saying::kNothing;
+  stopping = false;
+  announced_this_connection = false;
+  // Whatever was in flight was never carried anywhere, so it stays at the front of the
+  // queue and goes again on the next connection, marked as arriving late.
+  spool.link_lost();
+  std::printf("# %s\n", why);
+}
+
+void a_bridge_said_hello() {
+  // A new conversation, which is a new connection. Whatever the last one was in the middle
+  // of saying belongs to it, and is said again to this one.
+  the_cable_went_quiet("the bridge started again");
+  if (!make_uuid(connection_id) || !prepare_the_connection()) {
+    std::printf("# this node cannot describe a connection of its own\n");
+    return;
+  }
+  the_bridge_is_here = true;
+  announced_this_connection = false;
+  owes_a_declaration = false;
+  // The first thing after the announcement, rather than fifteen seconds of nothing.
+  health_due_ms = monotonic_ms();
+  std::printf("# a bridge is carrying this node, on connection %s\n", connection_id);
+}
+
+// `{"unix_ms": …}`, and nothing else. A board with no radio has no SNTP to ask, so this is
+// the only thing that makes its readings stamped rather than uncertain — which is exactly
+// why it is read with the contract's own reader and not with a search for a digit.
+void the_time_arrived(const uint8_t* payload, size_t size) {
+  sentry::Reader reader(reinterpret_cast<const char*>(payload), size);
+  sentry::Span key;
+  sentry::Kind kind = sentry::Kind::kEnd;
+  int64_t unix_ms = 0;
+  bool got = false;
+  if (!reader.begin_object()) return;
+  while (reader.member(key, kind)) {
+    if (kind == sentry::Kind::kEnd) break;
+    if (key.is("unix_ms") && kind == sentry::Kind::kNumber) {
+      got = reader.integer(unix_ms);
+    } else if (!reader.skip()) {
+      return;
+    }
+  }
+  if (!got || reader.failed()) {
+    std::printf("# the bridge sent a time this node cannot read\n");
+    return;
+  }
+  const bool first = !clock_.synced();
+  clock_.sync(unix_ms, now_us());
+  time_answered_at_us = now_us();
+  ++answers_seen;
+  if (first) {
+    char stamped[32] = {};
+    if (sentry::write_timestamp(unix_ms, stamped, sizeof(stamped))) {
+      std::printf("# the bridge says it is %s\n", stamped);
+    }
+  }
+}
+
+// One frame out, carrying whatever is in the outgoing buffer. There is no acknowledgement
+// coming, so what would have waited for one is let go of here.
+bool send_what_is_waiting() {
+  if (outgoing_size == 0) return false;
+  sentry::Carries what = sentry::Carries::kEvents;
+  switch (saying) {
+    case Saying::kAnnouncement:
+    case Saying::kFarewell:
+      what = sentry::Carries::kState;
+      break;
+    case Saying::kAck:
+      what = sentry::Carries::kAcks;
+      break;
+    case Saying::kHealth:
+      what = sentry::Carries::kHealth;
+      break;
+    case Saying::kEvent:
+    case Saying::kNothing:
+      break;
+  }
+  if (!bridge::say(what, reinterpret_cast<const uint8_t*>(outgoing), outgoing_size)) {
+    // No host, or a payload longer than a frame carries. Either way it is not gone, and
+    // nothing here throws it away: the next turn tries again.
+    return false;
+  }
+  if (saying == Saying::kAck) forget_the_first_ack();
+  if (saying == Saying::kEvent) {
+    spool.accepted();
+    ++published_events;
+  }
+  if (saying == Saying::kAnnouncement) {
+    if (announcement_opens_the_connection) std::printf("# online, as %s\n", node_id);
+    announced_this_connection = true;
+  }
+  const bool said_goodbye = saying == Saying::kFarewell;
+  outgoing_size = 0;
+  saying = Saying::kNothing;
+  if (said_goodbye) {
+    // The last word this node had to say is across. What follows is silence, which on a
+    // cable is what a DISCONNECT is on a broker: nothing more until a bridge says hello
+    // again, whatever the lease still says.
+    the_bridge_is_here = false;
+    stopping = false;
+    std::printf("# gone, as asked\n");
+  }
+  return true;
+}
+
+void serve_the_bridge() {
+  const bool open = bridge::present();
+  if (!open) {
+    if (the_port_was_open) the_cable_went_quiet("the cable was unplugged");
+    the_port_was_open = false;
+    return;
+  }
+  the_port_was_open = true;
+
+  // What arrived, a frame at a time. Console lines never reach here: they are taken inside
+  // the port and handed to `getchar`, which is where a line somebody typed belongs.
+  sentry::Frame frame;
+  while (bridge::heard(frame)) {
+    switch (frame.what) {
+      case sentry::Carries::kHello:
+        a_bridge_said_hello();
+        break;
+      case sentry::Carries::kTime:
+        the_time_arrived(frame.payload, frame.size);
+        break;
+      case sentry::Carries::kCommands:
+        if (!the_bridge_is_here) {
+          // A command before a hello is a bridge that has not said which conversation this
+          // is. Answering it would be answering on a connection that has no identifier.
+          std::printf("# a command arrived before the bridge said hello\n");
+          break;
+        }
+        a_command_arrived(reinterpret_cast<const char*>(frame.payload), frame.size);
+        break;
+      default:
+        break;
+    }
+  }
+  if (!the_bridge_is_here) return;
+
+  // What to say, and in what order: the same ladder the broker half climbs, without the
+  // session states a broker has and a cable does not.
+  if (outgoing_size == 0) {
+    const uint32_t now = monotonic_ms();
+    if (!announced_this_connection) {
+      write_announcement();
+    } else if (owed_acks > 0) {
+      write_the_first_ack();
+    } else if (owes_a_declaration) {
+      if (write_announcement()) owes_a_declaration = false;
+    } else if (stopping) {
+      write_the_farewell();
+    } else if (static_cast<int32_t>(now - health_due_ms) >= 0) {
+      health_due_ms = now + kHeartbeatMs;
+      if (!write_a_health_report()) {
+        saying = Saying::kNothing;
+        std::printf("# this node could not write a health message about itself\n");
+      }
+    } else if (lease.live(now_us() / 1000)) {
+      write_the_front_of_the_queue();
+    }
+  }
+  send_what_is_waiting();
+}
+#endif  // SENTRY_BRIDGED
 
 void join_the_network() {
   if (!provisioned || !provisioning.has_wifi()) {
@@ -1721,6 +1947,30 @@ void say_the_plan() {
 }
 
 void say_status() {
+#if SENTRY_BRIDGED
+  // The radio lines below would all say the same thing on this board — there is no radio —
+  // so what is said instead is the cable: whether there is a host on it, whether a bridge
+  // has said hello, and what the crossing has cost. A number that climbs here is a cable,
+  // a driver or a board losing bytes, and it is the only place anybody would see it.
+  const bridge::Counts crossed = bridge::counts();
+  std::printf("# node=%s provisioned=%s cable=%s bridge=%s clock=%s\n", node_id,
+              provisioned ? "yes" : "no", bridge::present() ? "open" : "nobody there",
+              the_bridge_is_here ? "here" : "has not said hello",
+              sentry::name_of(clock_.status_at(now_us())));
+  std::printf("# frames sent=%lu unsent=%lu read=%lu discarded=%lu missed=%lu refused=%lu\n",
+              static_cast<unsigned long>(crossed.sent),
+              static_cast<unsigned long>(crossed.unsent),
+              static_cast<unsigned long>(crossed.frames),
+              static_cast<unsigned long>(crossed.discarded),
+              static_cast<unsigned long>(crossed.missed),
+              static_cast<unsigned long>(crossed.refused));
+  std::printf("# heap_free=%lldkB uptime=%llus reset=%s queued=%lu coalesced=%lu dropped=%lu\n",
+              static_cast<long long>(free_heap_kb()),
+              static_cast<unsigned long long>(now_us() / 1000000), sentry::name_of(woke),
+              static_cast<unsigned long>(spool.size()),
+              static_cast<unsigned long>(spool.losses().coalesced),
+              static_cast<unsigned long>(spool.losses().dropped_transitions));
+#else
   char address[20] = {};
   const bool has_address = net::address(address, sizeof(address));
   const net::TimeAnswers answers = net::time_answers();
@@ -1769,6 +2019,7 @@ void say_status() {
               static_cast<unsigned long>(spool.size()),
               static_cast<unsigned long>(spool.losses().coalesced),
               static_cast<unsigned long>(spool.losses().dropped_transitions));
+#endif
   const uint64_t now_ms = now_us() / 1000;
   const media::Numbers sound = media::how_it_is_going();
   if (sound.stream_id != nullptr || sound.error != nullptr) {
@@ -1973,9 +2224,11 @@ void take_back_what_was_kept() {
 }
 
 // Whether this board has everything it needs to be a satellite again without being told.
+#if !SENTRY_BRIDGED
 bool it_can_carry_on_by_itself() {
   return provisioned && provisioning.has_wifi() && credentials.complete();
 }
+#endif
 
 // Whatever the host has sent, up to a newline. Returns false when there is no full line.
 bool read_line(char* out, size_t capacity) {
@@ -2126,6 +2379,16 @@ void obey(const char* line) {
   }
   if (std::strcmp(line, "disconnect") == 0) {
     wanted = false;
+#if SENTRY_BRIDGED
+    // The cable is the connection, and it is not this board's to hang up. What it can do
+    // is the part that matters: say goodbye, and then say nothing until it is asked again.
+    if (the_bridge_is_here) {
+      stopping = true;
+    } else {
+      std::printf("# there is no bridge to say goodbye to\n");
+    }
+    return;
+#else
     if (broker.link() == sentry::Link::kOffline) {
       end_the_connection("asked to disconnect");
       return;
@@ -2134,6 +2397,7 @@ void obey(const char* line) {
     // then the retained state that says this node is gone, then the DISCONNECT.
     stopping = true;
     return;
+#endif
   }
   if (line[0] != '\0') std::printf("# not a command: %s\n", line);
 }
@@ -2142,6 +2406,12 @@ void obey(const char* line) {
 
 int main() {
   stdio_init_all();
+#if SENTRY_BRIDGED
+  // Before anything is printed: on a board with one USB port and no radio, the port is the
+  // cable to the bridge, and a line written to it unframed is a line a reader has to throw
+  // away. From here on everything this program says goes out inside a frame.
+  bridge::start();
+#endif
 
   // Read before anything turns it on again, because turning it on is what clears it.
   woke = device::woke_because();
@@ -2178,10 +2448,12 @@ int main() {
               sentry::name_of(woke));
   std::fflush(stdout);
 
+#if !SENTRY_BRIDGED
   if (it_can_carry_on_by_itself()) {
     come_back_on_its_own = true;
     join_the_network();
   }
+#endif
 
   // From here on the loop has to keep coming round. Everything before this point is the
   // one place where it does not — joining a network, reading flash and waiting for a
@@ -2193,6 +2465,11 @@ int main() {
     watchdog_update();
     net::poll();
     take_the_time_if_it_arrived();
+#if SENTRY_BRIDGED
+    // No radio, so no broker: what this node has to say goes down the cable it is powered
+    // by, and the machine at the other end carries it the rest of the way.
+    serve_the_bridge();
+#else
     if (net::socket() != net::Socket::kIdle) {
       // Whether or not this node still wants to be connected: a goodbye is said on the
       // connection it is about, and hanging up first would be the silence it is there to
@@ -2201,6 +2478,7 @@ int main() {
     } else if (wanted && static_cast<int32_t>(monotonic_ms() - next_attempt_ms) >= 0) {
       start_a_connection();
     }
+#endif
     static char line[4096];
     if (read_line(line, sizeof(line))) obey(line);
     // Every pin, every loop: the debounce is measured in time and not in sleeping, so

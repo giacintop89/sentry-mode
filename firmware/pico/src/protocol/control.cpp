@@ -113,6 +113,7 @@ size_t write_state(const State& state, char* buffer, size_t capacity) {
     return 0;
   }
   if (state.profile != nullptr && !is_text_within(state.profile, kMaxShortText)) return 0;
+  if (state.reached_by != nullptr && !is_text_within(state.reached_by, kMaxShortText)) return 0;
   if (!sources_are_sayable(state.sources, state.source_count)) return 0;
 
   Writer writer(buffer, capacity);
@@ -129,6 +130,10 @@ size_t write_state(const State& state, char* buffer, size_t capacity) {
   if (state.profile != nullptr) {
     writer.key("profile");
     writer.string(state.profile);
+  }
+  if (state.reached_by != nullptr) {
+    writer.key("reached_by");
+    writer.string(state.reached_by);
   }
   if (state.config_revision >= 0) {
     writer.key("config_revision");

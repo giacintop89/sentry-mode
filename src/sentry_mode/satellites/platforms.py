@@ -108,7 +108,43 @@ PICO_2W = PICO_W.model_copy(
     }
 )
 
-CATALOGUE: dict[str, Platform] = {platform.name: platform for platform in (LINUX, PICO_W, PICO_2W)}
+# And the same two chips without a radio. They are not a lesser Pico W: they are a board
+# that cannot reach a broker at all, and is reached instead over the USB cable that powers
+# it, by `scripts/pico_bridge.py` running on a machine that is already a satellite. What
+# changes is what a board of this kind can be asked for. There is no Bluetooth on it, so no
+# `ble` source; and sound stays where it is taken — a microphone still says something was
+# loud, but the live stream is a second TLS connection to the hub, and a board with no
+# radio has no way to make one.
+#
+# The bridge is not in this list, and deliberately. It is not a kind of node; it is how a
+# node of these two kinds is reached, and it is written down in the bridge's own
+# configuration rather than in the registry.
+PICO_WIRED = PICO_W.model_copy(
+    update={
+        "name": "pico-wired",
+        "summary": (
+            "A Pico with no radio, reached over its USB cable by a bridge: sensors only, "
+            "no Bluetooth, and no sound the hub can listen to live."
+        ),
+        "drivers": ("gpio", "onewire", "adc", "microphone", "board"),
+        "streams": (),
+    }
+)
+
+PICO_2_WIRED = PICO_WIRED.model_copy(
+    update={
+        "name": "pico-2-wired",
+        "architecture": "rp2350",
+        "summary": (
+            "A Pico 2 with no radio, reached over its USB cable by a bridge: sensors "
+            "only, no Bluetooth, and no sound the hub can listen to live."
+        ),
+    }
+)
+
+CATALOGUE: dict[str, Platform] = {
+    platform.name: platform for platform in (LINUX, PICO_W, PICO_2W, PICO_WIRED, PICO_2_WIRED)
+}
 
 DEFAULT = LINUX.name
 """What a node registered before this catalogue existed is: the agent, as it always was."""

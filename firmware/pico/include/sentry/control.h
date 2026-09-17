@@ -49,6 +49,11 @@ struct State {
   bool online = true;
   const char* firmware_version = nullptr;  // written as agent_version: one field, two names
   const char* profile = nullptr;
+  // How the hub is being reached: nothing at all when this node publishes to the broker
+  // itself, and "bridge" when a machine it is plugged into is carrying its messages. The
+  // node says it because the node is the only one that knows; the bridge forwards what it
+  // is given rather than writing anything into it.
+  const char* reached_by = nullptr;
   int64_t config_revision = -1;  // below zero means this node is not saying
   const DeclaredSource* sources = nullptr;
   size_t source_count = 0;

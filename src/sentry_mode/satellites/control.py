@@ -124,6 +124,15 @@ class NodeState(Wire):
     online: bool
     agent_version: str | None = Field(default=None, max_length=32)
     profile: str | None = Field(default=None, max_length=32)
+    reached_by: Literal["bridge"] | None = Field(default=None)
+    """How the node's messages got here, when it is not the node that published them.
+
+    A satellite with no radio is plugged into a machine that carries its messages for it,
+    and the node says so: the bridge forwards what it is handed rather than writing
+    anything into it, so this is the node's own account of how it is reachable. Absent is
+    the ordinary case — the node connected to the broker itself.
+    """
+
     config_revision: int | None = Field(default=None, ge=0)
     sources: list[DeclaredSource] = Field(default_factory=list, max_length=MAX_SOURCES)
 

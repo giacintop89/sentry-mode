@@ -674,6 +674,8 @@ def test_the_page_shows_each_source_with_its_reading_and_its_trouble(service):
     )
     assert node["online"] and node["agent_version"] == "0.2.0"
     assert node["config_revision"] == 2 and node["clock_status"] == "synced"
+    # Nothing said about how it got here, because this node published for itself.
+    assert node["reached_by"] is None
     assert node["last_seen"] is not None
     sources = {source["name"]: source for source in node["sources"]}
     assert sources["pir-1"]["last"]["value"] is True

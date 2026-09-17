@@ -426,6 +426,7 @@ class SatelliteService:
             self._reported[node_id] = {
                 "profile": document.get("profile"),
                 "agent_version": document.get("agent_version"),
+                "reached_by": document.get("reached_by"),
                 "config_revision": revision
                 if isinstance(revision, int) and not isinstance(revision, bool)
                 else None,

@@ -44,11 +44,14 @@ int written_frames() {
             "{\"schema_version\":1,\"event\":{\"kind\":\"sensor.motion\"}}");
   write_one("health", sentry::Carries::kHealth, 2, "{\"schema_version\":1,\"uptime\":61}");
   write_one("ack", sentry::Carries::kAcks, 3, "{\"schema_version\":1,\"outcome\":\"applied\"}");
+  // A line of this board's console, which goes down the same cable as everything else and
+  // is the reason no unframed text ever does.
+  write_one("said", sentry::Carries::kSaid, 4, "# ready pico2 node=pico-cablato\n");
   // Nothing in it at all, which is a frame and not an absence of one.
-  write_one("empty", sentry::Carries::kEvents, 4, "");
+  write_one("empty", sentry::Carries::kEvents, 5, "");
   // The largest one the format carries, so that a reader with a smaller idea of the limit
   // fails here rather than on a cable.
-  write_one("longest", sentry::Carries::kEvents, 5, std::string(sentry::kMaxLinkPayload, 'x'));
+  write_one("longest", sentry::Carries::kEvents, 6, std::string(sentry::kMaxLinkPayload, 'x'));
   // And the counter at the top of its range, which is where a field that is quietly
   // signed, or quietly sixteen bits, stops agreeing with the other end. It is read on its
   // own rather than after the others, because as a run it would be a gap of four billion.

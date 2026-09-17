@@ -100,6 +100,12 @@ int control() {
   state.source_count = 3;
   emit_control("state", buffer, sentry::write_state(state, buffer, sizeof(buffer)));
 
+  // The same node, on a board with no radio: something else is carrying what it says, and
+  // it is the node that says so. The hub's model has to take that word and no other.
+  state.reached_by = "bridge";
+  emit_control("state", buffer, sentry::write_state(state, buffer, sizeof(buffer)));
+  state.reached_by = nullptr;
+
   char topic[sentry::kMaxTopicText] = {};
   if (!sentry::topic(sentry::kTopicPrefix, state.node_id, sentry::Channel::kState, topic,
                      sizeof(topic))) {

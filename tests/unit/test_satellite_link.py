@@ -144,3 +144,26 @@ def test_a_length_longer_than_the_format_allows_is_not_waited_for():
     lying[11:13] = (link.MAX_PAYLOAD + 1).to_bytes(2, "little")
     out = reader.feed(bytes(lying) + frame(counter=2, payload=b'{"real":true}'))
     assert [one.payload for one in out] == [b'{"real":true}']
+
+
+def test_a_console_line_is_a_frame_like_everything_else_and_goes_to_no_topic():
+    # The board has one USB port. Either text and frames share it unmarked — where a line
+    # of diagnostics can be read as a frame, and a frame lands in somebody's terminal — or
+    # text is carried as what it is. It is carried as what it is.
+    said = link.Frame(link.Carries.SAID, 0, b"# ready pico2 node=pico-cablato\n")
+    reader = link.Reader(expect_from_the_node=True)
+    out = reader.feed(link.pack(said))
+    assert out[0].payload == said.payload
+    assert out[0].channel is None
+    board = link.Reader(expect_from_the_node=False)
+    typed = board.feed(link.pack(link.Frame(link.Carries.TYPED, 0, b"status")))
+    assert typed[0].carries == link.Carries.TYPED and typed[0].channel is None
+
+
+def test_neither_half_of_the_console_travels_the_way_the_other_one_does():
+    reader = link.Reader(expect_from_the_node=True)
+    with pytest.raises(link.LinkError, match="not something the node sends"):
+        reader.feed(link.pack(link.Frame(link.Carries.TYPED, 0, b"status")))
+    board = link.Reader(expect_from_the_node=False)
+    with pytest.raises(link.LinkError, match="not something the bridge sends"):
+        board.feed(link.pack(link.Frame(link.Carries.SAID, 0, b"# ready\n")))

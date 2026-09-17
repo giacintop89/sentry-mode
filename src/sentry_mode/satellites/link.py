@@ -20,8 +20,12 @@ and a hello, which is the bridge saying it is here and the node should announce 
 The kind is also the direction: a node that sent a command, or a bridge that sent an
 event, is refused rather than believed.
 
-Text does not go down this link. A board's console is a second CDC interface, so a line of
-diagnostics can never be read as a frame and a frame never lands in somebody's terminal.
+The board's console goes down the same cable, and inside frames like everything else:
+`SAID` is a line the board printed, `TYPED` is a line somebody sent it. A board with one
+USB port has one channel, and the choice is between text and frames sharing it unmarked —
+where a line of diagnostics can be read as a frame, and a frame lands in somebody's
+terminal — or text being carried as what it is. It is carried as what it is, and neither
+kind is ever forwarded to the broker.
 """
 
 from __future__ import annotations
@@ -62,14 +66,20 @@ class Carries(IntEnum):
     COMMANDS = 5
     TIME = 6
     HELLO = 7
+    SAID = 8
+    TYPED = 9
 
 
-FROM_THE_NODE = frozenset({Carries.EVENTS, Carries.STATE, Carries.HEALTH, Carries.ACKS})
-"""The four a board sends. Each is the channel of the same name, and the payload is the
-same JSON that would have gone to the broker on it."""
-TO_THE_NODE = frozenset({Carries.COMMANDS, Carries.TIME, Carries.HELLO})
-"""The three the bridge sends. `TIME` carries `{"unix_ms": …}` and `HELLO` carries
-nothing: a board answers it by announcing itself, as it would to a broker."""
+FROM_THE_NODE = frozenset(
+    {Carries.EVENTS, Carries.STATE, Carries.HEALTH, Carries.ACKS, Carries.SAID}
+)
+"""What a board sends. The first four are the channel of the same name, and the payload is
+the same JSON that would have gone to the broker on it; `SAID` is a line of its console,
+which goes to whoever is watching and nowhere near a topic."""
+TO_THE_NODE = frozenset({Carries.COMMANDS, Carries.TIME, Carries.HELLO, Carries.TYPED})
+"""What the bridge sends. `TIME` carries `{"unix_ms": …}`, `HELLO` carries nothing — a
+board answers it by announcing itself, as it would to a broker — and `TYPED` carries a
+line for the board's console, which is the only way to provision one over this cable."""
 
 CHANNELS = {
     Carries.EVENTS: "events",
@@ -79,7 +89,8 @@ CHANNELS = {
     Carries.COMMANDS: "commands",
 }
 """Which topic a frame's payload belongs on, for the four the bridge forwards and the one
-it receives. `TIME` and `HELLO` are the cable's own and have no topic."""
+it receives. `TIME`, `HELLO`, `SAID` and `TYPED` are the cable's own and have no topic: a
+console line is not a message about this node, and nothing publishes it."""
 
 
 class LinkError(ValueError):

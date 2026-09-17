@@ -12,8 +12,12 @@ dependencies = ["opencv-python-headless>=4.8", "PyYAML>=6", "pydantic>=2", "pyda
 [project.optional-dependencies]
 speech = ["kokoro-onnx>=0.6,<1"]
 satellites = ["paho-mqtt>=2,<3"]
-# pyserial is what `firmware/pico/tools/board_check.py` talks to a board over; nothing the
-# hub itself runs needs a serial port.
+# What `scripts/pico_bridge.py` needs, on the machine a wired Pico is plugged into. It is
+# not the hub: a bridge can run on a different machine from the one the hub runs on, and
+# publishes as the board rather than as itself.
+bridge = ["paho-mqtt>=2,<3", "pyserial>=3.5"]
+# pyserial is also what `firmware/pico/tools/board_check.py` talks to a board over; nothing
+# the hub itself runs needs a serial port.
 dev = ["pytest>=8", "pytest-cov", "ruff", "mypy", "types-PyYAML", "pyserial>=3.5"]
 
 [project.scripts]
