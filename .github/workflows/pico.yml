@@ -53,5 +53,8 @@ jobs:
       - name: The hub and the agent judge what the firmware writes
         run: python firmware/pico/tools/check_against_contracts.py --build-dir build/pico-host
 
+      - name: A decoder written from the specification reads the packets
+        run: python firmware/pico/tools/mqtt_check.py --build-dir build/pico-host
+
       - name: The firmware reads back records it did not frame
         run: python firmware/pico/tools/pack_provisioning.py --build-dir build/pico-host --verify

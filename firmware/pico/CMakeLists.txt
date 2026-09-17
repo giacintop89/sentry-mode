@@ -56,6 +56,7 @@ add_library(sentry_protocol
   src/protocol/command.cpp
   src/protocol/control.cpp
   src/protocol/topics.cpp
+  src/protocol/mqtt.cpp
   src/protocol/event.cpp
   src/protocol/lease.cpp
   src/core/store.cpp
@@ -107,7 +108,7 @@ endif()
 
 enable_testing()
 
-foreach(suite json command control event lease topics session store identity timebase spool input sensors pins)
+foreach(suite json command control event lease topics mqtt session store identity timebase spool input sensors pins)
   add_executable(test_${suite} tests/test_${suite}.cpp)
   target_link_libraries(test_${suite} PRIVATE sentry_protocol)
   target_include_directories(test_${suite} PRIVATE tests)
@@ -121,6 +122,12 @@ endforeach()
 add_executable(sentry_emit tools/emit.cpp)
 target_link_libraries(sentry_emit PRIVATE sentry_protocol)
 target_compile_options(sentry_emit PRIVATE -Wall -Wextra -Werror)
+
+# Writes the packets this node would put on the wire, for tools/mqtt_check.py to decode
+# with an implementation that has never seen mqtt.cpp.
+add_executable(sentry_mqtt_emit tools/mqtt_emit.cpp)
+target_link_libraries(sentry_mqtt_emit PRIVATE sentry_protocol)
+target_compile_options(sentry_mqtt_emit PRIVATE -Wall -Wextra -Werror)
 
 # Reads two configuration slots the way the firmware would at boot. See
 # tools/pack_provisioning.py, which writes them with its own framing and checks the answer.

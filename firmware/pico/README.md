@@ -27,7 +27,7 @@ cmake --build build/pico-host
 ctest --test-dir build/pico-host --output-on-failure
 ```
 
-Fourteen suites: `json`, `command`, `control`, `event`, `lease`, `topics`, `session`,
+Fifteen suites: `json`, `command`, `control`, `event`, `lease`, `topics`, `mqtt`, `session`,
 `store`, `identity`, `timebase`, `spool`, `input`, `sensors`, `pins`. The `command` suite
 reads the fixtures in
 `contracts/satellite/v1/control/fixtures/`, the same files `tests/unit/test_satellite_control.py`
@@ -51,7 +51,22 @@ implementations that have never seen it proves something. It has already earned 
 it caught this firmware calling a reading `stale` when the hub's vocabulary says
 `degraded`, which every test in this directory was happy to accept.
 
-The same idea applies to the flash framing:
+The same idea applies to the packets themselves:
+
+```sh
+.venv/bin/python firmware/pico/tools/mqtt_check.py --build-dir build/pico-host
+```
+
+`mqtt.cpp` was written from the MQTT 3.1.1 specification; so was the decoder in that script,
+and neither has read the other. It decodes the CONNECT, the SUBSCRIBE and the four
+PUBLISHes the firmware would send and then asks the hub about them: the will has to be a
+goodbye the hub would accept, retained and at QoS 1 and small enough for lwIP to carry; the
+topics have to be ones the hub's parser reads back as this node's; every payload has to
+pass the models and the published schema. A packet a broker would drop — SUBSCRIBE with the
+wrong reserved bits, a PUBLISH at QoS 1 with no packet id — is caught here rather than by a
+broker closing the connection for a reason nobody can see from the board.
+
+And to the flash framing:
 
 ```sh
 .venv/bin/python firmware/pico/tools/pack_provisioning.py --build-dir build/pico-host --verify
@@ -143,6 +158,7 @@ from the network, that is where this stands.
 | `include/sentry/event.h`, `src/protocol/event.cpp` | The event envelope, written only after every field has been checked, so a refusal costs nothing and never leaves half an event in the buffer. |
 | `include/sentry/command.h`, `src/protocol/command.cpp` | The closed command grammar: the actions, what each one may carry, and who it is addressed to. |
 | `include/sentry/control.h`, `src/protocol/control.cpp` | The three control messages this node writes, including the goodbye that has to fit in a 255-byte will. |
+| `include/sentry/mqtt.h`, `src/protocol/mqtt.cpp` | The packets, and what this node refuses to speak: no QoS 2, no length it has nowhere to put, no packet only a client may send. |
 | `include/sentry/topics.h`, `src/protocol/topics.cpp` | Where each message goes, built in one place because the topic is the one claim a node cannot make up. |
 | `include/sentry/names.h`, `src/protocol/names.cpp` | What a name, a uuid, a kind, a driver and a timestamp are, in one place rather than in whichever file needed one first. |
 | `include/sentry/session.h`, `src/core/session.cpp` | The order a connection comes up in: nothing is announced before the subscription is confirmed, and every connection has an identifier of its own. |
@@ -150,13 +166,13 @@ from the network, that is where this stands.
 | `include/sentry/store.h`, `src/core/store.cpp` | The framing that lets an interrupted write be recognised as one, and the rule for choosing between the two configuration slots. |
 | `include/sentry/identity.h`, `src/core/identity.cpp` | The provisioning record — the node id and where the broker is — and the boot id that must differ every boot. |
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
-| `tools/emit.cpp`, `tools/unpack.cpp` | Write events, and read configuration slots, for the two cross-checks above. |
+| `tools/emit.cpp`, `tools/unpack.cpp`, `tools/mqtt_emit.cpp` | Write events, packets and configuration slots for the three cross-checks above. |
 | `src/device/main.cpp` | The one program that runs on a board: USB serial, the LED, the die temperature, and the same event writer as everything else. |
 | `include/sentry/spool.h`, `src/core/spool.cpp` | The queue for an outage: which readings collapse into a newer one, which are never dropped for them, and what is counted when something is given up. |
 | `include/sentry/input.h`, `src/core/input.cpp` | What a wire may mean: the baseline that is not an intrusion, the settling window a PIR needs, the debounce, and the polarity software cannot guess. |
 | `include/sentry/sensors.h`, `src/core/sensors.cpp` | Turning what a sensor returned into a reading or into an admission there is none: the 1-Wire CRC, the 85 °C a DS18B20 holds after a reset, and an ADC count nothing could have produced. |
 | `include/sentry/pins.h`, `src/core/pins.cpp` | Which pins a configuration may use and who already has them, refused whole rather than in part. |
-| `tests/` | The fourteen suites, and a tiny harness rather than a test framework. |
+| `tests/` | The fifteen suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful
@@ -176,10 +192,11 @@ fails here, in a second, rather than at link time on a target with neither.
 - SNTP. `Timebase` is told the time by something; on the board today that something is a
   person typing `time <unix_ms>` into a serial port, which is enough to check a serializer
   and is not a clock.
-- MQTT and TLS themselves — the lwIP client, the mTLS handshake, the CONNECT that
-  registers the will, the QoS 1 flow. `Session` says what order things happen in and
-  `control.cpp` writes the messages; nothing here has yet had a connection, so the
-  compatibility run against the live broker that PICO-03 asks for has **not** been done.
+- The MQTT client itself. `mqtt.cpp` writes and reads the packets and is checked against a
+  second implementation, `session.cpp` says what order things happen in and `lease.cpp` says
+  what permission is worth — but nothing yet holds a socket, retries, tracks what is in
+  flight or does the mTLS handshake. No board has connected to the broker, so the
+  compatibility run against a live one that PICO-03 asks for has **not** been done.
 - Any sensor driver at all. What is here is the part of one that has no hardware in it:
   `input.cpp` decides what a level means, `sensors.cpp` decides what a scratchpad or an
   ADC count means, and `pins.cpp` decides whether a configuration may start. Nothing has
