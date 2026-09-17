@@ -23,6 +23,7 @@ pico:
 	ctest --test-dir build/pico-host --output-on-failure
 	$(BIN)/python firmware/pico/tools/check_against_contracts.py --build-dir build/pico-host
 	$(BIN)/python firmware/pico/tools/mqtt_check.py --build-dir build/pico-host
+	$(BIN)/python firmware/pico/tools/audio_check.py --build-dir build/pico-host
 	$(BIN)/python firmware/pico/tools/pack_provisioning.py --build-dir build/pico-host --verify
 # The board build. PICO_SDK_PATH is where the SDK was cloned; the UF2 lands in build/pico2w.
 PICO_SDK_PATH ?= $(HOME)/.local/share/pico-sdk
