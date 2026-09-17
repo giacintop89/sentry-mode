@@ -22,3 +22,4 @@ pico:
 	cmake --build build/pico-host
 	ctest --test-dir build/pico-host --output-on-failure
 	$(BIN)/python firmware/pico/tools/check_against_contracts.py --build-dir build/pico-host
+	$(BIN)/python firmware/pico/tools/pack_provisioning.py --build-dir build/pico-host --verify

@@ -37,6 +37,9 @@ add_library(sentry_protocol
   src/protocol/command.cpp
   src/protocol/event.cpp
   src/protocol/lease.cpp
+  src/core/store.cpp
+  src/core/identity.cpp
+  src/core/timebase.cpp
 )
 target_include_directories(sentry_protocol PUBLIC include)
 target_compile_options(sentry_protocol PRIVATE
@@ -48,7 +51,7 @@ target_compile_options(sentry_protocol PRIVATE
 
 enable_testing()
 
-foreach(suite json command event lease)
+foreach(suite json command event lease store identity timebase)
   add_executable(test_${suite} tests/test_${suite}.cpp)
   target_link_libraries(test_${suite} PRIVATE sentry_protocol)
   target_include_directories(test_${suite} PRIVATE tests)
@@ -62,3 +65,9 @@ endforeach()
 add_executable(sentry_emit tools/emit.cpp)
 target_link_libraries(sentry_emit PRIVATE sentry_protocol)
 target_compile_options(sentry_emit PRIVATE -Wall -Wextra -Werror)
+
+# Reads two configuration slots the way the firmware would at boot. See
+# tools/pack_provisioning.py, which writes them with its own framing and checks the answer.
+add_executable(sentry_unpack tools/unpack.cpp)
+target_link_libraries(sentry_unpack PRIVATE sentry_protocol)
+target_compile_options(sentry_unpack PRIVATE -Wall -Wextra -Werror)

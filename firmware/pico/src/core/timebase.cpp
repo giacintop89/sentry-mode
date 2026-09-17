@@ -1,0 +1,36 @@
+#include "sentry/timebase.h"
+
+namespace sentry {
+
+uint64_t Ticks::extend(uint32_t raw) {
+  if (raw < last_) high_ += UINT64_C(1) << 32;  // the counter went round
+  last_ = raw;
+  return high_ | raw;
+}
+
+void Timebase::sync(int64_t unix_ms, uint64_t monotonic_us) {
+  offset_us_ = unix_ms * 1000 - static_cast<int64_t>(monotonic_us);
+  synced_at_us_ = monotonic_us;
+  synced_ = true;
+  lost_ = false;
+}
+
+void Timebase::lost() { lost_ = true; }
+
+bool Timebase::unix_ms(uint64_t monotonic_us, int64_t& out) const {
+  if (!synced_) return false;
+  int64_t microseconds = offset_us_ + static_cast<int64_t>(monotonic_us);
+  if (microseconds < 0) return false;  // before 1970, which is not a moment this node had
+  out = microseconds / 1000;
+  return true;
+}
+
+Clock Timebase::status_at(uint64_t monotonic_us) const {
+  if (!synced_) return Clock::kUnsynced;
+  // The time source went away: this node can still stamp, but it can no longer say how
+  // close the stamp is to the truth, and unknown is the honest word for that.
+  if (lost_) return Clock::kUnknown;
+  return monotonic_us >= synced_at_us_ ? Clock::kSynced : Clock::kUnsynced;
+}
+
+}  // namespace sentry
