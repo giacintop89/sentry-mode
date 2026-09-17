@@ -73,6 +73,7 @@ add_library(sentry_protocol
   src/core/input.cpp
   src/core/sensors.cpp
   src/core/pins.cpp
+  src/core/plan.cpp
 )
 target_include_directories(sentry_protocol PUBLIC include)
 target_compile_options(sentry_protocol PRIVATE
@@ -118,7 +119,7 @@ endif()
 
 enable_testing()
 
-foreach(suite json command control event lease topics mqtt client session store identity credentials timebase spool input sensors pins)
+foreach(suite json command control event lease topics mqtt client session store identity credentials timebase spool input sensors pins plan)
   add_executable(test_${suite} tests/test_${suite}.cpp)
   target_link_libraries(test_${suite} PRIVATE sentry_protocol)
   target_include_directories(test_${suite} PRIVATE tests)
