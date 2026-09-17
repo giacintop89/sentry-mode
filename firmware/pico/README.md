@@ -2,10 +2,11 @@
 
 A satellite that is a microcontroller rather than a Linux board. This directory holds the
 firmware for it, and today it holds exactly the part of that firmware which can be built
-and run without one: the protocol — JSON, the event envelope, the command grammar and the
-lease — and the core it will sit on — the two configuration slots, the identity and the
-timebase. All of it compiled for the host and tested against the same contracts and
-fixtures the hub and the Pi Zero agent are tested against.
+and run without one: the protocol — JSON, the event envelope, the command grammar, the
+state, health and answers it writes, the topics it writes them to, and the lease — and the
+core it will sit on — the two configuration slots, the identity, the timebase, the queue
+and the order a connection has to come up in. All of it compiled for the host and tested
+against the same contracts and fixtures the hub and the Pi Zero agent are tested against.
 
 **Nothing here has run on an RP2040 or an RP2350.** There is no SDK pinned, no Wi-Fi, no
 MQTT, no sensor, no UF2. `PICO-01` of the [implementation
@@ -25,9 +26,8 @@ cmake --build build/pico-host
 ctest --test-dir build/pico-host --output-on-failure
 ```
 
-Eight suites: `json`, `command`, `event`, `lease`, `store`, `identity`, `timebase`,
-`spool`. The
-`command` suite reads the fixtures in
+Eleven suites: `json`, `command`, `control`, `event`, `lease`, `topics`, `session`,
+`store`, `identity`, `timebase`, `spool`. The `command` suite reads the fixtures in
 `contracts/satellite/v1/control/fixtures/`, the same files `tests/unit/test_satellite_control.py`
 and `satellite/tests/unit/test_control_contracts.py` read, so a fixture the hub accepts and
 this firmware refuses is a failure here rather than a surprise on a board.
@@ -40,8 +40,10 @@ Then the cross-check, which is the one that matters most:
 .venv/bin/python firmware/pico/tools/check_against_contracts.py --build-dir build/pico-host
 ```
 
-It runs the firmware's own serializer (`sentry_emit`) and hands every event it writes to
-the hub's Pydantic models and to the satellite's schema checker. A serializer validated
+It runs the firmware's own serializers (`sentry_emit`) and hands everything they write to
+the hub's Pydantic models and to the satellite's schema checker: the events, the state,
+health and answers, and the topics — which are also read back by the hub's own topic parser
+and compared with what the Linux agent's `topic()` would have written. A serializer validated
 against the schema it was written from proves very little; one validated by two
 implementations that have never seen it proves something. It has already earned its place:
 it caught this firmware calling a reading `stale` when the hub's vocabulary says
@@ -64,6 +66,10 @@ bytes never made it, which must leave the previous configuration in charge.
 | `include/sentry/json.h`, `src/protocol/json.cpp` | A reader and a writer for the shapes the contract uses, in buffers the caller owns. No allocation, depth capped at 4, refusing rather than truncating. |
 | `include/sentry/event.h`, `src/protocol/event.cpp` | The event envelope, written only after every field has been checked, so a refusal costs nothing and never leaves half an event in the buffer. |
 | `include/sentry/command.h`, `src/protocol/command.cpp` | The closed command grammar: the actions, what each one may carry, and who it is addressed to. |
+| `include/sentry/control.h`, `src/protocol/control.cpp` | The three control messages this node writes, including the goodbye that has to fit in a 255-byte will. |
+| `include/sentry/topics.h`, `src/protocol/topics.cpp` | Where each message goes, built in one place because the topic is the one claim a node cannot make up. |
+| `include/sentry/names.h`, `src/protocol/names.cpp` | What a name, a uuid, a kind, a driver and a timestamp are, in one place rather than in whichever file needed one first. |
+| `include/sentry/session.h`, `src/core/session.cpp` | The order a connection comes up in: nothing is announced before the subscription is confirmed, and every connection has an identifier of its own. |
 | `include/sentry/lease.h`, `src/protocol/lease.cpp` | Permission with an end to it, measured on this node's clock, and the memory of the last 64 commands answered. |
 | `include/sentry/store.h`, `src/core/store.cpp` | The framing that lets an interrupted write be recognised as one, and the rule for choosing between the two configuration slots. |
 | `include/sentry/identity.h`, `src/core/identity.cpp` | The provisioning record — the node id and where the broker is — and the boot id that must differ every boot. |
@@ -90,6 +96,8 @@ fails here, in a second, rather than at link time on a target with neither.
   certificates and private key a real provisioning tool writes. `store.cpp` says what a
   record looks like and `pack_provisioning.py` writes one; neither has touched a sector.
 - SNTP. `Timebase` is told the time by something; nothing here is that something yet.
-- MQTT and TLS — PICO-03. `Spool` decides what to keep during an outage; nothing here
-  has yet had an outage, because nothing here has yet had a connection.
+- MQTT and TLS themselves — the lwIP client, the mTLS handshake, the CONNECT that
+  registers the will, the QoS 1 flow. `Session` says what order things happen in and
+  `control.cpp` writes the messages; nothing here has yet had a connection, so the
+  compatibility run against the live broker that PICO-03 asks for has **not** been done.
 - Any sensor driver at all.

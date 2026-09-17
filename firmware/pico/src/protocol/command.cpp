@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "sentry/json.h"
+#include "sentry/names.h"
 
 namespace sentry {
 namespace {
@@ -28,39 +29,6 @@ constexpr uint32_t kStreamFields =
     Fields::kStreamId | Fields::kSourceId | Fields::kPort | Fields::kToken;
 constexpr uint32_t kTicketFields = Fields::kSourceId | Fields::kPort | Fields::kToken;
 constexpr uint32_t kConfigureFields = Fields::kRevision | Fields::kSources;
-
-// A name, spelled the way `sources/models.py` spells it and nowhere else.
-bool is_name(const char* text, size_t length) {
-  if (length == 0 || length > 40) return false;
-  for (size_t index = 0; index < length; ++index) {
-    char c = text[index];
-    bool plain = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
-    if (plain) continue;
-    if (c == '-' && index > 0 && index + 1 < length) continue;
-    return false;
-  }
-  return true;
-}
-
-// The alphabet a stream id and a ticket are written in: nothing that could be a path, a
-// host or a shell word, whatever the hub thinks it is sending.
-bool is_url_safe(const char* text, size_t length) {
-  for (size_t index = 0; index < length; ++index) {
-    char c = text[index];
-    bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                   c == '_' || c == '-';
-    if (!allowed) return false;
-  }
-  return true;
-}
-
-bool is_stream_id(const char* text, size_t length) {
-  return length >= 8 && length <= 64 && is_url_safe(text, length);
-}
-
-bool is_token(const char* text, size_t length) {
-  return length >= 32 && length <= 128 && is_url_safe(text, length);
-}
 
 Action action_of(const char* text, size_t length) {
   struct Known {

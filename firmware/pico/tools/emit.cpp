@@ -1,14 +1,21 @@
-// Print events built by the firmware's own serializer, one per line.
+// Print what the firmware's own serializers produce, one message per line.
 //
 // The firmware cannot run Pydantic and the hub cannot run the firmware, so this is where
 // the two meet: `tools/check_against_contracts.py` runs this program and validates every
 // line against the hub's models. A serializer that agrees with a schema it was written
 // from proves less than one a second implementation has read.
+//
+//   sentry_emit           one event per line
+//   sentry_emit control   `<message>\t<json>` per line: state, health, ack
+//   sentry_emit topics    `<channel>\t<topic>` per line
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
+#include "sentry/control.h"
 #include "sentry/event.h"
+#include "sentry/topics.h"
 
 using sentry::Clock;
 using sentry::Delivery;
@@ -52,7 +59,118 @@ void emit(const Reading& reading, const Delivery& delivery) {
 
 }  // namespace
 
-int main() {
+namespace {
+
+void emit_control(const char* what, const char* buffer, size_t size) {
+  if (size == 0) {
+    std::fprintf(stderr, "refused to write a %s that was meant to be written\n", what);
+    std::exit(1);
+  }
+  std::printf("%s\t", what);
+  std::fwrite(buffer, 1, size, stdout);
+  std::fputc('\n', stdout);
+}
+
+int control() {
+  using sentry::Value;
+  char buffer[2048];
+
+  sentry::State state;
+  state.node_id = "pico-ingresso";
+  state.boot_id = "2c9a7f38-16d4-4b9e-9a0c-77f0b2d5e611";
+  state.connection_id = "9b1d6e44-0f27-4a83-8c55-1d3e7a9042bb";
+  state.online = true;
+  state.firmware_version = "0.1.0";
+  state.profile = "sensor-presence";
+  state.config_revision = 3;
+  sentry::DeclaredOption options[] = {
+      {"pin", Value::of(static_cast<int64_t>(17))},
+      {"debounce_ms", Value::of(static_cast<int64_t>(200))},
+      {"zone", Value::of("entrance")},
+      {"inverted", Value::of(false)},
+      {"interval_seconds", Value::of(30.5, 1)},
+      {"calibration", Value{}},
+  };
+  sentry::DeclaredSource sources[] = {
+      {"pir-1", "gpio", true, options, 6},
+      {"board-temperature", "board", true, nullptr, 0},
+      {"door-1", "gpio", false, nullptr, 0},
+  };
+  state.sources = sources;
+  state.source_count = 3;
+  emit_control("state", buffer, sentry::write_state(state, buffer, sizeof(buffer)));
+
+  char topic[sentry::kMaxTopicText] = {};
+  if (!sentry::topic(sentry::kTopicPrefix, state.node_id, sentry::Channel::kState, topic,
+                     sizeof(topic))) {
+    return 1;
+  }
+  emit_control("state", buffer,
+               sentry::write_goodbye(state.node_id, state.boot_id, state.connection_id,
+                                     std::strlen(topic), buffer, sizeof(buffer)));
+
+  sentry::Health health;
+  health.node_id = "pico-ingresso";
+  health.boot_id = state.boot_id;
+  health.uptime_seconds = 61.0;
+  health.clock = sentry::Clock::kUnsynced;
+  health.queue.events = 3;
+  health.queue.bytes = 512;
+  emit_control("health", buffer, sentry::write_health(health, buffer, sizeof(buffer)));
+
+  sentry::SourceHealth reported[] = {
+      {"pir-1", 12, "gpio", nullptr},
+      {"ds18b20-1", 0, "onewire", "no sensor answered on the bus"},
+  };
+  health.clock = sentry::Clock::kSynced;
+  health.queue.published = 40;
+  health.queue.refused = 1;
+  health.queue.drops_count = 2;
+  health.queue.drops_total = 2;
+  health.queue.granted = true;
+  health.board.has_uptime = true;
+  health.board.uptime_seconds = 61.0;
+  health.board.has_temperature = true;
+  health.board.temperature_c = 24.5;
+  health.board.has_free_heap = true;
+  health.board.memory_available_kb = 58;
+  health.sources = reported;
+  health.source_count = 2;
+  emit_control("health", buffer, sentry::write_health(health, buffer, sizeof(buffer)));
+
+  emit_control("ack", buffer,
+               sentry::write_ack("3f1b7c0e-8d4a-4e2b-9f61-0a5c8d7e4b12", state.node_id,
+                                 sentry::Outcome::kApplied, nullptr, buffer, sizeof(buffer)));
+  emit_control("ack", buffer,
+               sentry::write_ack("c-2", state.node_id, sentry::Outcome::kReceived, nullptr,
+                                 buffer, sizeof(buffer)));
+  emit_control("ack", buffer,
+               sentry::write_ack("c-3", state.node_id, sentry::Outcome::kFailed,
+                                 "pir-1: pin 17 is already taken by door-1", buffer,
+                                 sizeof(buffer)));
+  return 0;
+}
+
+int topics() {
+  const sentry::Channel kChannels[] = {sentry::Channel::kEvents, sentry::Channel::kState,
+                                       sentry::Channel::kHealth, sentry::Channel::kAcks,
+                                       sentry::Channel::kCommands};
+  for (sentry::Channel channel : kChannels) {
+    char topic[sentry::kMaxTopicText] = {};
+    if (!sentry::topic(sentry::kTopicPrefix, "pico-ingresso", channel, topic, sizeof(topic))) {
+      return 1;
+    }
+    std::printf("%s\t%s\n", sentry::name_of(channel), topic);
+  }
+  return 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  if (argc > 1 && std::strcmp(argv[1], "control") == 0) return control();
+  if (argc > 1 && std::strcmp(argv[1], "topics") == 0) return topics();
+
   emit(base(), link());
 
   Reading contact = base();

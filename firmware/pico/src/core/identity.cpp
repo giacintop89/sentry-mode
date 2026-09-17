@@ -3,21 +3,10 @@
 #include <cstring>
 
 #include "sentry/json.h"
+#include "sentry/names.h"
 
 namespace sentry {
 namespace {
-
-bool is_name(const char* text) {
-  size_t length = std::strlen(text);
-  if (length == 0 || length > 40) return false;
-  for (size_t index = 0; index < length; ++index) {
-    char c = text[index];
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) continue;
-    if (c == '-' && index > 0 && index + 1 < length) continue;
-    return false;
-  }
-  return true;
-}
 
 // A host name or a literal address, and nothing that could be a URL: whatever is here is
 // handed to the TLS layer as the name to verify, and a value with a scheme or a path in it

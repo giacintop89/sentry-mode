@@ -63,9 +63,11 @@ agent's own parser and to the hub's models, and the two must agree.
   schema checker and command parser, and by the firmware's command parser: same files,
   same verdicts.
 - What the firmware itself writes: `firmware/pico/tools/check_against_contracts.py` runs
-  its serializer and hands every event to the hub's models and to the agent's schema
-  checker. This is how the firmware was caught calling a reading `stale` where the
-  vocabulary says `degraded` — a drift no test written on the C++ side could see.
+  its serializers and hands every event, every state, every heartbeat and every answer to
+  the hub's models and to the agent's schema checker, and has the hub's own topic parser
+  read back the topics it would publish on. This is how the firmware was caught calling a
+  reading `stale` where the vocabulary says `degraded` — a drift no test written on the
+  C++ side could see.
 - What the Linux agent really publishes: its snapshot, its will, its heartbeat and its
   answers to commands are validated against the schemas in the agent's own suite.
 - What this hub really sends: the grant, the configuration and the revocation a session
