@@ -118,10 +118,23 @@ int control() {
   health.queue.bytes = 512;
   emit_control("health", buffer, sentry::write_health(health, buffer, sizeof(buffer)));
 
-  sentry::SourceHealth reported[] = {
-      {"pir-1", 12, "gpio", nullptr},
-      {"ds18b20-1", 0, "onewire", "no sensor answered on the bus"},
-  };
+  sentry::SourceHealth reported[2];
+  reported[0].source_id = "pir-1";
+  reported[0].readings = 12;
+  reported[0].driver = "gpio";
+  // What it last read, as health reports it: the same value, unit and quality the event
+  // carried, so the hub can compare the two and find them the same measurement.
+  reported[0].has_last = true;
+  reported[0].last = sentry::Value::of(true);
+  reported[0].quality = sentry::Quality::kValid;
+  reported[0].has_age = true;
+  reported[0].last_reading_age_seconds = 4.5;
+  reported[1].source_id = "ds18b20-1";
+  reported[1].readings = 0;
+  reported[1].driver = "onewire";
+  reported[1].error = "no sensor answered on the bus";
+  // Nothing has been read here, so there is no `last` at all — not a null value with a
+  // unit beside it, which is what a bus that answered with nothing would look like.
   health.clock = sentry::Clock::kSynced;
   health.queue.published = 40;
   health.queue.refused = 1;

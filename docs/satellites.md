@@ -84,8 +84,16 @@ else, correct the record rather than re-registering it:
     python scripts/satellite_admin.py describe --node pico-ingresso --platform pico-2w-sensor
 
 Both microcontroller entries are marked **experimental** everywhere they appear, on the
-page and in the shell. The firmware in `firmware/pico` is written and tested on a host; no
-board has been through the acceptance matrix yet.
+page and in the shell. A Pico 2 W has been run against this hub — provisioned, connected,
+configured, and read from; a Pico W has not, and no board has been through the whole
+acceptance matrix. `firmware/pico/README.md` says which parts were executed on hardware and
+which were not.
+
+The limits in those two entries are the firmware's own, not a guess at what a chip can
+stand: eight sources, because that is what the plan in `plan.h` holds, and about two
+kilobytes of configuration, because it reaches the node inside one MQTT packet and is kept
+in one flash sector. They are therefore the same for both boards, which run the same
+firmware, and the RP2350 having more memory does not move them.
 
 What a platform says is what is *possible*, never what is allowed. A node still has to be
 approved, still has to be online, and still has to hold a lease before it may say anything;

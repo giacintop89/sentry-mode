@@ -91,6 +91,15 @@ struct SourceHealth {
   int64_t readings = 0;
   const char* driver = nullptr;
   const char* error = nullptr;  // null when there is nothing wrong
+  // What it last measured, and how long ago. Both are left out rather than sent as zero
+  // when there has been nothing: a source that has never read is not a source that read
+  // nothing, and a page cannot tell those apart from a number.
+  bool has_last = false;
+  Value last;
+  const char* unit = nullptr;  // null for a reading that has no unit, like a wire's state
+  Quality quality = Quality::kValid;
+  bool has_age = false;
+  double last_reading_age_seconds = 0.0;
 };
 
 struct Health {

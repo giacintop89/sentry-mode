@@ -197,6 +197,14 @@ struct Live {
   bool converting = false;
   uint32_t ready_ms = 0;
   bool owes_a_baseline = false;
+  // What it last read, for the health message. An event is gone once it has been
+  // published; what the hub's page asks is what this source is reading now, and a node
+  // that only ever reported a count leaves that question to the next transition.
+  bool has_last = false;
+  sentry::Value last;
+  const char* unit = nullptr;
+  sentry::Quality quality = sentry::Quality::kValid;
+  uint64_t last_at_ms = 0;
 };
 Live live[sentry::kMaxPlanned];
 
@@ -314,7 +322,20 @@ bool moment_of(uint64_t& moment, char* stamped, size_t capacity, char* event_id)
 // One reading, written for a person to see on the cable and put in the queue for the
 // broker. Whether the hub may have it is the lease's business and is decided elsewhere:
 // what is taken is taken, and what is queued waits.
-void offer_the_reading(const sentry::Reading& reading, bool initial, sentry::Kept kept) {
+void offer_the_reading(Live& state, const sentry::Reading& reading, bool initial,
+                      sentry::Kept kept) {
+  // Kept before it is queued, because it is kept whether or not the hub ever sees it: a
+  // node with no grant is still measuring, and health is how it says what it measures.
+  // Text is the one kind not kept — nothing here produces one, and what a `Value` of that
+  // sort points at is a buffer that will be something else by the next reading.
+  if (reading.value.type != sentry::Value::Type::kText) {
+    state.has_last = true;
+    state.last = reading.value;
+    state.unit = reading.unit;
+    state.quality = reading.quality;
+    state.last_at_ms = now_us() / 1000;
+  }
+
   sentry::Delivery delivery;
   delivery.connection_id = connection_id;
   delivery.hub_epoch = lease.hub_epoch();
@@ -370,7 +391,7 @@ void take_a_board_reading(const sentry::Planned& source, Live& state, bool initi
 
   // A baseline is kept like a thing that happened once: nothing is coming to replace it,
   // and a temperature taken a minute later must not quietly stand in for it.
-  offer_the_reading(reading, initial,
+  offer_the_reading(state, reading, initial,
                     initial ? sentry::Kept::kTransition : sentry::Kept::kPeriodic);
 }
 
@@ -404,7 +425,7 @@ void take_an_adc_reading(const sentry::Planned& source, Live& state, bool initia
   }
   ++state.readings;
 
-  offer_the_reading(reading, initial,
+  offer_the_reading(state, reading, initial,
                     initial ? sentry::Kept::kTransition : sentry::Kept::kPeriodic);
 }
 
@@ -431,7 +452,7 @@ void take_a_onewire_reading(const sentry::Planned& source, Live& state,
   if (measured.has_value) reading.value = sentry::Value::of(measured.value, 2);
   ++state.readings;
 
-  offer_the_reading(reading, initial,
+  offer_the_reading(state, reading, initial,
                     initial ? sentry::Kept::kTransition : sentry::Kept::kPeriodic);
 }
 
@@ -491,7 +512,8 @@ void take_a_gpio_reading(const sentry::Planned& source, Live& state, sentry::Rep
   // Both are things that happened once and neither may be dropped for a temperature: a
   // door that opened is not replaced by anything, and a baseline is what the hub is
   // waiting for before it believes the next one.
-  offer_the_reading(reading, report == sentry::Report::kBaseline, sentry::Kept::kTransition);
+  offer_the_reading(state, reading, report == sentry::Report::kBaseline,
+                    sentry::Kept::kTransition);
 }
 
 // Every pin in the plan, read and judged. This runs on the same loop that keeps the
@@ -811,6 +833,29 @@ bool write_a_health_report() {
     sources[index].readings = live[index].readings;
     sources[index].driver = sentry::name_of(running.at(index).driver);
     sources[index].error = nullptr;
+    sources[index].has_last = live[index].has_last;
+    sources[index].last = live[index].last;
+    sources[index].unit = live[index].unit;
+    sources[index].quality = live[index].quality;
+    if (live[index].has_last) {
+      const uint64_t since = moment / 1000 - live[index].last_at_ms;
+      sources[index].has_age = true;
+      sources[index].last_reading_age_seconds = static_cast<double>(since) / 1000.0;
+    } else {
+      sources[index].has_age = false;
+    }
+    if (running.at(index).driver == sentry::Driver::kGpio && live[index].has_last) {
+      // A wire is different from a measurement. The last event from a pin is the last time
+      // it changed, which may have been an hour ago and may have been taken while the
+      // sensor was still settling; what health is asked is how the pin is now, and this
+      // loop reads it every turn. So this one is answered from the input rather than from
+      // the last thing published: same value if nothing moved, and a quality that stops
+      // saying `unknown` once the sensor has had its settling time.
+      sources[index].last = sentry::Value::of(live[index].input.state());
+      sources[index].unit = nullptr;
+      sources[index].quality = live[index].input.quality(moment / 1000);
+      sources[index].last_reading_age_seconds = 0.0;
+    }
   }
 
   sentry::Health health;

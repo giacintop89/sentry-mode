@@ -16,6 +16,7 @@ using sentry::Outcome;
 using sentry::SourceHealth;
 using sentry::State;
 using sentry::Value;
+using sentry::Quality;
 using sentry::write_ack;
 using sentry::write_goodbye;
 using sentry::write_health;
@@ -173,10 +174,13 @@ TEST(what_the_board_can_measure_it_reports) {
   health.board.temperature_c = 24.5;
   health.board.has_free_heap = true;
   health.board.memory_available_kb = 58;
-  SourceHealth sources[] = {
-      {"pir-1", 12, "gpio", nullptr},
-      {"ds18b20-1", 0, "onewire", "no sensor answered on the bus"},
-  };
+  SourceHealth sources[2];
+  sources[0].source_id = "pir-1";
+  sources[0].readings = 12;
+  sources[0].driver = "gpio";
+  sources[1].source_id = "ds18b20-1";
+  sources[1].driver = "onewire";
+  sources[1].error = "no sensor answered on the bus";
   health.sources = sources;
   health.source_count = 2;
   char buffer[2048];
@@ -187,6 +191,59 @@ TEST(what_the_board_can_measure_it_reports) {
   CHECK(written.find(R"("memory_available_kb":58)") != std::string::npos);
   CHECK(written.find(R"("pir-1":{"readings":12,"driver":"gpio"})") != std::string::npos);
   CHECK(written.find(R"("error":"no sensor answered on the bus")") != std::string::npos);
+}
+
+TEST(a_source_reports_what_it_last_read_the_way_the_event_said_it) {
+  Health health = a_health();
+  SourceHealth sources[1];
+  sources[0].source_id = "thermometer-1";
+  sources[0].readings = 9;
+  sources[0].driver = "onewire";
+  sources[0].has_last = true;
+  sources[0].last = Value::of(21.5, 2);
+  sources[0].unit = "\u00b0C";
+  sources[0].quality = Quality::kValid;
+  sources[0].has_age = true;
+  sources[0].last_reading_age_seconds = 12.0;
+  health.sources = sources;
+  health.source_count = 1;
+  char buffer[2048];
+  const size_t size = write_health(health, buffer, sizeof(buffer));
+  CHECK(size > 0);
+  const std::string written(buffer, size);
+  CHECK(written.find(R"("last_reading_age_seconds":12.0)") != std::string::npos);
+  CHECK(written.find(R"("last":{"value":21.50,"unit":)") != std::string::npos);
+  CHECK(written.find(R"("quality":"valid")") != std::string::npos);
+}
+
+TEST(a_source_that_has_read_nothing_reports_no_reading_rather_than_an_empty_one) {
+  // The difference matters: a null value with a unit beside it is a bus that answered with
+  // nothing, and a source that has never been read is a source nobody has asked yet.
+  Health health = a_health();
+  SourceHealth sources[1];
+  sources[0].source_id = "pir-1";
+  sources[0].driver = "gpio";
+  health.sources = sources;
+  health.source_count = 1;
+  char buffer[2048];
+  const size_t size = write_health(health, buffer, sizeof(buffer));
+  CHECK(size > 0);
+  const std::string written(buffer, size);
+  CHECK(written.find(R"("last")") == std::string::npos);
+  CHECK(written.find(R"("last_reading_age_seconds")") == std::string::npos);
+}
+
+TEST(a_reading_that_happened_in_the_future_is_not_reported) {
+  Health health = a_health();
+  SourceHealth sources[1];
+  sources[0].source_id = "pir-1";
+  sources[0].driver = "gpio";
+  sources[0].has_age = true;
+  sources[0].last_reading_age_seconds = -1.0;
+  health.sources = sources;
+  health.source_count = 1;
+  char buffer[2048];
+  CHECK(write_health(health, buffer, sizeof(buffer)) == 0);
 }
 
 TEST(a_counter_that_counts_backwards_is_not_written) {

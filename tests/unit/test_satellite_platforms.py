@@ -96,11 +96,22 @@ def test_a_microcontroller_has_no_camera_and_nothing_to_test_by_hand():
     assert "csi" not in PICO.drivers and "microphone" not in PICO.drivers
 
 
-def test_the_bigger_board_is_the_same_kind_of_thing_with_more_room():
+def test_the_bigger_board_runs_the_same_firmware_and_so_takes_the_same_configuration():
+    # The RP2350 has more memory and more flash, and none of that moves these two numbers:
+    # they are the firmware's limits — eight planned sources, and a configuration that has
+    # to arrive in one packet and be kept in one sector — and it is the same firmware.
     two = platforms.CATALOGUE["pico-2w-sensor"]
     assert two.drivers == PICO.drivers
-    assert two.max_sources > PICO.max_sources
-    assert two.max_config_bytes > PICO.max_config_bytes
+    assert two.max_sources == PICO.max_sources
+    assert two.max_config_bytes == PICO.max_config_bytes
+    assert two.architecture != PICO.architecture
+
+
+def test_a_microcontroller_takes_what_its_firmware_can_actually_hold():
+    # firmware/pico/include/sentry/plan.h: kMaxPlanned is eight on both chips. If that
+    # changes, this is the other place that has to change with it.
+    assert PICO.max_sources == 8
+    assert PICO.max_config_bytes <= 2560  # one MQTT packet, which is what carries it
 
 
 # -- what may be configured -----------------------------------------------------
@@ -148,7 +159,7 @@ def test_a_configuration_too_large_to_hold_is_refused_by_its_size_on_the_wire():
         for index in range(PICO.max_sources)
     ]
     wrong = platforms.check_configuration(PICO, entries)
-    assert len(wrong) == 1 and wrong[0].endswith("a pico-w-sensor holds 4096")
+    assert len(wrong) == 1 and wrong[0].endswith(f"a pico-w-sensor holds {PICO.max_config_bytes}")
     assert platforms.check_configuration(platforms.LINUX, entries) == []
 
 

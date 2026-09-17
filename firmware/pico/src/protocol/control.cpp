@@ -12,6 +12,8 @@ namespace {
 constexpr size_t kMaxOptionText = 128;
 // agent_version and profile, from the model.
 constexpr size_t kMaxShortText = 32;
+// What the contract allows a unit to be, and what `spool.h` keeps one in.
+constexpr size_t kMaxUnitText = 16;
 // An option name is a key in the node's own configuration file, not free text.
 constexpr size_t kMaxOptionName = 64;
 
@@ -177,6 +179,12 @@ size_t write_health(const Health& health, char* buffer, size_t capacity) {
     if (!is_name(source.source_id) || source.readings < 0) return 0;
     if (source.driver != nullptr && !is_text_within(source.driver, kMaxShortText)) return 0;
     if (source.error != nullptr && !is_text_within(source.error, kMaxDetailText)) return 0;
+    if (source.unit != nullptr && !is_text_within(source.unit, kMaxUnitText)) return 0;
+    if (source.has_last && source.last.type == Value::Type::kText &&
+        (source.last.text == nullptr || !is_text_within(source.last.text, kMaxShortText))) {
+      return 0;
+    }
+    if (source.has_age && source.last_reading_age_seconds < 0) return 0;
   }
 
   Writer writer(buffer, capacity);
@@ -225,6 +233,27 @@ size_t write_health(const Health& health, char* buffer, size_t capacity) {
     if (source.error != nullptr) {
       writer.key("error");
       writer.string(source.error);
+    }
+    if (source.has_age) {
+      writer.key("last_reading_age_seconds");
+      writer.fixed(source.last_reading_age_seconds, 1);
+    }
+    if (source.has_last) {
+      // The same three fields an event carries, written by the same code: a hub comparing
+      // what health says with the last event it was sent is comparing like with like.
+      writer.key("last");
+      writer.object_open();
+      writer.key("value");
+      put_value(writer, source.last);
+      writer.key("unit");
+      if (source.unit == nullptr) {
+        writer.null();
+      } else {
+        writer.string(source.unit);
+      }
+      writer.key("quality");
+      writer.string(name_of(source.quality));
+      writer.object_close();
     }
     writer.object_close();
   }

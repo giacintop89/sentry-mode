@@ -67,15 +67,21 @@ LINUX = Platform(
 )
 
 # The two microcontroller entries are deliberately the same shape and deliberately small.
-# Neither has been run: they describe what the firmware in `firmware/pico` is being built
-# to do, and both are experimental until a board has been through the acceptance matrix.
+# The limits are the firmware's own, not a guess: `kMaxPlanned` in `plan.h` is eight
+# sources on either chip, and a configuration reaches the node inside one MQTT packet and
+# is kept in one flash sector, which leaves about two kilobytes for the sources once the
+# command around them is counted. A hub that allowed more would be sending something the
+# node can only refuse, or apply and then fail to remember.
+#
+# A Pico 2 W has been run against this hub; a Pico W has not. Both stay experimental until
+# a board has been through the acceptance matrix, which no board has.
 PICO_W = Platform(
     name="pico-w-sensor",
     architecture="rp2040",
     summary="A Pico W running the Sentry firmware: sensors only, no camera, no microphone.",
     drivers=("gpio", "onewire", "adc", "board"),
-    max_sources=16,
-    max_config_bytes=4096,
+    max_sources=8,
+    max_config_bytes=2048,
     streams=(),
     manual_tests=False,
     experimental=True,
@@ -87,8 +93,8 @@ PICO_2W = PICO_W.model_copy(
         "name": "pico-2w-sensor",
         "architecture": "rp2350",
         "summary": "A Pico 2 W running the Sentry firmware: sensors only, with more room.",
-        "max_sources": 24,
-        "max_config_bytes": 8192,
+        # More room in memory and in flash, and the same firmware: the limits on what it
+        # may be configured with come from the firmware, so they are the same as well.
     }
 )
 

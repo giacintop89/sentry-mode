@@ -10,6 +10,8 @@ namespace {
 
 bool leap(int year) { return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0; }
 
+}  // namespace
+
 void put_value(Writer& writer, const Value& value) {
   switch (value.type) {
     case Value::Type::kBoolean:
@@ -30,8 +32,6 @@ void put_value(Writer& writer, const Value& value) {
       return;
   }
 }
-
-}  // namespace
 
 Value Value::of(bool value) {
   Value made;

@@ -657,6 +657,32 @@ up its private key and its Wi-Fi passphrase to anybody with the patience to read
 That is a property of the part, not of this firmware. It is why the satellite gets the
 guest network and a certificate of its own — one the hub can revoke.
 
+### What each source last read
+
+A health message used to say how many readings a source had taken and whether its driver
+was running, and nothing about what it measured. The hub's page has a column for the last
+reading, and for this node it was empty until the next event happened to arrive — which for
+a pin that nobody walks past is never.
+
+It now carries the same three fields an event does, written by the same code:
+
+```
+"light-1": {"readings": 41, "driver": "adc", "last_reading_age_seconds": 9.8,
+            "last": {"value": 0.1470, "unit": "ratio", "quality": "valid"}}
+```
+
+A source that has read nothing has no `last` at all, rather than a null with a unit beside
+it: a bus that answered with nothing and a source nobody has asked yet are different things
+and the page has to be able to tell them apart.
+
+One source answers from somewhere else. A wire only publishes when it changes, so its last
+event may be an hour old and may have been taken while the sensor was still settling — that
+reading is honestly `unknown`, and a page showing it would say `Unavailable` about a pin
+that is working perfectly. Health is asked how the pin is *now*, and the loop reads it every
+turn, so a `gpio` source answers from the debounced input: the same value if nothing has
+moved, an age of zero because it was just read, and a quality that stops saying `unknown`
+once the sensor has had its settling time.
+
 ## What is in here
 
 | Path | What it is |
@@ -723,9 +749,6 @@ fails here, in a second, rather than at link time on a target with neither.
 - The rest of the failure cases of the handshake. A wrong authority has been watched, and
   refused; a certificate issued for another name, an expired one and a revoked one have
   not, so the rest of `T06` and all of `T07` are **not executed**.
-- What a source last read, in the health message. The node reports how many readings each
-  source has taken and whether its driver is running, but not the last value, so the hub's
-  page shows a source that is ready and a reading it has to wait for an event to learn.
 - A sensor with wires on it. A pin is read, debounced, settled and reported, and that path
   has been exercised on the hardware — but by the board driving its own pad, not by a PIR
   or a reed switch. What a real sensor does that a driven pin does not — the settling after

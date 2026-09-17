@@ -67,6 +67,13 @@ struct Delivery {
 
 // Write the envelope into `buffer`. Returns how many bytes it took, or 0 if it did not fit
 // or a field was not one the contract allows.
+class Writer;
+
+// Writing one value the way an event writes it. Shared with the health message on purpose:
+// a reading reported in health and the same reading published as an event are the same
+// measurement, and a page that showed them differently would be showing two.
+void put_value(Writer& writer, const Value& value);
+
 size_t write_event(const Reading& reading, const Delivery& delivery, char* buffer,
                    size_t capacity);
 
