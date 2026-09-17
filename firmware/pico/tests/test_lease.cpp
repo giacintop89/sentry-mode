@@ -134,4 +134,29 @@ TEST(the_memory_of_commands_has_a_bottom_to_it) {
   CHECK(seen.recall("c-0") == nullptr);  // long gone, and the lease still protects the rest
 }
 
+TEST(a_command_that_arrives_twice_does_not_buy_a_second_lease) {
+  // The broker delivers at least once, so a renewal will arrive twice sooner or later.
+  // Answering it again is correct; extending the session again is not.
+  Answered seen;
+  Lease lease;
+  Command renewal = a_grant("025a1b1f-2969-48c2-b14e-079c8b955f7c", 300, 2, Action::kRenew);
+  std::strcpy(renewal.command_id, "c-renew");
+  lease.apply(a_grant(), 1000);
+
+  const Answer* already = seen.recall(renewal.command_id);
+  CHECK(already == nullptr);
+  Decision first = lease.apply(renewal, 100000);
+  seen.remember(renewal.command_id, first.answer);
+  uint64_t expiry = lease.expires_at();
+
+  already = seen.recall(renewal.command_id);
+  CHECK(already != nullptr && *already == Answer::kApplied);  // answered again, from memory
+  CHECK(lease.expires_at() == expiry);                        // and the clock did not move
+
+  // Even if the memory of it were gone, the sequence number says it is not new.
+  Decision again = lease.apply(renewal, 200000);
+  CHECK(again.answer == Answer::kFailed);
+  CHECK(lease.expires_at() == expiry);
+}
+
 int main() { return harness::run_all("lease"); }
