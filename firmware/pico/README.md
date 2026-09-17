@@ -875,6 +875,94 @@ A board without the radio has no watch to offer: `ble` is refused at configurati
 `ble needs a board with a radio, and this one has none`, and the image for such a board has
 no BTstack in it at all.
 
+### Something was loud
+
+`PICO-07` asks for a microphone on the board and for nothing but activity to come off it.
+Both halves matter, and the second one is a promise rather than an omission: there is no
+encoder here, no room to hold a second of sound and no stream for one to go out on. A
+microphone on this board produces `audio.activity` — `true` when it has been loud for long
+enough, `false` when it has been quiet for long enough — and that is the whole of what
+leaves it. An `audio.start` command is refused with `this node sends no sound`.
+
+The judgement is the agent's, written again in `src/core/acoustic.cpp` and tested against
+the same numbers: the level of a block in dB full scale, a threshold, `activity_min_seconds`
+of it before anything is said, and six decibels of hysteresis below the threshold for
+`activity_hold_seconds` before it is taken back. Bursts do not add up — a shout, a second of
+quiet and another shout is not a second of noise — and the band between the threshold and
+the hysteresis is a band nothing happens in, which is what keeps a level sitting on the line
+from flickering. Eleven tests drive it with synthetic tones: a full-scale sine measures
+−3.0 dBFS, silence measures −96.0, and a block of samples turns into an event at the end.
+
+The capture is `src/device/i2s.pio` and `src/device/i2s.cpp`: one PIO state machine clocking
+a Philips I²S frame — 32 bits a channel, the word select turning on the falling edge that
+begins the last bit, which is the one bit that decides whether a microphone is a microphone
+or a noise generator — and two DMA channels that start each other so that one is always
+filling a block while the loop reads the other. Each buffer wraps on itself in hardware, so
+a channel whose turn comes round again writes at the beginning of its own block and can
+never write past it; a block caught being overwritten is dropped and counted rather than
+measured, because a level taken from half one block and half the next is a level of nothing.
+
+That pairing is not decoration. The first version used one channel and started it again each
+time the loop took a block, and the board said so at once — every single block had lost the
+sound of the gap before it:
+
+```
+#   hall-noise microphone pin=6 clock=7 left level=-96.0 quiet blocks=223 missed=223
+```
+
+With the two chained, on the same board in the same minute:
+
+```
+#   hall-noise microphone pin=6 clock=7 left level=-96.0 quiet blocks=1866 missed=2
+```
+
+1866 blocks of 512 frames at 16 kHz is 59.7 seconds of sound in the sixty seconds it ran,
+and the two it missed were the moment the configuration arrived. Left running, it stayed
+that way: 7250 blocks four minutes later — 232 seconds of sound in 232 seconds — with the
+same two, while the board kept its broker connection up and watched a beacon at the same
+time.
+
+Time is counted in the sound that was actually heard rather than on the clock. A block this
+board never captured is not silence, and a hold that timed out across a gap would be the
+node deciding a room went quiet during the one stretch it could not hear it — the same rule
+the watch above follows when its scanner stops.
+
+The data line is pulled down, which is worth saying because it is what the numbers above
+are. A MEMS microphone drives its half of the frame and lets the other half go; for that
+half the line is held by nobody, and floating it reads as whatever the mains put on the pad.
+Before the pull-down this board measured −90.3 dBFS with nothing attached to it, which is
+exactly one least significant bit, which is exactly a wire. After it, −96.0, which is the
+floor and the honest answer for a board with no microphone on it.
+
+What the hub refuses before sending, measured against the running hub:
+
+```
+400 {"error": "kitchen-noise: a pico-2w-sensor listens to one microphone, and hall-noise is already it"}
+400 {"error": "hall-noise.alsa_device: a pico-2w-sensor has no filesystem and no audio stack"}
+```
+
+The first of those is the board's own limit said early: one state machine is clocking I²S
+and one pair of buffers is behind it, so a second microphone would share the first one's
+clock and read the first one's pin. The firmware refuses it too, by name.
+
+The three pins are given back when the plan changes, unlike the radio, because a clock left
+running on a pin nobody is listening to is a microphone that looks switched off and is not.
+Reconfigured from the microphone to three plain inputs on the same pins, the board:
+
+```
+#   was-the-clock       gpio pin=7 level=low state=off readings=1
+#   was-the-data        gpio pin=6 level=low state=off readings=1
+#   was-the-word-select gpio pin=8 level=low state=off readings=1
+```
+
+**No microphone has ever been attached to this board.** Everything above was measured with
+three pins and nothing on them: the frame is clocked, the blocks arrive without a gap, the
+silence is silence and the events reach the hub. What has not been checked against hardware
+is the one thing hardware would settle — whether the bit this program samples is the bit the
+microphone meant, whether the channel is the channel and whether a loud room reads as a loud
+room. The PIO program is written to the Philips timing and the arithmetic is tested against
+synthetic tones, and neither of those is a microphone.
+
 ## What is in here
 
 | Path | What it is |
@@ -907,7 +995,9 @@ no BTstack in it at all.
 | `include/sentry/presence.h`, `src/core/presence.cpp` | Whether one named device is here: what counts as a sighting, what counts as an arrival, and why a scanner that stopped means unknown rather than absent. The agent's rules, and no radio anywhere in it. |
 | `src/device/ble.h`, `src/device/ble.cpp`, `src/device/ble_none.cpp` | The scanner: BTstack on the CYW43, listening passively and leaving every advertisement in a queue the loop drains. Nothing is matched here. The third file is the whole of it on a board with no radio. |
 | `src/device/btstack_config.h` | What of BTstack is compiled in: a scanner, no bonding, no flash storage — the sectors that would take are the vault's. |
-| `tests/` | The twenty suites, and a tiny harness rather than a test framework. |
+| `include/sentry/acoustic.h`, `src/core/acoustic.cpp` | What a level is and what makes it an event: dB full scale over a block, a threshold with six decibels of hysteresis under it, and the seconds either side. The agent's numbers, and no pin anywhere in it. |
+| `src/device/i2s.pio`, `src/device/i2s.h`, `src/device/i2s.cpp` | The microphone: a state machine clocking a Philips I²S frame and two DMA channels that start each other, so no sound is lost between one block and the next. A block is read once and handed straight back; nothing here keeps audio. |
+| `tests/` | The twenty-one suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful
@@ -934,9 +1024,10 @@ fails here, in a second, rather than at link time on a target with neither.
   when the supply actually sags — the part is mid-erase and the voltage is falling — is not
   something a `tear` verb can stand in for.
 - Every driver in the hub's catalogue for this platform is now here: `board`, `gpio`,
-  `adc`, `onewire` and `ble`. A configuration naming anything else — a BME280, a camera, a
-  microphone — is refused by name. Camera and microphone commands are
-  refused the same way, and will stay refused: this board has neither.
+  `adc`, `onewire`, `ble` and `microphone`. A configuration naming anything else — a
+  BME280, a camera — is refused by name. So are the stream commands, and they will stay
+  refused: there is no camera on this board, and the microphone that may be on it has
+  nowhere to put a second of sound.
 - How long a reading waited. Every event goes out with `queued_ms: 0`, because the queue
   does not record when something was put in it. A reading that waited forty seconds says
   so only through its own `occurred_at`, which is the honest field but not the one the
@@ -967,6 +1058,15 @@ fails here, in a second, rather than at link time on a target with neither.
   at boot — 32 in the first minute — and then stops: a thousand sightings of the watched
   beacon later, in the same room, it was still 32. That is one minute of steady state, not
   a night of it, and a flat with a dozen devices in it has not been tried.
+- A microphone. The I²S receiver has been run for minutes at a time, with the blocks
+  arriving unbroken and the silence measuring as silence, but the three pins have never had
+  a part on them. Whether the bit this program samples is the bit a microphone meant, which
+  half of the frame a given part drives, and what a real room measures are all unexamined —
+  the same gap the 1-Wire bus has, and for the same reason.
+- What a loud room does over an evening. The activity rules are tested against synthetic
+  tones and the capture against an empty wire, and the two have never met. A threshold
+  chosen for a hallway, a fridge compressor, a door slam at three in the morning: none of
+  that is anything this board has been asked about.
 - I²C, and BME280 with it. Neither the bus nor the part's identification and calibration
   coefficients are here at all, and the hub's catalogue for this platform does not offer
   them.

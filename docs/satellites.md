@@ -65,8 +65,9 @@ the name it authenticated as, and the name inside its messages all have to agree
 
 Not every satellite is a small Linux computer. A microcontroller running the Sentry
 firmware has the drivers that were compiled into it, a few kilobytes for its configuration,
-no filesystem for a path to point into, and no camera or microphone at all. The hub has to
-know which kind it is talking to before it sends anything, so a node is registered as one:
+no filesystem for a path to point into, no camera, and a microphone it can only tell you
+something was loud with. The hub has to know which kind it is talking to before it sends
+anything, so a node is registered as one:
 
     python scripts/satellite_admin.py platforms
     python scripts/satellite_admin.py register --node pico-ingresso --platform pico-w-sensor
@@ -74,8 +75,8 @@ know which kind it is talking to before it sends anything, so a node is register
 | Platform | Board | Drivers | Sources | Configuration | Streams |
 | --- | --- | --- | --- | --- | --- |
 | `linux-agent` | Pi Zero W or similar, running the Python agent | gpio, onewire, bme280, adc, csi, microphone, ble, board, dummy | 32 | 64 KiB | video, audio |
-| `pico-w-sensor` | Pico W (RP2040) | gpio, onewire, adc, ble, board | 16 | 4 KiB | none |
-| `pico-2w-sensor` | Pico 2 W (RP2350) | gpio, onewire, adc, ble, board | 24 | 8 KiB | none |
+| `pico-w-sensor` | Pico W (RP2040) | gpio, onewire, adc, ble, microphone, board | 16 | 4 KiB | none |
+| `pico-2w-sensor` | Pico 2 W (RP2350) | gpio, onewire, adc, ble, microphone, board | 24 | 8 KiB | none |
 
 `--platform` defaults to `linux-agent`, which is what every node registered before this
 existed is, and what the page goes on showing them as. If a node turns out to be something
@@ -411,6 +412,31 @@ audio** has a list of microphones once there is more than one.
 
 The node's own health reports, for each microphone, whether its capture runs, its last
 error and its level.
+
+A Pico W or Pico 2 W takes a microphone too, and reports the same `audio.activity` with the
+same thresholds and the same hysteresis — the firmware carries its own copy of those rules
+for the same reason it carries the presence ones. What it does not do is send sound, and
+that is a promise rather than a gap: there is no encoder on the board, nowhere to hold a
+second of audio, and an `audio.start` for one of these nodes is refused with `this node
+sends no sound`. It does not appear in `/api/microphones` and no browser can listen to it.
+
+```json
+{"id": "hall-noise", "kind": "microphone", "pin": 6, "clock_pin": 7,
+ "channel": "left", "activity_threshold_dbfs": -35.0,
+ "activity_min_seconds": 0.3, "activity_hold_seconds": 5.0}
+```
+
+- It is pins rather than a sound card: `pin` is the microphone's data line, `clock_pin` is
+  the bit clock, and the word select is the pin above the clock — the hardware drives those
+  two from one register, so it is not a choice. `device`, `interface` and `activity` are
+  not among its options, and a source that names one is refused on the page.
+- `channel` is `left` or `right`: which half of the frame the microphone is wired to drive,
+  which on most parts is a pin tied high or low. Capture is 16 kHz, as it is on a Pi.
+- `activity` is not an option because it is the only mode. A microphone on one of these
+  boards is an activity detector and nothing else.
+- One microphone to a board. There is one state machine clocking I²S and one pair of
+  buffers behind it, so a second source is refused before it is sent rather than quietly
+  started on the first one's clock.
 
 ## Presence
 
