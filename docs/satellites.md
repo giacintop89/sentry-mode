@@ -74,8 +74,8 @@ know which kind it is talking to before it sends anything, so a node is register
 | Platform | Board | Drivers | Sources | Configuration | Streams |
 | --- | --- | --- | --- | --- | --- |
 | `linux-agent` | Pi Zero W or similar, running the Python agent | gpio, onewire, bme280, adc, csi, microphone, ble, board, dummy | 32 | 64 KiB | video, audio |
-| `pico-w-sensor` | Pico W (RP2040) | gpio, onewire, adc, board | 16 | 4 KiB | none |
-| `pico-2w-sensor` | Pico 2 W (RP2350) | gpio, onewire, adc, board | 24 | 8 KiB | none |
+| `pico-w-sensor` | Pico W (RP2040) | gpio, onewire, adc, ble, board | 16 | 4 KiB | none |
+| `pico-2w-sensor` | Pico 2 W (RP2350) | gpio, onewire, adc, ble, board | 24 | 8 KiB | none |
 
 `--platform` defaults to `linux-agent`, which is what every node registered before this
 existed is, and what the page goes on showing them as. If a node turns out to be something
@@ -461,6 +461,26 @@ the node. Two rules matter and both are about not guessing:
 A rule is set off by it as [a device arriving or leaving](rules-v2.md#a-device-arriving-or-leaving),
 which can name several nodes watching the same device. Why BlueZ over D-Bus, and what a
 scan costs on a Zero W, are in [presence](adr/satellite-presence.md).
+
+A Pico W or Pico 2 W watches the same way, with the same words and the same meanings: the
+firmware carries its own copy of these rules so that the hub cannot tell which kind of node
+an arrival came from. The differences are what the board does not have rather than what it
+does:
+
+- `adapter` is not one of its options. There is one radio, and nothing to choose between.
+- The radio is on the same chip as the Wi-Fi. A board with no wireless chip — a plain Pico
+  or Pico 2 — refuses a `ble` source at configuration time, and its firmware image has no
+  Bluetooth in it at all.
+- `enter_sightings` is at most 20, `enter_window_seconds` between 1 and 120, and
+  `absent_after_seconds` between 10 and 3600. A window too short to hold the sightings it
+  asks for — they are a second apart at best — is refused rather than left to wait for an
+  arrival that can never be counted.
+- The node never advertises, never pairs and never bonds. It listens passively, and keeps
+  nothing about any device across a reset.
+
+Both halves of the same node are checked before anything is sent: a source that names
+neither an address nor a beacon, or both, or that puts an `ibeacon_major` on an address, is
+refused on the page rather than after a round trip.
 
 ## Installing a node, updating it, and going back
 

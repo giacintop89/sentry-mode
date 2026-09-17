@@ -794,6 +794,87 @@ and on the hub, without a cable, a few seconds after that:
 here presses the RUN pin, sags the supply or reboots itself, and they are written down as
 the chip's own bits rather than as something that has been seen.
 
+### Whether somebody is here
+
+`PICO-06` asks for BLE presence on the same board that is already keeping a TLS connection
+open, and for it to mean the same thing it means on a Linux node. Both halves are now true,
+and the second one is the harder one: the hub must not be able to tell which kind of node an
+arrival came from.
+
+So the rules are the agent's, written again in `src/core/presence.cpp` and tested against
+the same cases: a few sightings inside a window make an arrival, sightings closer together
+than a second count once, a long quiet with the radio listening the whole time makes an
+absence, and a scanner that stops — for any reason — makes the state **unknown at once**
+rather than absent. What is watched is one named device, by address or by iBeacon; "some
+device appeared" is not presence, it is a bus going past the window.
+
+The radio half is `src/device/ble.cpp`: BTstack on the same CYW43 the Wi-Fi is on, scanning
+passively, leaving every advertisement in a queue the loop drains. Nothing is matched there
+and nothing is decided there. BTstack's flash storage is deliberately not initialised —
+this node never bonds, and the sectors that code would take are the vault's.
+
+Measured on the board, with a Raspberry Pi advertising an iBeacon at the other end of the
+room, while the same board kept its broker connection up:
+
+```
+#   beacon-hall ble e2c56db5-dffb-48d2-b060-d0f5a71096e0 present rssi=-52 sightings=173 weak=0 missed=0 readings=2
+#   nobody-home ble AA:BB:CC:DD:EE:FF absent rssi=none sightings=0 weak=0 missed=0 readings=2
+```
+
+and on the hub, with no cable:
+
+```
+beacon-hall ble ready {"value": "present", "unit": null, "quality": "valid"}
+nobody-home ble ready {"value": "absent",  "unit": null, "quality": "valid"}
+```
+
+The beacon was then switched off and back on. Fifteen seconds of silence is an absence, and
+two sightings are an arrival; neither is a baseline, because neither came from unknown:
+
+```
+event beacon-hall 'absent'  valid        (the Pi stopped advertising)
+event beacon-hall 'present' valid        (and started again)
+```
+
+`deafen` stops the scanner on purpose, the way `tear` writes half a record and `hang` stops
+feeding the watchdog. It is the only way to see coverage loss without unsoldering an
+antenna, and it is the case worth being sure of — a node that cannot hear has not found out
+that the room is empty:
+
+```
+> deafen
+# the scanner is off; the loop will ask for it again in about 5000 ms
+event beacon-hall None unknown
+event nobody-home None unknown
+event beacon-hall 'present' valid initial     (the radio came back)
+event nobody-home 'absent'  valid initial     (and the wait for absence started again)
+```
+
+Both of those are baselines: a state reached from unknown is where things stand rather than
+something that just happened, which is the same distinction the agent makes and the same one
+a PIR's first reading makes here.
+
+`rssi_min` is a threshold on evidence, not a distance. Set to something the beacon in the
+room cannot meet, the node says absent and says why in its own numbers — 230 advertisements
+heard from a device two metres away, none of them counted:
+
+```
+#   beacon-hall ble e2c56db5-… absent rssi=none sightings=0 weak=230 missed=63 readings=2
+```
+
+What the hub refuses before sending, measured against the running hub:
+
+```
+400 {"error": "ghost: a device is watched by its address or by its iBeacon, not neither"}
+400 {"error": "ghost: a device is watched by its address or by its iBeacon, not both"}
+400 {"error": "ghost: ibeacon_major and ibeacon_minor are parts of an iBeacon, and this one watches an address"}
+400 {"error": "ghost.pin: a ble source on a pico-2w-sensor has no pin"}
+```
+
+A board without the radio has no watch to offer: `ble` is refused at configuration time with
+`ble needs a board with a radio, and this one has none`, and the image for such a board has
+no BTstack in it at all.
+
 ## What is in here
 
 | Path | What it is |
@@ -823,7 +904,10 @@ the chip's own bits rather than as something that has been seen.
 | `include/sentry/sensors.h`, `src/core/sensors.cpp` | Turning what a sensor returned into a reading or into an admission there is none: the 1-Wire CRC, the 85 °C a DS18B20 holds after a reset, and an ADC count nothing could have produced. |
 | `include/sentry/plan.h`, `src/core/plan.cpp` | What a configuration is allowed to ask for: which drivers this firmware has, which options each one takes, and a refusal that names the source it failed on — decided whole, on a copy, before a pin is touched. |
 | `include/sentry/pins.h`, `src/core/pins.cpp` | Which pins a configuration may use and who already has them, refused whole rather than in part. |
-| `tests/` | The nineteen suites, and a tiny harness rather than a test framework. |
+| `include/sentry/presence.h`, `src/core/presence.cpp` | Whether one named device is here: what counts as a sighting, what counts as an arrival, and why a scanner that stopped means unknown rather than absent. The agent's rules, and no radio anywhere in it. |
+| `src/device/ble.h`, `src/device/ble.cpp`, `src/device/ble_none.cpp` | The scanner: BTstack on the CYW43, listening passively and leaving every advertisement in a queue the loop drains. Nothing is matched here. The third file is the whole of it on a board with no radio. |
+| `src/device/btstack_config.h` | What of BTstack is compiled in: a scanner, no bonding, no flash storage — the sectors that would take are the vault's. |
+| `tests/` | The twenty suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful
@@ -850,7 +934,7 @@ fails here, in a second, rather than at link time on a target with neither.
   when the supply actually sags — the part is mid-erase and the voltage is falling — is not
   something a `tear` verb can stand in for.
 - Every driver in the hub's catalogue for this platform is now here: `board`, `gpio`,
-  `adc` and `onewire`. A configuration naming anything else — a BME280, a camera, a
+  `adc`, `onewire` and `ble`. A configuration naming anything else — a BME280, a camera, a
   microphone — is refused by name. Camera and microphone commands are
   refused the same way, and will stay refused: this board has neither.
 - How long a reading waited. Every event goes out with `queued_ms: 0`, because the queue
@@ -873,6 +957,16 @@ fails here, in a second, rather than at link time on a target with neither.
   only 1-Wire transcript here is an empty bus. The pull-up is the chip's own, which is
   around fifty times weaker than the 4.7 kΩ the part asks for — enough for an empty bus to
   read as empty, not enough for a probe on a long wire.
+- A watch on a phone rather than on a beacon. `address` is written, tested and refused
+  correctly, but the only device this board has ever recognised is an iBeacon advertising
+  from a Raspberry Pi. A modern phone rotates its address every fifteen minutes, which is
+  exactly what an address-based watch cannot follow — which is why the agent takes a beacon
+  too, and why nothing here claims otherwise.
+- What a busy building does to the queue over hours. `missed` counts advertisements
+  dropped because the loop did not come back for them. It climbs during the TLS handshake
+  at boot — 32 in the first minute — and then stops: a thousand sightings of the watched
+  beacon later, in the same room, it was still 32. That is one minute of steady state, not
+  a night of it, and a flat with a dozen devices in it has not been tried.
 - I²C, and BME280 with it. Neither the bus nor the part's identification and calibration
   coefficients are here at all, and the hub's catalogue for this platform does not offer
   them.
