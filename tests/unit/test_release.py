@@ -13,8 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from sentry_mode import security
 from sentry_mode.satellites.protocol import SCHEMA_VERSION
-from sentry_mode.security import exposure
+from sentry_mode.security import addresses, exposure
 
 sys.path.insert(0, str(Path(__file__).parent))  # the media fixtures live beside this file
 
@@ -145,6 +146,17 @@ def test_the_media_gateway_is_meant_to_be_on_that_network():
         )
         == []
     )
+
+
+def test_the_addresses_include_the_one_the_satellites_reach_this_hub_on(monkeypatch):
+    """A Raspberry Pi's host name resolves to 127.0.1.1 and nothing else.
+
+    Judging a wildcard bind by that alone finds nothing, ever, which is the one answer this
+    check must not give by accident. The route towards the nodes is asked as well.
+    """
+    monkeypatch.setattr(security.socket, "gethostname", lambda: "not.a.name.that.resolves")
+    assert "127.0.0.1" in addresses("127.0.0.0/8")
+    assert addresses(None) == []
 
 
 def test_without_a_satellite_network_there_is_nothing_to_say():

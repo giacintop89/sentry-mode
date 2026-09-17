@@ -38,13 +38,45 @@ class Finding:
     reason: str
 
 
-def addresses() -> list[str]:
-    """Every address this machine answers on, as far as it can tell."""
+def addresses(network: str | None = None) -> list[str]:
+    """Every address this machine answers on, as far as it can tell.
+
+    The host name is asked first, and on a Raspberry Pi it usually answers 127.0.1.1 and
+    nothing else, which would hide every address a satellite can actually reach. So the
+    route to the satellites' own network is asked as well: the address the kernel would
+    send from is the address a node on that network sees.
+    """
     found = set()
-    for family, _, _, _, address in socket.getaddrinfo(socket.gethostname(), None):
-        if family in (socket.AF_INET, socket.AF_INET6) and isinstance(address[0], str):
-            found.add(address[0].split("%")[0])
+    try:
+        for family, _, _, _, address in socket.getaddrinfo(socket.gethostname(), None):
+            if family in (socket.AF_INET, socket.AF_INET6) and isinstance(address[0], str):
+                found.add(address[0].split("%")[0])
+    except OSError:  # a name that does not resolve is not a reason to start in silence
+        pass
+    towards = _towards(network)
+    if towards is not None:
+        found.add(towards)
     return sorted(found)
+
+
+def _towards(network: str | None) -> str | None:
+    """The address this machine would speak to that network from, without sending anything."""
+    if not network:
+        return None
+    try:
+        hosts = ipaddress.ip_network(network, strict=False).hosts()
+        target = next(hosts)
+    except (ValueError, StopIteration):
+        return None
+    family = socket.AF_INET6 if target.version == 6 else socket.AF_INET
+    with socket.socket(family, socket.SOCK_DGRAM) as probe:
+        try:
+            # Connecting a datagram socket picks a route; no packet leaves the machine.
+            probe.connect((str(target), 9))
+            name = probe.getsockname()[0]
+        except OSError:
+            return None
+    return name.split("%")[0] if isinstance(name, str) else None
 
 
 def exposure(

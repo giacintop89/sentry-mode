@@ -1165,7 +1165,7 @@ def _say_what_the_satellites_can_reach(
         exposure(
             listeners=listeners,
             satellite_network=config.satellites.network,
-            addresses=addresses(),
+            addresses=addresses(config.satellites.network),
         )
     )
 
