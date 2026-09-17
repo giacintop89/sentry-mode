@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from sentry_mode.audio.blocks import contract as audio_contract  # noqa: E402
 from sentry_mode.satellites.control import MESSAGES, control_schema  # noqa: E402
+from sentry_mode.satellites.link import contract as bridge_contract  # noqa: E402
 from sentry_mode.satellites.protocol import contract_schema  # noqa: E402
 
 CONTRACTS = Path(__file__).resolve().parent.parent / "contracts" / "satellite" / "v1"
@@ -26,6 +27,7 @@ def files() -> dict[Path, str]:
     written = {
         CONTRACTS / "event.schema.json": json.dumps(contract_schema(), indent=2) + "\n",
         CONTRACTS / "audio.json": json.dumps(audio_contract(), indent=2) + "\n",
+        CONTRACTS / "bridge.json": json.dumps(bridge_contract(), indent=2) + "\n",
     }
     for name in MESSAGES:
         path = CONTRACTS / "control" / f"{name}.schema.json"

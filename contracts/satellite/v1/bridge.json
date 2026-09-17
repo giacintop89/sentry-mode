@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "magic": "SMB1",
+  "version": 1,
+  "byte_order": "little",
+  "header_bytes": 13,
+  "trailer_bytes": 4,
+  "struct": "<4sBBBIH",
+  "trailer_struct": "<I",
+  "checksum": "crc32",
+  "checksum_covers": "the header and the payload, the magic included",
+  "fields": [
+    {
+      "name": "magic",
+      "type": "bytes4"
+    },
+    {
+      "name": "version",
+      "type": "u8"
+    },
+    {
+      "name": "carries",
+      "type": "u8"
+    },
+    {
+      "name": "flags",
+      "type": "u8"
+    },
+    {
+      "name": "counter",
+      "type": "u32"
+    },
+    {
+      "name": "length",
+      "type": "u16"
+    }
+  ],
+  "max_payload_bytes": 2048,
+  "carries": {
+    "nothing": 0,
+    "events": 1,
+    "state": 2,
+    "health": 3,
+    "acks": 4,
+    "commands": 5,
+    "time": 6,
+    "hello": 7
+  },
+  "from_the_node": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "to_the_node": [
+    5,
+    6,
+    7
+  ],
+  "channels": {
+    "1": "events",
+    "2": "state",
+    "3": "health",
+    "4": "acks",
+    "5": "commands"
+  }
+}

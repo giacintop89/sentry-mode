@@ -61,6 +61,7 @@ add_library(sentry_protocol
   src/protocol/control.cpp
   src/protocol/topics.cpp
   src/protocol/audio.cpp
+  src/protocol/link.cpp
   src/protocol/mqtt.cpp
   src/protocol/client.cpp
   src/protocol/event.cpp
@@ -167,7 +168,7 @@ endif()
 
 enable_testing()
 
-foreach(suite json command control event lease topics mqtt client session store vault identity credentials timebase spool input sensors pins presence acoustic audio plan)
+foreach(suite json command control event lease topics mqtt client session store vault identity credentials timebase spool input sensors pins presence acoustic audio link plan)
   add_executable(test_${suite} tests/test_${suite}.cpp)
   target_link_libraries(test_${suite} PRIVATE sentry_protocol)
   target_include_directories(test_${suite} PRIVATE tests)
@@ -193,6 +194,10 @@ target_compile_options(sentry_mqtt_emit PRIVATE -Wall -Wextra -Werror)
 add_executable(sentry_audio_emit tools/audio_emit.cpp)
 target_link_libraries(sentry_audio_emit PRIVATE sentry_protocol)
 target_compile_options(sentry_audio_emit PRIVATE -Wall -Wextra -Werror)
+
+add_executable(sentry_link_emit tools/link_emit.cpp)
+target_link_libraries(sentry_link_emit PRIVATE sentry_protocol)
+target_compile_options(sentry_link_emit PRIVATE -Wall -Wextra -Werror)
 
 # Drives the client through one whole connection, with a broker made of bytes from the
 # specification, and prints the packets in the order it wrote them.
