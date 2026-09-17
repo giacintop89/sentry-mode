@@ -89,6 +89,37 @@ const char* name_of(Driver driver) {
   return "none";
 }
 
+const char* name_of(Bias bias) {
+  switch (bias) {
+    case Bias::kPullUp:
+      return "pull_up";
+    case Bias::kPullDown:
+      return "pull_down";
+    case Bias::kNone:
+      break;
+  }
+  return "disabled";
+}
+
+Plan& Plan::operator=(const Plan& other) {
+  if (this == &other) return *this;
+  board_ = other.board_;
+  count_ = other.count_;
+  for (size_t index = 0; index < kMaxPlanned; ++index) planned_[index] = other.planned_[index];
+  pins_.clear();
+  for (size_t index = 0; index < count_; ++index) {
+    if (planned_[index].driver != Driver::kGpio) continue;
+    PinRefusal refusal = PinRefusal::kNone;
+    // It was agreed to once, on the same board, so this cannot refuse; if it somehow did,
+    // the plan would be running a pin its own map does not know about, so it is dropped.
+    if (!pins_.claim(planned_[index].gpio.pin, planned_[index].source_id, refusal)) {
+      count_ = index;
+      break;
+    }
+  }
+  return *this;
+}
+
 const char* name_of(Unplanned why) {
   switch (why) {
     case Unplanned::kNone:

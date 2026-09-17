@@ -128,9 +128,10 @@ What it listens for on the serial line:
 | `connect` | Opens the one connection this node makes, and keeps making it again if it drops. |
 | `disconnect` | Says goodbye on it, then closes it and stops trying. |
 | `command <json>` | One command, down the same path a command from the broker takes: the lease, the answer, and the baseline if it is a new grant. For a bench with no hub at the other end. |
-| `status` | Address, signal, clock, credentials, socket, what the client thinks and what is queued. |
+| `status` | Address, signal, clock, credentials, socket, what the client thinks, what is queued, the lease, and every source in the running plan. |
 | `time <unix_ms>` | The time, for a board with no network to ask. |
-| `sample` | A reading now, rather than at the next interval. |
+| `sample` | Every source read now, rather than at the next interval. |
+| `drive <pin> <0|1>` | Drives a pin the plan holds, as a sensor on it would. A board with nothing wired to it can still be made to have something happen. |
 
 The record holds a passphrase and points at a private key, so it is handed over rather than
 committed:
@@ -372,6 +373,74 @@ as though it had fallen off the network. A goodbye is now said in full — what 
 then the retained `online: false`, then an MQTT `DISCONNECT`, which is what tells a broker
 to keep the will to itself. The log above ends with one offline state, not two.
 
+### Being told what to run
+
+Until now the board ran what it was built with. It now runs what it is told, and the same
+`Plan` decides both: the default at boot — its own temperature, every thirty seconds — is
+built as a configuration and taken through `Plan::take` like any other, so there is no
+second way into the plan and nothing to keep in step.
+
+A configuration is judged whole on a copy before anything is touched, and refused whole
+with a reason naming the source it failed on: a driver this firmware does not have, an
+option belonging to somebody else's driver, a pin that is the radio's, a pin two sources
+both asked for, a debounce nobody could wait for. A node that started half of one would be
+a node running whatever survived, which is a thing neither the hub nor the person who wrote
+the file could predict.
+
+From the hub's own page, through its own API, with a PIR on GPIO 15 beside the temperature:
+
+```sh
+curl -H 'X-Sentry-Mode-Control: 1' -H 'Content-Type: application/json' \
+  http://127.0.0.1:8083/api/satellites/configure -d '{"node_id":"pico-ingresso","sources":[
+   {"id":"board-temperature","kind":"board","measure":"temperature","interval_seconds":20},
+   {"id":"pir-1","kind":"gpio","pin":15,"bias":"pull_down","settle_seconds":2,
+    "debounce_ms":50,"event_kind":"sensor.motion"}]}'
+```
+
+```
+{"message": "Configuration 2 sent to pico-ingresso.", …}
+# configure 70c467ff-…: applied
+# plan=2 revision=2
+#   board-temperature board measure=temperature every=20s readings=1
+#   pir-1 gpio pin=15 level=high state=on readings=1
+```
+
+and the hub, reading back the retained state the board publishes again after adopting it:
+
+```json
+{"name":"board-temperature","kind":"board","options":{"measure":"temperature","interval_seconds":20.0},"state":"ready"}
+{"name":"pir-1","kind":"gpio","options":{"pin":15,"active_high":true,"bias":"pull_down","debounce_ms":50,"settle_seconds":2.0,"event_kind":"sensor.motion"},"state":"ready"}
+```
+
+That is what the board is running, not what it was asked to run. The two are the same here,
+and the whole point of publishing the first is that they need not be.
+
+Then a wire. There is nothing wired to this board yet, so `drive 15 1` makes the pin an
+output and drives it, and the input half reads the same pad back the way it would read a
+sensor. The hub's journal, from a pin driven high, low, high:
+
+```
+pir-1 sensor.motion true  quality=unknown classification=initial eligible=0
+pir-1 sensor.motion false quality=valid   classification=live    eligible=1
+pir-1 sensor.motion true  quality=valid   classification=live    eligible=1
+```
+
+The first one is the baseline the board takes the moment a configuration is adopted, and it
+says `unknown` because the PIR was given two seconds to settle and had not: where the source
+stands, said out loud, with an admission that it is not yet worth acting on. The hub agrees
+with both halves of that — it recorded it and marked it ineligible.
+
+One thing that run found was not the firmware's. The hub acknowledges the messages it
+receives by hand, and only the events path was acknowledging them: state, health and acks
+were read, acted on, and left unsettled. The broker holds an unacknowledged QoS 1 message
+in its window for that connection, and when the window fills it stops delivering at QoS 1
+altogether. The Linux agent publishes its heartbeat at QoS 0, so it went on looking alive;
+the Pico publishes everything at QoS 1, so it went silent from the hub's side while still
+publishing every fifteen seconds, with nothing in either log to say so. The fix is in
+`satellites/service.py` — everything that is not an event is settled as soon as it is
+handled, because nothing about it is written down and nothing would be gained by having it
+sent again — and `test_satellite_service.py` now holds a test that would have caught it.
+
 ## What is in here
 
 | Path | What it is |
@@ -395,8 +464,9 @@ to keep the will to itself. The log above ends with one offline state, not two.
 | `include/sentry/spool.h`, `src/core/spool.cpp` | The queue for an outage: which readings collapse into a newer one, which are never dropped for them, and what is counted when something is given up. |
 | `include/sentry/input.h`, `src/core/input.cpp` | What a wire may mean: the baseline that is not an intrusion, the settling window a PIR needs, the debounce, and the polarity software cannot guess. |
 | `include/sentry/sensors.h`, `src/core/sensors.cpp` | Turning what a sensor returned into a reading or into an admission there is none: the 1-Wire CRC, the 85 °C a DS18B20 holds after a reset, and an ADC count nothing could have produced. |
+| `include/sentry/plan.h`, `src/core/plan.cpp` | What a configuration is allowed to ask for: which drivers this firmware has, which options each one takes, and a refusal that names the source it failed on — decided whole, on a copy, before a pin is touched. |
 | `include/sentry/pins.h`, `src/core/pins.cpp` | Which pins a configuration may use and who already has them, refused whole rather than in part. |
-| `tests/` | The seventeen suites, and a tiny harness rather than a test framework. |
+| `tests/` | The eighteen suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful
@@ -418,10 +488,10 @@ fails here, in a second, rather than at link time on a target with neither.
   two answers is, what happens when the network goes away mid-interval, and whether a node
   that has lost its clock should go back to `unsynced` rather than keep stamping readings
   from a counter nobody has checked.
-- Anything a command could configure. A `configure` is parsed, judged and answered —
-  `failed`, because this firmware has one source soldered into it — and the same is true
-  of every camera and microphone command. Sources that can be added and taken away are
-  PICO-04's, and until then the answer is a refusal rather than a promise.
+- Every driver but two. `board` and `gpio` are real and run on a board; `onewire`, `adc`
+  and I²C are named in the hub's catalogue for this platform and are not here, so a
+  configuration asking for one is refused by name. Camera and microphone commands are
+  refused the same way, and will stay refused: this board has neither.
 - How long a reading waited. Every event goes out with `queued_ms: 0`, because the queue
   does not record when something was put in it. A reading that waited forty seconds says
   so only through its own `occurred_at`, which is the honest field but not the one the
@@ -432,8 +502,11 @@ fails here, in a second, rather than at link time on a target with neither.
 - What a source last read, in the health message. The node reports how many readings each
   source has taken and whether its driver is running, but not the last value, so the hub's
   page shows a source that is ready and a reading it has to wait for an event to learn.
-- Any sensor driver at all. What is here is the part of one that has no hardware in it:
-  `input.cpp` decides what a level means, `sensors.cpp` decides what a scratchpad or an
-  ADC count means, and `pins.cpp` decides whether a configuration may start. Nothing has
-  read a pin, waited on a 1-Wire bus or started a conversion. BME280, with its
-  identification and its calibration coefficients, is not here at all.
+- A sensor with wires on it. A pin is read, debounced, settled and reported, and that path
+  has been exercised on the hardware — but by the board driving its own pad, not by a PIR
+  or a reed switch. What a real sensor does that a driven pin does not — the settling after
+  power, the pulse a PIR holds, the bounce of a contact — has not been watched yet.
+- 1-Wire, I²C and the ADC. `sensors.cpp` decides what a scratchpad, an ADC count or the
+  85 °C a DS18B20 holds after a reset means, and none of it has a bus under it: nothing
+  here has waited on a 1-Wire line or started a conversion. BME280, with its identification
+  and its calibration coefficients, is not here at all.

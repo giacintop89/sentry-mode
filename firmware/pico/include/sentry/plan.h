@@ -92,6 +92,13 @@ class Plan {
  public:
   explicit Plan(Board board) : board_(board) {}
 
+  Plan(const Plan& other) : board_(other.board_) { *this = other; }
+
+  // Copying a plan rebuilds its pin map from its own copy of the sources. The map holds
+  // the names rather than copies of them, and a map still pointing into the plan it was
+  // built from would be pointing at whatever that plan is asked to judge next.
+  Plan& operator=(const Plan& other);
+
   // Take a whole configuration, or none of it. `detail`, when there is room for it, is
   // filled with something a person can act on; it is the text the ack carries back.
   bool take(const Source* sources, size_t count, Unplanned& why, char* detail, size_t capacity);
@@ -112,6 +119,7 @@ class Plan {
 };
 
 const char* name_of(Driver driver);
+const char* name_of(Bias bias);
 const char* name_of(Unplanned why);
 
 // The kinds this firmware answers to in a configuration: `board`, `gpio`. Anything else is

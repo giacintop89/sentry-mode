@@ -53,6 +53,7 @@
 #include "sentry/identity.h"
 #include "sentry/sensors.h"
 #include "sentry/lease.h"
+#include "sentry/plan.h"
 #include "sentry/spool.h"
 #include "sentry/timebase.h"
 #include "sentry/topics.h"
@@ -62,7 +63,7 @@ namespace {
 // The temperature sensor is the last ADC input on both chips, and it has to be switched on
 // before it reads as anything but noise.
 constexpr uint kTemperatureInput = 4;
-constexpr uint32_t kIntervalMs = 2000;
+constexpr uint32_t kHeartbeatBlinkMs = 2000;
 // The same beat the Linux agent keeps by default, and what the hub's staleness is written
 // against: a node that says nothing for three of these is a node to wonder about.
 constexpr uint32_t kHeartbeatMs = 15000;
@@ -70,6 +71,22 @@ constexpr uint32_t kJoinPatienceMs = 20000;
 // Whoever runs the pool, rather than a vendor's own: a satellite that only ever reaches the
 // hub still has to agree with it about what time it is.
 constexpr const char* kTimeServer = "pool.ntp.org";
+
+// Which board this is, which decides which pins belong to the radio rather than to a
+// configuration. It is the build's answer, not a guess made at runtime.
+#if defined(PICO_RP2350)
+#if defined(CYW43_WL_GPIO_LED_PIN)
+constexpr sentry::Board kThisBoard = sentry::Board::kPico2W;
+#else
+constexpr sentry::Board kThisBoard = sentry::Board::kPico2;
+#endif
+#else
+#if defined(CYW43_WL_GPIO_LED_PIN)
+constexpr sentry::Board kThisBoard = sentry::Board::kPicoW;
+#else
+constexpr sentry::Board kThisBoard = sentry::Board::kPico;
+#endif
+#endif
 
 sentry::Ticks ticks;
 sentry::Timebase clock_;
@@ -126,6 +143,23 @@ enum class Saying { kNothing, kAnnouncement, kAck, kEvent, kHealth, kFarewell };
 Saying saying = Saying::kNothing;
 // The hub said stop. What is owed is said first, and then this node goes quiet.
 bool stopping = false;
+// The sources this node is running, and the same thing half-built while a configuration
+// is being judged. Two of them, so that a configuration refused leaves the running one
+// alone: `Plan::take` rewrites whatever it is called on.
+sentry::Plan running(kThisBoard);
+sentry::Plan candidate(kThisBoard);
+int64_t config_revision = -1;  // below zero: this node is not saying, because nobody told it
+
+// What a planned source needs while it runs: a debounced view of a wire, and when the next
+// periodic reading is due.
+struct Live {
+  sentry::DigitalInput input;
+  uint32_t due_ms = 0;
+  bool level = false;      // the last level read, for `status` to show
+  int64_t readings = 0;
+};
+Live live[sentry::kMaxPlanned];
+
 // What the health message counts, which nothing else on this board does: readings the
 // broker has acknowledged, and when the last report went out.
 uint32_t published_events = 0;
@@ -142,6 +176,11 @@ size_t incoming_size = 0;
 bool wanted = false;             // somebody asked this node to be connected
 uint32_t next_attempt_ms = 0;    // and the backoff says not before this
 bool announced_this_connection = false;
+// The first announcement of a connection is the one the session waits for; a second one,
+// after a configuration, is an ordinary retained publish and must not be mistaken for it.
+bool announcement_opens_the_connection = false;
+// What this node runs has changed and the retained state still says otherwise.
+bool owes_a_declaration = false;
 // The client is told a connection opened once per connection. It stays offline until the
 // broker's CONNACK, so "it has not said it is connected" is not the same question.
 bool client_told = false;
@@ -196,47 +235,30 @@ void led(bool on) {
 #endif
 }
 
-// One reading of the die temperature, written as the event the hub would receive. A
-// baseline is the same reading taken because a hub has just granted this node and needs to
-// know where the source stands before it can tell news from the way things already were.
-void publish_temperature(bool initial = false) {
-  adc_select_input(kTemperatureInput);
-  const sentry::Measured measured = sentry::board_temperature(adc_read());
-  if (measured.has_value) {
-    has_last_temperature = true;
-    last_temperature = measured.value;
-  }
-
-  const uint64_t moment = now_us();
+// The time and the identifier every reading needs, or nothing and a reason. A board that
+// cannot say when something happened does not publish that it happened.
+bool moment_of(uint64_t& moment, char* stamped, size_t capacity, char* event_id) {
+  moment = now_us();
   int64_t unix_ms = 0;
   if (!clock_.unix_ms(moment, unix_ms)) {
     std::printf("# no time yet; join a network, or send: time <unix_ms>\n");
-    return;
+    return false;
   }
-  char stamped[32] = {};
-  if (!sentry::write_timestamp(unix_ms, stamped, sizeof(stamped))) {
+  if (!sentry::write_timestamp(unix_ms, stamped, capacity)) {
     std::printf("# the time this board was given is not one it may claim\n");
-    return;
+    return false;
   }
-  char event_id[sentry::kUuidText] = {};
   if (!make_uuid(event_id)) {
     std::printf("# no entropy for an event id\n");
-    return;
+    return false;
   }
+  return true;
+}
 
-  sentry::Reading reading;
-  reading.event_id = event_id;
-  reading.node_id = node_id;
-  reading.source_id = "board-temperature";
-  reading.boot_id = boot_id;
-  reading.sequence = sequence++;
-  reading.kind = "board.temperature";
-  reading.occurred_at = stamped;
-  reading.clock = clock_.status_at(moment);
-  reading.quality = measured.quality;
-  reading.unit = "\xc2\xb0" "C";
-  if (measured.has_value) reading.value = sentry::Value::of(measured.value, 2);
-
+// One reading, written for a person to see on the cable and put in the queue for the
+// broker. Whether the hub may have it is the lease's business and is decided elsewhere:
+// what is taken is taken, and what is queued waits.
+void offer_the_reading(const sentry::Reading& reading, bool initial, sentry::Kept kept) {
   sentry::Delivery delivery;
   delivery.connection_id = connection_id;
   delivery.hub_epoch = lease.hub_epoch();
@@ -254,16 +276,163 @@ void publish_temperature(bool initial = false) {
   std::fputc('\n', stdout);
   std::fflush(stdout);
 
-  // And into the queue, which is what a broker eventually reads from. A reading offered
-  // while the link is down waits there; one the queue had no room for is counted rather
-  // than forgotten quietly.
-  // A baseline is kept like a thing that happened once: nothing is coming to replace it,
-  // and a temperature taken two seconds later must not quietly stand in for it.
-  const sentry::Kept kept = initial ? sentry::Kept::kTransition : sentry::Kept::kPeriodic;
   if (provisioned && !spool.offer(reading, kept, initial)) {
     std::printf("# the queue is full: %lu given up so far\n",
                 static_cast<unsigned long>(spool.losses().refused));
   }
+}
+
+// One reading of the die temperature. A baseline is the same reading taken because a hub
+// has just granted this node and needs to know where the source stands before it can tell
+// news from the way things already were.
+void take_a_board_reading(const sentry::Planned& source, Live& state, bool initial) {
+  adc_select_input(kTemperatureInput);
+  const sentry::Measured measured = sentry::board_temperature(adc_read());
+  if (measured.has_value) {
+    has_last_temperature = true;
+    last_temperature = measured.value;
+  }
+
+  uint64_t moment = 0;
+  char stamped[32] = {};
+  char event_id[sentry::kUuidText] = {};
+  if (!moment_of(moment, stamped, sizeof(stamped), event_id)) return;
+
+  sentry::Reading reading;
+  reading.event_id = event_id;
+  reading.node_id = node_id;
+  reading.source_id = source.source_id;
+  reading.boot_id = boot_id;
+  reading.sequence = sequence++;
+  reading.kind = "board.temperature";
+  reading.occurred_at = stamped;
+  reading.clock = clock_.status_at(moment);
+  reading.quality = measured.quality;
+  reading.unit = "\xc2\xb0" "C";
+  if (measured.has_value) reading.value = sentry::Value::of(measured.value, 2);
+  ++state.readings;
+
+  // A baseline is kept like a thing that happened once: nothing is coming to replace it,
+  // and a temperature taken a minute later must not quietly stand in for it.
+  offer_the_reading(reading, initial,
+                    initial ? sentry::Kept::kTransition : sentry::Kept::kPeriodic);
+}
+
+// What a wire came to mean. The level is read here and judged in `input.cpp`, which is
+// where the settling, the debounce and the polarity live — and which has never seen a pin.
+void take_a_gpio_reading(const sentry::Planned& source, Live& state, sentry::Report report,
+                         uint64_t now_ms) {
+  uint64_t moment = 0;
+  char stamped[32] = {};
+  char event_id[sentry::kUuidText] = {};
+  if (!moment_of(moment, stamped, sizeof(stamped), event_id)) return;
+
+  sentry::Reading reading;
+  reading.event_id = event_id;
+  reading.node_id = node_id;
+  reading.source_id = source.source_id;
+  reading.boot_id = boot_id;
+  reading.sequence = sequence++;
+  reading.kind = source.gpio.event_kind;
+  reading.occurred_at = stamped;
+  reading.clock = clock_.status_at(moment);
+  reading.quality = state.input.quality(now_ms);
+  reading.value = sentry::Value::of(state.input.state());
+  ++state.readings;
+
+  // Both are things that happened once and neither may be dropped for a temperature: a
+  // door that opened is not replaced by anything, and a baseline is what the hub is
+  // waiting for before it believes the next one.
+  offer_the_reading(reading, report == sentry::Report::kBaseline, sentry::Kept::kTransition);
+}
+
+// Every pin in the plan, read and judged. This runs on the same loop that keeps the
+// connection alive, so it does no waiting of its own: the debounce is time, not sleep.
+void read_the_sources() {
+  const uint64_t now_ms = now_us() / 1000;
+  for (size_t index = 0; index < running.size(); ++index) {
+    const sentry::Planned& source = running.at(index);
+    Live& state = live[index];
+    if (source.driver == sentry::Driver::kGpio) {
+      state.level = gpio_get(static_cast<uint>(source.gpio.pin));
+      const sentry::Report report = state.input.sample(state.level, now_ms);
+      if (report != sentry::Report::kNothing) {
+        take_a_gpio_reading(source, state, report, now_ms);
+      }
+      continue;
+    }
+    if (source.driver == sentry::Driver::kBoard) {
+      if (static_cast<int32_t>(static_cast<uint32_t>(now_ms) - state.due_ms) < 0) continue;
+      state.due_ms = static_cast<uint32_t>(now_ms) + source.board.interval_ms;
+      take_a_board_reading(source, state, false);
+    }
+  }
+}
+
+// Where every source stands, taken because a hub has just granted this node or because
+// what this node runs has just changed. Nothing here is news and all of it says so.
+void take_every_baseline() {
+  const uint64_t now_ms = now_us() / 1000;
+  for (size_t index = 0; index < running.size(); ++index) {
+    const sentry::Planned& source = running.at(index);
+    Live& state = live[index];
+    if (source.driver == sentry::Driver::kBoard) {
+      take_a_board_reading(source, state, true);
+      state.due_ms = static_cast<uint32_t>(now_ms) + source.board.interval_ms;
+    } else if (source.driver == sentry::Driver::kGpio) {
+      // Rearmed rather than read: the next sample is the baseline, and a PIR that has not
+      // settled yet will say so instead of pretending the room is empty.
+      state.input.rearm(now_ms);
+    }
+  }
+}
+
+// Give up the pins the old plan held and take the ones the new plan asks for. Nothing is
+// touched until a plan has been agreed to, which is what `plan.cpp` is for.
+void start_the_plan() {
+  const uint64_t now_ms = now_us() / 1000;
+  for (size_t index = 0; index < running.size(); ++index) {
+    const sentry::Planned& source = running.at(index);
+    Live& state = live[index];
+    state = Live{};
+    if (source.driver == sentry::Driver::kGpio) {
+      const uint pin = static_cast<uint>(source.gpio.pin);
+      gpio_init(pin);
+      gpio_set_dir(pin, GPIO_IN);
+      gpio_set_pulls(pin, source.gpio.bias == sentry::Bias::kPullUp,
+                     source.gpio.bias == sentry::Bias::kPullDown);
+      state.input.configure(source.gpio.input);
+      state.input.rearm(now_ms);
+    } else if (source.driver == sentry::Driver::kBoard) {
+      state.due_ms = static_cast<uint32_t>(now_ms);
+    }
+  }
+}
+
+void stop_the_plan() {
+  for (size_t index = 0; index < running.size(); ++index) {
+    const sentry::Planned& source = running.at(index);
+    if (source.driver != sentry::Driver::kGpio) continue;
+    const uint pin = static_cast<uint>(source.gpio.pin);
+    gpio_set_pulls(pin, false, false);
+    gpio_deinit(pin);
+  }
+}
+
+// What this board runs when nobody has told it anything: the one thing it has without a
+// wire on it. It is built as a configuration and goes through the same door one from the
+// hub goes through, so there is no second way into the plan and nothing to keep in step.
+void run_the_default_plan() {
+  sentry::Source source;
+  std::strncpy(source.id, "board-temperature", sizeof(source.id) - 1);
+  std::strncpy(source.kind, "board", sizeof(source.kind) - 1);
+  sentry::Unplanned why = sentry::Unplanned::kNone;
+  char detail[sentry::kMaxPlanDetail] = {};
+  if (!running.take(&source, 1, why, detail, sizeof(detail))) {
+    std::printf("# this board could not plan its own temperature: %s\n", detail);
+    return;
+  }
+  start_the_plan();
 }
 
 // Whatever the network last said the time was, handed to the timebase here rather than in
@@ -327,19 +496,37 @@ bool prepare_the_connection() {
 // The retained state that says this node is here. It is the one thing published before the
 // node is online, because it is what makes it online.
 bool write_announcement() {
-  // The one source this board has, declared so that the hub can show it and name it in a
-  // reading rather than seeing a node with nothing on it. It is soldered in: there is no
-  // configuration behind it, which is why `config_revision` stays unsaid.
-  const sentry::DeclaredOption options[] = {
-      {"measure", sentry::Value::of("temperature")},
-      {"interval_seconds", sentry::Value::of(static_cast<double>(kIntervalMs) / 1000.0, 1)},
-  };
-  sentry::DeclaredSource source;
-  source.source_id = "board-temperature";
-  source.kind = "board";
-  source.enabled = true;
-  source.options = options;
-  source.option_count = sizeof(options) / sizeof(options[0]);
+  // Every source in the running plan, with the options it is actually running with rather
+  // than the ones that were asked for: a hub reading this back sees what this board did
+  // with what it was told, which is the only version of it that matters.
+  static sentry::DeclaredOption options[sentry::kMaxPlanned][sentry::kMaxOptionsPerSource];
+  static sentry::DeclaredSource declared[sentry::kMaxPlanned];
+  const size_t count = running.size();
+  for (size_t index = 0; index < count; ++index) {
+    const sentry::Planned& source = running.at(index);
+    size_t at = 0;
+    if (source.driver == sentry::Driver::kBoard) {
+      options[index][at++] = {"measure", sentry::Value::of(source.board.measure)};
+      options[index][at++] = {
+          "interval_seconds",
+          sentry::Value::of(static_cast<double>(source.board.interval_ms) / 1000.0, 1)};
+    } else if (source.driver == sentry::Driver::kGpio) {
+      options[index][at++] = {"pin", sentry::Value::of(static_cast<int64_t>(source.gpio.pin))};
+      options[index][at++] = {"active_high", sentry::Value::of(source.gpio.input.active_high)};
+      options[index][at++] = {"bias", sentry::Value::of(sentry::name_of(source.gpio.bias))};
+      options[index][at++] = {
+          "debounce_ms", sentry::Value::of(static_cast<int64_t>(source.gpio.input.debounce_ms))};
+      options[index][at++] = {
+          "settle_seconds",
+          sentry::Value::of(static_cast<double>(source.gpio.input.settle_ms) / 1000.0, 1)};
+      options[index][at++] = {"event_kind", sentry::Value::of(source.gpio.event_kind)};
+    }
+    declared[index].source_id = source.source_id;
+    declared[index].kind = sentry::name_of(source.driver);
+    declared[index].enabled = source.enabled;
+    declared[index].options = options[index];
+    declared[index].option_count = at;
+  }
 
   sentry::State here;
   here.node_id = node_id;
@@ -348,10 +535,16 @@ bool write_announcement() {
   here.online = true;
   here.firmware_version = "pico-0.1.0";
   here.profile = "sensor-presence";
-  here.sources = &source;
-  here.source_count = 1;
+  // Below zero until a configuration has been applied: a board running what it boots with
+  // has no revision to claim, and claiming one would be claiming somebody sent it.
+  here.config_revision = config_revision;
+  here.sources = declared;
+  here.source_count = count;
   outgoing_size = sentry::write_state(here, outgoing, sizeof(outgoing));
   saying = Saying::kAnnouncement;
+  // Only the first one of a connection is what makes this node online; a later one is the
+  // same retained state saying something else is running now.
+  announcement_opens_the_connection = !announced_this_connection;
   return outgoing_size > 0;
 }
 
@@ -393,10 +586,16 @@ bool write_a_health_report() {
   const uint64_t moment = now_us();
   const sentry::Losses losses = spool.losses();
 
-  sentry::SourceHealth source;
-  source.source_id = "board-temperature";
-  source.readings = sequence;
-  source.driver = "running";
+  // One entry per source this node is running, counted by that source rather than by the
+  // node: a board with a pin that has never changed and a temperature every thirty seconds
+  // is a different board from one where both are silent, and one number cannot say which.
+  static sentry::SourceHealth sources[sentry::kMaxPlanned];
+  for (size_t index = 0; index < running.size(); ++index) {
+    sources[index].source_id = running.at(index).source_id;
+    sources[index].readings = live[index].readings;
+    sources[index].driver = sentry::name_of(running.at(index).driver);
+    sources[index].error = nullptr;
+  }
 
   sentry::Health health;
   health.node_id = node_id;
@@ -419,8 +618,8 @@ bool write_a_health_report() {
   health.board.uptime_seconds = health.uptime_seconds;
   health.board.has_temperature = has_last_temperature;
   health.board.temperature_c = last_temperature;
-  health.sources = &source;
-  health.source_count = 1;
+  health.sources = sources;
+  health.source_count = running.size();
 
   outgoing_size = sentry::write_health(health, outgoing, sizeof(outgoing));
   saying = Saying::kHealth;
@@ -541,12 +740,10 @@ void queue_an_ack(const sentry::Command& command, sentry::Answer answer, const c
 }
 
 // What this board does not have, said as itself rather than as a lease refusal. The lease
-// answers for grant, renew, revoke and stop; everything else is a driver, and this
-// firmware has one source of its own, no camera and no microphone.
+// answers for grant, renew, revoke and stop, and `configure` is answered by the plan;
+// what is left is hardware this node was not built with.
 const char* beyond_this_firmware(sentry::Action action) {
   switch (action) {
-    case sentry::Action::kConfigure:
-      return "this firmware carries one source of its own and cannot yet be configured";
     case sentry::Action::kVideoStart:
     case sentry::Action::kVideoRenew:
     case sentry::Action::kVideoStop:
@@ -558,6 +755,31 @@ const char* beyond_this_firmware(sentry::Action action) {
     default:
       return nullptr;
   }
+}
+
+// A configuration, judged whole on a copy and then adopted whole. Nothing is touched until
+// `Plan::take` has agreed to all of it, so a refused configuration leaves this board
+// running exactly what it was running, and says which source it could not have.
+bool take_a_configuration(const sentry::Command& command, const char*& detail) {
+  static char why_not[sentry::kMaxPlanDetail];
+  sentry::Unplanned why = sentry::Unplanned::kNone;
+  if (!candidate.take(command.sources, command.source_count, why, why_not, sizeof(why_not))) {
+    detail = why_not[0] != '\0' ? why_not : sentry::name_of(why);
+    return false;
+  }
+  // The pins the old plan held are given back before the new plan asks for any, or a pin
+  // moving from one source to another would be claimed by a source that already let it go.
+  stop_the_plan();
+  running = candidate;
+  candidate.clear();
+  start_the_plan();
+  config_revision = command.revision;
+  // A hub that has just been told what this node runs does not know where any of it
+  // stands, and the retained state still describes what was running a moment ago.
+  take_every_baseline();
+  owes_a_declaration = true;
+  detail = nullptr;
+  return true;
 }
 
 // One command, from the hub or from the cable. Everything it changes is changed here, and
@@ -576,6 +798,14 @@ void obey_a_command(const sentry::Command& command) {
     queue_an_ack(command, sentry::Answer::kFailed, missing);
     return;
   }
+  if (command.action == sentry::Action::kConfigure) {
+    const char* detail = nullptr;
+    const bool taken = take_a_configuration(command, detail);
+    const sentry::Answer answer = taken ? sentry::Answer::kApplied : sentry::Answer::kFailed;
+    answered.remember(command.command_id, answer);
+    queue_an_ack(command, answer, detail);
+    return;
+  }
   const sentry::Decision decision = lease.apply(command, now_us() / 1000);
   answered.remember(command.command_id, decision.answer);
   queue_an_ack(command, decision.answer, decision.detail);
@@ -586,9 +816,9 @@ void obey_a_command(const sentry::Command& command) {
     wanted = false;
   }
   if (decision.newly_granted) {
-    // A hub that has just granted this node does not know where its sources stand. It is
-    // told at once, before whatever happens next is reported as a change.
-    publish_temperature(true);
+    // A hub that has just granted this node does not know where any of its sources
+    // stand. All of them say so at once, before whatever happens next is a change.
+    take_every_baseline();
   }
 }
 
@@ -688,6 +918,10 @@ void serve_the_broker() {
     } else if (broker.session().may_publish_events()) {
       if (owed_acks > 0) {
         write_the_first_ack();
+      } else if (owes_a_declaration) {
+        // What this node runs has changed; the retained state is what says so, and it is
+        // said before the readings that only make sense once it has been.
+        if (write_announcement()) owes_a_declaration = false;
       } else if (stopping) {
         // Nothing after the farewell, whatever the lease still says: a node that was told
         // to stop and went on reporting would be a node that was not told.
@@ -709,7 +943,7 @@ void serve_the_broker() {
   pending.payload = reinterpret_cast<const uint8_t*>(outgoing);
   pending.size = outgoing_size;
   pending.retain = is_retained(saying);
-  pending.announcement = saying == Saying::kAnnouncement;
+  pending.announcement = saying == Saying::kAnnouncement && announcement_opens_the_connection;
 
   // Static, like every buffer in this program: the stack here is four kilobytes and a
   // packet is two and a half of them.
@@ -767,6 +1001,28 @@ void join_the_network() {
   net::ask_the_time(kTimeServer);
 }
 
+// What is running, one line each: the driver, what it is reading and how often, and for a
+// pin the level it is actually at. A plan that cannot be seen at the cable is a plan that
+// has to be guessed at from the hub.
+void say_the_plan() {
+  std::printf("# plan=%lu revision=%lld\n", static_cast<unsigned long>(running.size()),
+              static_cast<long long>(config_revision));
+  for (size_t index = 0; index < running.size(); ++index) {
+    const sentry::Planned& source = running.at(index);
+    if (source.driver == sentry::Driver::kGpio) {
+      std::printf("#   %s gpio pin=%d level=%s state=%s readings=%lld\n", source.source_id,
+                  source.gpio.pin, live[index].level ? "high" : "low",
+                  live[index].input.state() ? "on" : "off",
+                  static_cast<long long>(live[index].readings));
+    } else {
+      std::printf("#   %s board measure=%s every=%lus readings=%lld\n", source.source_id,
+                  source.board.measure,
+                  static_cast<unsigned long>(source.board.interval_ms / 1000),
+                  static_cast<long long>(live[index].readings));
+    }
+  }
+}
+
 void say_status() {
   char address[20] = {};
   const bool has_address = net::address(address, sizeof(address));
@@ -820,6 +1076,30 @@ void say_status() {
               left / 1000, static_cast<unsigned long>(owed_acks),
               static_cast<unsigned long>(answered.size()),
               static_cast<unsigned long>(acks_lost));
+  say_the_plan();
+}
+
+// A wire this board has not got. A planned pin is driven from the cable so that the
+// debounce, the settling and the transition are exercised on the real pad rather than in a
+// test: the pin is read back the same way a sensor's would be, because it is the same pin.
+// It stays an output until something says otherwise, which is what a sensor holding a line
+// looks like.
+void drive_a_pin(const char* rest) {
+  int pin = -1;
+  int level = -1;
+  if (std::sscanf(rest, "%d %d", &pin, &level) != 2 || (level != 0 && level != 1)) {
+    std::printf("# say: drive <pin> <0|1>\n");
+    return;
+  }
+  const char* holder = running.holder(pin);
+  if (holder == nullptr) {
+    std::printf("# nothing in the plan is on pin %d\n", pin);
+    return;
+  }
+  gpio_set_pulls(static_cast<uint>(pin), false, false);
+  gpio_put(static_cast<uint>(pin), level != 0);
+  gpio_set_dir(static_cast<uint>(pin), GPIO_OUT);
+  std::printf("# pin %d (%s) driven %s\n", pin, holder, level != 0 ? "high" : "low");
 }
 
 void take_provisioning(const char* document) {
@@ -883,7 +1163,17 @@ void obey(const char* line) {
     return;
   }
   if (std::strcmp(line, "sample") == 0) {
-    publish_temperature();
+    // Everything this node runs, now rather than when it was next due.
+    for (size_t index = 0; index < running.size(); ++index) {
+      if (running.at(index).driver == sentry::Driver::kBoard) {
+        live[index].due_ms = static_cast<uint32_t>(now_us() / 1000);
+      }
+    }
+    read_the_sources();
+    return;
+  }
+  if (std::strncmp(line, "drive ", 6) == 0) {
+    drive_a_pin(line + 6);
     return;
   }
   if (std::strncmp(line, "command ", 8) == 0) {
@@ -965,6 +1255,8 @@ int main() {
   adc_init();
   adc_set_temp_sensor_enabled(true);
 
+  run_the_default_plan();
+
   if (!make_uuid(boot_id) || !make_uuid(connection_id)) {
     std::printf("# this board cannot make an identifier for this boot\n");
     return 1;
@@ -978,7 +1270,7 @@ int main() {
               boot_id, connection_id, wireless ? "up" : "no");
   std::fflush(stdout);
 
-  absolute_time_t next = make_timeout_time_ms(kIntervalMs);
+  absolute_time_t next = make_timeout_time_ms(kHeartbeatBlinkMs);
   while (true) {
     net::poll();
     take_the_time_if_it_arrived();
@@ -992,12 +1284,16 @@ int main() {
     }
     static char line[4096];
     if (read_line(line, sizeof(line))) obey(line);
+    // Every pin, every loop: the debounce is measured in time and not in sleeping, so
+    // nothing here waits on a wire while the connection waits on this.
+    read_the_sources();
     if (absolute_time_diff_us(get_absolute_time(), next) <= 0) {
+      // A sign of life, and nothing more: it says the loop is turning, not that anything
+      // was published.
       led(true);
-      publish_temperature();
       sleep_ms(20);
       led(false);
-      next = make_timeout_time_ms(kIntervalMs);
+      next = make_timeout_time_ms(kHeartbeatBlinkMs);
     }
     sleep_ms(5);
   }

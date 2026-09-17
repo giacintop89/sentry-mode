@@ -290,4 +290,27 @@ TEST(an_event_kind_that_is_not_one_is_refused) {
   CHECK(attempt.why == Unplanned::kWrongType);
 }
 
+TEST(a_plan_that_is_adopted_owns_its_own_pins) {
+  // The device judges a configuration on one plan and runs it on another. What the running
+  // plan says about a pin has to survive the next configuration being judged, or a node
+  // would be reporting the name of a source somebody merely proposed.
+  Source first = a_source("pir-1", "gpio");
+  with_integer(first, "pin", 15);
+  Plan candidate(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(candidate, &first, 1));
+
+  Plan running(Board::kPico2W);
+  running = candidate;
+  CHECK(running.size() == 1);
+  CHECK(std::strcmp(running.holder(15), "pir-1") == 0);
+
+  // The candidate is now judging something else entirely, on the same pin.
+  Source second = a_source("door-1", "gpio");
+  with_integer(second, "pin", 15);
+  CHECK(attempt.of(candidate, &second, 1));
+  CHECK(std::strcmp(running.holder(15), "pir-1") == 0);
+  CHECK(std::strcmp(running.at(0).source_id, "pir-1") == 0);
+}
+
 int main() { return harness::run_all("plan"); }
