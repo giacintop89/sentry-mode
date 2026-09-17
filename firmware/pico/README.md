@@ -494,6 +494,42 @@ publishing every fifteen seconds, with nothing in either log to say so. The fix 
 handled, because nothing about it is written down and nothing would be gained by having it
 sent again — and `test_satellite_service.py` now holds a test that would have caught it.
 
+### A rule, fired from a pin here
+
+The last thing `PICO-04` asks for is a sensor on this board setting off a rule on the hub.
+That was done on the live hub, in test mode, so the rule's actions were written down rather
+than run, and with the hub's own camera rule switched off for the duration — arming loads
+the detector only for the rules that need one, and there is no camera on that hub to load.
+
+The rule watched `pico-ingresso.pir-1` for `sensor.motion` on a rising edge. The pin was
+driven low, then high, from the serial console:
+
+```
+drive 15 0
+# pin 15 (pir-1) driven low
+drive 15 1
+# pin 15 (pir-1) driven high
+```
+
+and on the hub, seconds later:
+
+```
+{"kind": "triggered", "message": "sensor.motion from pico-ingresso.pir-1: True.", "rule": "Movement at the entrance"}
+{"kind": "would_run", "message": "Telegram: Movement at the entrance.", "rule": "Movement at the entrance"}
+```
+
+`would_run` is test mode saying what it would have done. The path it proves is the whole
+one: a pad on the chip, debounced and settled by `input.cpp`, published as an event at
+QoS 1, taken in by the satellite service, written to the journal, marked eligible, and
+handed to the engine that decides what to do about it. Everything after that — sending the
+message rather than logging it — is the same code the cameras use and is not this
+firmware's.
+
+Two things had to be fixed on the hub side before this could run at all. The saved rules
+file was still in the first version of the rules format, which has no sensor triggers in it;
+`scripts/migrate_satellites.py --apply` converts it, keeping a checksummed backup. And
+arming is a POST with no body, which the hub says plainly if it is given one.
+
 ## What is in here
 
 | Path | What it is |
@@ -560,11 +596,10 @@ fails here, in a second, rather than at link time on a target with neither.
   has been exercised on the hardware — but by the board driving its own pad, not by a PIR
   or a reed switch. What a real sensor does that a driven pin does not — the settling after
   power, the pulse a PIR holds, the bounce of a contact — has not been watched yet.
-- A rule on the hub that a sensor here fires. The events arrive, the hub records them and
-  marks them eligible, and its engine acts on eligible events only while Sentry is armed —
-  but this hub has one rule on it and that rule watches a camera. A sensor rule and an
-  arming are somebody's decision about their own house, not this firmware's, so what has
-  been shown is everything up to the engine's door and nothing past it.
+- A rule that runs its actions rather than logging them. The rule above fired in test mode,
+  which is as far as this firmware's business goes: whether a message is actually sent is
+  somebody's decision about their own house. Nor has a rule been fired by anything but a
+  pin driven from the console — the sensor is still missing, above.
 - A DS18B20 that answers. The bus is written, the conversion is timed, the scratchpad is
   read and the CRC is checked, but no probe has ever answered the reset on this board: the
   only 1-Wire transcript here is an empty bus. The pull-up is the chip's own, which is
