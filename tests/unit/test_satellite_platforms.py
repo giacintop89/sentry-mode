@@ -98,7 +98,10 @@ def test_a_microcontroller_has_no_camera_and_nothing_to_test_by_hand():
     assert PICO.streams == ()
     assert PICO.manual_tests is False
     assert PICO.experimental is True
-    assert "csi" not in PICO.drivers and "microphone" not in PICO.drivers
+    assert "csi" not in PICO.drivers
+    # A microphone it does drive, and still offers no stream: the board says that
+    # something was loud and has nowhere to put the sound it heard it in.
+    assert "microphone" in PICO.drivers
 
 
 def test_the_bigger_board_runs_the_same_firmware_and_so_takes_the_same_configuration():
@@ -222,6 +225,57 @@ def test_a_board_with_a_radio_is_the_only_one_offered_a_watch():
     assert platforms.check_configuration(
         PICO, [{"id": "phone", "kind": "ble", "address": "AA:BB:CC:DD:EE:FF", "pin": 15}]
     ) == ["phone.pin: a ble source on a pico-w-sensor has no pin"]
+
+
+def test_a_board_listens_to_one_microphone_and_says_so_before_the_round_trip():
+    # Three pins and a threshold. The board has one state machine clocking I²S and one
+    # block of samples behind it, so a second microphone is refused by name rather than
+    # started on top of the first one.
+    assert (
+        platforms.check_configuration(
+            PICO,
+            [
+                {
+                    "id": "hall",
+                    "kind": "microphone",
+                    "pin": 6,
+                    "clock_pin": 7,
+                    "channel": "left",
+                    "activity_threshold_dbfs": -40.0,
+                    "activity_min_seconds": 0.5,
+                    "activity_hold_seconds": 5.0,
+                    "event_kind": "audio.activity",
+                }
+            ],
+        )
+        == []
+    )
+    two = [
+        {"id": "hall", "kind": "microphone", "pin": 6, "clock_pin": 7},
+        {"id": "kitchen", "kind": "microphone", "pin": 10, "clock_pin": 11},
+    ]
+    assert platforms.check_configuration(PICO, two) == [
+        "kitchen: a pico-w-sensor listens to one microphone, and hall is already it"
+    ]
+    # A second one nobody reads starts no clock, and is a line in a file like any other.
+    assert platforms.check_configuration(PICO, [two[0], dict(two[1], enabled=False)]) == []
+    # Two microphones on a machine with two sound cards are two microphones.
+    assert platforms.check_configuration(platforms.LINUX, two) == []
+
+
+def test_a_microphone_on_a_board_is_pins_and_never_a_sound_card():
+    assert platforms.check_configuration(
+        PICO,
+        [{"id": "hall", "kind": "microphone", "pin": 6, "clock_pin": 7, "alsa_device": "hw:1,0"}],
+    ) == ["hall.alsa_device: a pico-w-sensor has no filesystem and no audio stack"]
+    # The pins are what makes it a microphone here, and a source that names neither is
+    # refused for both rather than for whichever was looked at first.
+    assert platforms.check_configuration(PICO, [{"id": "hall", "kind": "microphone"}]) == [
+        "hall: a microphone source needs pin, and this one names none",
+        "hall: a microphone source needs clock_pin, and this one names none",
+    ]
+    # No sound leaves the board, so no stream is offered for one.
+    assert PICO.streams == ()
 
 
 def test_an_option_the_firmware_has_no_place_for_is_refused_by_the_driver_that_has_none():

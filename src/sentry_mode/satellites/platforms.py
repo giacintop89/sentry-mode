@@ -78,8 +78,11 @@ LINUX = Platform(
 PICO_W = Platform(
     name="pico-w-sensor",
     architecture="rp2040",
-    summary="A Pico W running the Sentry firmware: sensors only, no camera, no microphone.",
-    drivers=("gpio", "onewire", "adc", "ble", "board"),
+    summary=(
+        "A Pico W running the Sentry firmware: sensors only, no camera. A microphone on "
+        "it reports that something was loud and never sends any sound."
+    ),
+    drivers=("gpio", "onewire", "adc", "ble", "microphone", "board"),
     max_sources=8,
     max_config_bytes=2048,
     streams=(),
@@ -92,7 +95,10 @@ PICO_2W = PICO_W.model_copy(
     update={
         "name": "pico-2w-sensor",
         "architecture": "rp2350",
-        "summary": "A Pico 2 W running the Sentry firmware: sensors only, with more room.",
+        "summary": (
+            "A Pico 2 W running the Sentry firmware: sensors only, with more room. A "
+            "microphone on it reports that something was loud and never sends any sound."
+        ),
         # More room in memory and in flash, and the same firmware: the limits on what it
         # may be configured with come from the firmware, so they are the same as well.
     }
@@ -152,6 +158,21 @@ FIRMWARE_OPTIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "event_kind",
         ),
     ),
+    # A microphone here is three pins and a threshold. The options the agent's microphone
+    # takes — a sound card, a sample rate, a stream the hub can listen to — are not among
+    # them, and are refused by name below rather than ignored.
+    "microphone": (
+        ("pin", "clock_pin"),
+        (
+            "pin",
+            "clock_pin",
+            "channel",
+            "activity_threshold_dbfs",
+            "activity_min_seconds",
+            "activity_hold_seconds",
+            "event_kind",
+        ),
+    ),
 }
 
 # An option that names something only a Linux machine has. Sending one to a microcontroller
@@ -173,6 +194,8 @@ def check_configuration(chosen: Platform, entries: list[dict]) -> list[str]:
     the hub can see is an error on the page rather than an `applied` that never happens.
     """
     reasons: list[str] = []
+    # The one microphone a microcontroller has room for, once one has been seen.
+    listening: str | None = None
     if len(entries) > chosen.max_sources:
         reasons.append(
             f"{len(entries)} sources: a {chosen.name} takes at most {chosen.max_sources}"
@@ -190,6 +213,16 @@ def check_configuration(chosen: Platform, entries: list[dict]) -> list[str]:
         for option in needed:
             if entry.get(option) is None:
                 reasons.append(f"{name}: a {kind} source needs {option}, and this one names none")
+        if kind == "microphone" and entry.get("enabled", True):
+            # One state machine clocks I²S on these boards and one block of samples sits
+            # behind it. A second microphone would share the first one's clock and read
+            # the first one's pin, and report a room it is not listening to.
+            if listening is not None:
+                reasons.append(
+                    f"{name}: a {chosen.name} listens to one microphone, "
+                    f"and {listening} is already it"
+                )
+            listening = str(name)
         if kind == "ble":
             # One device, named the one way or the other. Both is two claims about what is
             # being watched, and neither is a source that would match every phone that goes
