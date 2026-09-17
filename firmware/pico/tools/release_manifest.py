@@ -288,6 +288,12 @@ def manifest(build: Path, host: Path, run_checks: bool) -> dict:
             "sources": int(limits.get("sources", 0)),
             "options_per_source": int(limits.get("options", 0)),
             "configuration_bytes": int(limits.get("configuration", 0)),
+            # The largest thing this firmware holds at once, and the number to look at
+            # first on a part with 264 kB: the wire grammar takes more sources than this
+            # board plans, and a parsed command is that grammar's whole shape. Measured by
+            # the host build, where the pointers in it are twice the width they are on
+            # either chip, so the board's own figure is smaller than this one.
+            "parsed_command_bytes_on_the_host": int(limits.get("command_on_the_host", 0)),
         },
         "capability_states": declared["capabilities"],
         "limitations": declared["limitations"],

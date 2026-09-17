@@ -46,9 +46,14 @@ int main() {
   // The limits a hub has to agree with. `sources` is what this firmware will plan, which
   // is smaller than the `command.h` grammar allows on the wire; `configuration` is what
   // one vault slot holds after the record framing, which is what a hub may send.
-  std::printf("limits\tsources=%zu\toptions=%zu\tconfiguration=%zu\tadc=%d-%d\n",
+  // The one number here that is about memory rather than about a rule: a parsed command is
+  // the largest thing this firmware ever holds at once, because the wire grammar allows
+  // more sources than this board will ever plan. This program is a host build, so half of
+  // that structure is 64-bit pointers and the same command on either chip is smaller; it
+  // is still the right order of magnitude, and it is measured rather than argued about.
+  std::printf("limits\tsources=%zu\toptions=%zu\tconfiguration=%zu\tadc=%d-%d\tcommand_on_the_host=%zu\n",
               sentry::kMaxPlanned, sentry::kMaxOptions,
               sentry::most_of(sentry::Held::kConfiguration), sentry::kFirstAdcPin,
-              sentry::kLastAdcPin);
+              sentry::kLastAdcPin, sizeof(sentry::Command));
   return 0;
 }

@@ -635,6 +635,15 @@ to neither.
 `sentry-satellite verify` says whether what is installed is still what was packaged, file
 by file, and names anything that has appeared inside a release that was not part of it.
 
+A microcontroller has none of this — no filesystem, no release directory and no symlink to
+move. It has one image, which is copied onto it whole, and a manifest that is written
+beside that image rather than installed with it: the commit, the SDK, the hash of the
+`.uf2`, what the hub will let a node of that kind be asked for, and what that firmware
+still does not do. `make pico-release PICO_BOARD=pico2_w` writes it, and
+[the firmware's own README](../firmware/pico/README.md) has the whole walk-through — the
+four steps from a board out of its bag to a node in the journal, and the five ways of
+getting one back.
+
 ## Changing a node's sources from the hub
 
 The **Satellites** page, in the menu once satellites are on, lists every node: whether it

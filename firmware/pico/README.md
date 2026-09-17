@@ -1260,6 +1260,14 @@ fails here, in a second, rather than at link time on a target with neither.
   honest word for what it is worth. That rule has never been watched happening. A board up
   for a day, the drift between two answers, and a network that goes away mid-interval are
   all still unexamined, and `T16`'s UTC jump is **not executed**.
+- The largest thing this firmware holds at once, which is a command. The wire grammar
+  takes 32 sources with 8 options each because that is what the hub may send any node; this
+  board plans at most 8, and refuses the rest by name. The structure is 56,808 bytes as the
+  host build measures it — smaller on either chip, where its pointers are half as wide —
+  and it is a stack local in the three places that parse one. On an RP2350 with 520 kB that
+  has never come near anything; on an RP2040 with 264 kB it is a quarter of the part, and
+  the `pico-w-sensor` profile has never been run on a board. The manifest records the
+  number rather than leaving it to be found.
 - A node approved again while it is already connected. A session begins at a `state`
   message, and the retained one was delivered when the hub subscribed, so a node that was
   revoked and then approved again stays offline in a hub that would now accept it — until
