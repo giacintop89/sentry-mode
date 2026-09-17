@@ -1,0 +1,54 @@
+# The part of the Pico firmware that can be checked without a Pico.
+#
+# The device build is not here yet (see firmware/pico/README.md), so this workflow builds
+# the protocol for the host, runs the four test suites, and then makes the hub's models and
+# the satellite's schema checker judge the events the firmware's own serializer writes.
+
+name: pico
+
+on:
+  push:
+    paths:
+      - "firmware/pico/**"
+      - "contracts/satellite/**"
+      - "src/sentry_mode/satellites/**"
+      - "src/sentry_mode/sources/models.py"
+      - ".github/workflows/pico.yml"
+  pull_request:
+    paths:
+      - "firmware/pico/**"
+      - "contracts/satellite/**"
+      - "src/sentry_mode/satellites/**"
+      - "src/sentry_mode/sources/models.py"
+      - ".github/workflows/pico.yml"
+  workflow_dispatch:
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The cross-check imports the event models and nothing else; the hub's other
+      # dependencies have no business being installed to judge a JSON document.
+      - name: Install what the cross-check needs
+        run: python -m pip install "pydantic>=2"
+
+      - name: Configure
+        run: cmake -S firmware/pico -B build/pico-host -G Ninja
+
+      - name: Build
+        run: cmake --build build/pico-host
+
+      - name: Test
+        run: ctest --test-dir build/pico-host --output-on-failure
+
+      - name: The hub and the agent judge what the firmware writes
+        run: python firmware/pico/tools/check_against_contracts.py --build-dir build/pico-host

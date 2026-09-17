@@ -1,6 +1,6 @@
 # Control contracts before the Pico firmware
 
-**Status:** written and held to by both existing implementations; **no firmware exists yet**, and nothing here has been compiled for or run on an RP2040 or an RP2350
+**Status:** written and held to by three implementations — the hub, the Linux agent and, since PICO-01, the firmware's own C++ (`firmware/pico`, host build only); **nothing here has been compiled for or run on an RP2040 or an RP2350**
 **Gate:** the first half of PICO-00 of the [Pico implementation plan](../sentry-mode-pico-implementation-plan.md)
 **Decision:** write down `state`, `health`, `commands` and `acks` as generated schemas with shared fixtures, before any C++ is written, and change nothing on the wire while doing it.
 
@@ -59,8 +59,13 @@ agent's own parser and to the hub's models, and the two must agree.
 
 ## What this is checked against
 
-- The 10 valid and 10 invalid fixtures, by the hub's Pydantic models and by the agent's
-  schema checker and command parser: same files, same verdicts.
+- The 10 valid and 10 invalid fixtures, by the hub's Pydantic models, by the agent's
+  schema checker and command parser, and by the firmware's command parser: same files,
+  same verdicts.
+- What the firmware itself writes: `firmware/pico/tools/check_against_contracts.py` runs
+  its serializer and hands every event to the hub's models and to the agent's schema
+  checker. This is how the firmware was caught calling a reading `stale` where the
+  vocabulary says `degraded` — a drift no test written on the C++ side could see.
 - What the Linux agent really publishes: its snapshot, its will, its heartbeat and its
   answers to commands are validated against the schemas in the agent's own suite.
 - What this hub really sends: the grant, the configuration and the revocation a session
