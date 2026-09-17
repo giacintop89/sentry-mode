@@ -71,7 +71,10 @@ def create(path: Path, node_id: str, now: str) -> Identity:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        temporary.chmod(0o600)
+        # Provisioning is done by a person with root; the agent runs as its own user and
+        # has to be able to read this. It is a name and a date, not a secret, and the
+        # directory it sits in is the thing that keeps the rest of the board out.
+        temporary.chmod(0o644)
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)

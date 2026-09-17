@@ -80,7 +80,10 @@ else
     mv "$staging" "$target"
     trap - EXIT
 fi
-chmod -R go-w "$target"
+# The agent runs as its own user, so it has to be able to read the release: nothing in
+# it is a secret, and nothing in it may be writable by anyone but root. mktemp makes the
+# staging directory private, so this is what opens it, and it runs on every install.
+chmod -R a+rX,go-w "$target"
 
 # One step, so a board that loses power is running either the old release or the new one.
 ln -sfn "$target" "$opt/.current.new"

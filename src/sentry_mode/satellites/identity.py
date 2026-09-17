@@ -107,20 +107,44 @@ class NodeRegistry:
         self._now = now
         self._lock = RLock()
         self._document = NodeDocument()
+        self._read_at: tuple[int, int] | None = None
         self.load()
 
     # -- persistence -------------------------------------------------------------
 
     def load(self) -> NodeDocument:
         with self._lock:
-            if not self._path.exists():
+            try:
+                stamp = self._path.stat()
+            except OSError:
+                self._read_at = None
                 self._document = NodeDocument()
                 return self._document
             data = json.loads(self._path.read_text(encoding="utf-8"))
             self._document = NodeDocument.model_validate(data)
+            self._read_at = (stamp.st_mtime_ns, stamp.st_size)
             return self._document
 
+    def refresh(self) -> None:
+        """Take in a registry that was changed underneath us, by `satellite_admin.py`.
+
+        Approving a node is an administrative act with a shell, and a hub that only read
+        the file at startup would leave the person who did it looking at a node that never
+        appears. The file is written whole and moved into place, so there is no half of one
+        to read; when it has not moved, this is one `stat` and nothing else.
+        """
+        with self._lock:
+            try:
+                stamp = self._path.stat()
+            except OSError:
+                if self._read_at is not None:
+                    self.load()
+                return
+            if self._read_at != (stamp.st_mtime_ns, stamp.st_size):
+                self.load()
+
     def _persist(self) -> None:
+        """Write the registry out. Callers hold the lock and have refreshed first."""
         self._document.revision += 1
         self._path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self._path.with_name(f".{self._path.name}.new")
@@ -148,6 +172,7 @@ class NodeRegistry:
         replayed into this one and still look current.
         """
         with self._lock:
+            self.refresh()
             self._document.hub_epoch += 1
             self._persist()
             return self._document.hub_epoch
@@ -165,6 +190,7 @@ class NodeRegistry:
     ) -> NodeRecord:
         """Record a node as waiting. Registering is not approving."""
         with self._lock:
+            self.refresh()
             if node_id in self._document.nodes:
                 raise ValueError(f"{node_id} is already registered")
             record = NodeRecord(
@@ -190,6 +216,7 @@ class NodeRegistry:
         record would then accept whatever turned up under that name.
         """
         with self._lock:
+            self.refresh()
             record = self.require(node_id)
             if certificate is not None:
                 pinned = fingerprint(certificate)
@@ -214,6 +241,7 @@ class NodeRegistry:
     def revoke(self, node_id: str, *, reason: str | None = None) -> NodeRecord:
         """Take permission away. The record stays: history is not a permission."""
         with self._lock:
+            self.refresh()
             record = self.require(node_id)
             updated = record.model_copy(
                 update={
@@ -228,6 +256,7 @@ class NodeRegistry:
 
     def forget(self, node_id: str) -> None:
         with self._lock:
+            self.refresh()
             self.require(node_id)
             del self._document.nodes[node_id]
             self._persist()
@@ -239,6 +268,7 @@ class NodeRegistry:
         if unknown:
             raise ValueError(f"a node's {', '.join(sorted(unknown))} is not a description")
         with self._lock:
+            self.refresh()
             record = self.require(node_id)
             updated = record.model_copy(update=changes)
             self._document.nodes[node_id] = updated
@@ -279,6 +309,11 @@ class NodeRegistry:
         with. One of them disagreeing is not a detail to log and carry on from; it is
         either a misconfiguration or somebody trying something.
         """
+        record = self.get(node_id)
+        if record is None or not record.may_publish:
+            # A name nobody has heard of, or one that is not approved yet, is the case
+            # where the file on disk may have moved on: look again before refusing.
+            self.refresh()
         record = self.require(node_id)
         if not record.may_publish:
             raise NotApproved(f"{node_id} is {record.status}")

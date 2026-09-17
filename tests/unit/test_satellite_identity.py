@@ -15,6 +15,45 @@ from sentry_mode.satellites.identity import (
 )
 
 
+def test_a_node_approved_from_the_shell_is_seen_by_a_hub_that_is_already_running(tmp_path):
+    """`satellite_admin.py` writes the registry while the hub holds it open.
+
+    A hub that only read the file when it started would refuse the node for as long as it
+    ran, and the person who approved it would be looking at a node that never arrives.
+    """
+    path = tmp_path / "nodes.json"
+    running = NodeRegistry(path)
+    with pytest.raises(UnknownNode):
+        running.authenticate(node_id="zero-w")
+
+    from_the_shell = NodeRegistry(path)
+    crt = certificate(tmp_path, "zero-w")
+    from_the_shell.register(node_id="zero-w", certificate=crt)
+    from_the_shell.approve("zero-w")
+
+    record = running.authenticate(node_id="zero-w", certificate_fingerprint=fingerprint(crt))
+    assert record.status == "approved"
+
+
+def test_a_running_hub_writing_the_registry_does_not_undo_what_the_shell_approved(tmp_path):
+    """The hub persists the registry too, whenever it stamps a new connection.
+
+    Writing out the document it happens to be holding would put the file back as it was
+    before the node was approved: the node would arrive, be refused, and the record would
+    be gone from the file as well.
+    """
+    path = tmp_path / "nodes.json"
+    running = NodeRegistry(path)
+    running.next_epoch()
+
+    from_the_shell = NodeRegistry(path)
+    from_the_shell.register(node_id="zero-w", certificate=certificate(tmp_path, "zero-w"))
+    from_the_shell.approve("zero-w")
+
+    running.next_epoch()
+    assert [record.node_id for record in NodeRegistry(path).all()] == ["zero-w"]
+
+
 @pytest.fixture
 def registry(tmp_path) -> NodeRegistry:
     return NodeRegistry(tmp_path / "nodes.json")

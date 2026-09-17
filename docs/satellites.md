@@ -412,6 +412,16 @@ half of each. Running it again with the same release changes nothing. It writes
 `/etc/sentry-satellite/node.toml` from the example only if there is none, and never
 touches an identity, a certificate or a service that is not its own.
 
+Then the board is told what it is, once, by a person with root — the agent runs as its own
+user and never names itself:
+
+    sudo -u root env PYTHONPATH=/opt/sentry-satellite/current/src \
+        python3 -B -m sentry_satellite.cli identity --create zero-entrance
+
+The name has to be the one in the node's certificate, and the hub has to have approved it
+already. After that, `/etc/sentry-satellite/node.toml` says where the hub is and which
+certificates to use, and `systemctl enable --now sentry-satellite` starts it.
+
     cd /opt/sentry-satellite/current/scripts    # they travel with the release
     sudo ./rollback.sh --list
     sudo ./rollback.sh --to 0.1.0

@@ -118,6 +118,14 @@ def test_an_install_writes_the_layout_and_leaves_the_rest_of_the_board_alone(bui
     assert (staged / "var/lib/sentry-satellite").is_dir()
     assert oct((staged / "var/lib/sentry-satellite").stat().st_mode)[-3:] == "700"
     assert oct((staged / "etc/sentry-satellite").stat().st_mode)[-3:] == "750"
+    # The agent runs as its own user, so it has to be able to read what it runs.
+    installed = current.resolve()
+    assert oct(installed.stat().st_mode)[-3:] == "755"
+    assert all(
+        oct(path.stat().st_mode)[-3:] in {"755", "644"}
+        for path in installed.rglob("*")
+        if path.is_dir() or path.suffix in {".py", ".toml", ".md", ".service", ".json"}
+    )
     # Nothing outside its own three directories was written.
     assert sorted(p.name for p in staged.iterdir()) == ["etc", "opt", "var"]
 

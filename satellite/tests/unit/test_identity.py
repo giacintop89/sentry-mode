@@ -12,7 +12,8 @@ def test_an_identity_is_issued_once(tmp_path):
     issued = identity.create(path, "zero-entrance", "2026-09-16T00:00:00Z")
     assert issued.node_id == "zero-entrance"
     assert json.loads(path.read_text())["node_id"] == "zero-entrance"
-    assert path.stat().st_mode & 0o777 == 0o600
+    # Readable: root provisions the node, the agent runs as another user and reads it.
+    assert path.stat().st_mode & 0o777 == 0o644
 
 
 def test_a_node_does_not_rename_itself_by_restarting(tmp_path):
