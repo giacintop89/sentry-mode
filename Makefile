@@ -1,7 +1,7 @@
 PYTHON ?= python3
 BIN = .venv/bin
 
-.PHONY: setup test lint format status camera-test audio-test pico
+.PHONY: setup test lint format status camera-test audio-test pico pico-device
 setup:
 	$(PYTHON) -m venv .venv
 	$(BIN)/python -m pip install -e '.[dev]'
@@ -23,3 +23,11 @@ pico:
 	ctest --test-dir build/pico-host --output-on-failure
 	$(BIN)/python firmware/pico/tools/check_against_contracts.py --build-dir build/pico-host
 	$(BIN)/python firmware/pico/tools/pack_provisioning.py --build-dir build/pico-host --verify
+# The board build. PICO_SDK_PATH is where the SDK was cloned; the UF2 lands in build/pico2w.
+PICO_SDK_PATH ?= $(HOME)/.local/share/pico-sdk
+PICO_BOARD ?= pico2_w
+pico-device:
+	cmake -S firmware/pico -B build/$(PICO_BOARD) -G Ninja -DSENTRY_PICO_TARGET=device \
+		-DPICO_BOARD=$(PICO_BOARD) -DPICO_SDK_PATH=$(PICO_SDK_PATH)
+	cmake --build build/$(PICO_BOARD)
+	@echo "flash: hold BOOTSEL, then copy build/$(PICO_BOARD)/sentry_firmware.uf2 onto RP2350"

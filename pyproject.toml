@@ -12,7 +12,9 @@ dependencies = ["opencv-python-headless>=4.8", "PyYAML>=6", "pydantic>=2", "pyda
 [project.optional-dependencies]
 speech = ["kokoro-onnx>=0.6,<1"]
 satellites = ["paho-mqtt>=2,<3"]
-dev = ["pytest>=8", "pytest-cov", "ruff", "mypy", "types-PyYAML"]
+# pyserial is what `firmware/pico/tools/board_check.py` talks to a board over; nothing the
+# hub itself runs needs a serial port.
+dev = ["pytest>=8", "pytest-cov", "ruff", "mypy", "types-PyYAML", "pyserial>=3.5"]
 
 [project.scripts]
 sentry-mode = "sentry_mode.cli:main"

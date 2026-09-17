@@ -1,20 +1,21 @@
 # Pico satellite firmware
 
 A satellite that is a microcontroller rather than a Linux board. This directory holds the
-firmware for it, and today it holds exactly the part of that firmware which can be built
+firmware for it, and most of what it holds is the part of that firmware which can be built
 and run without one: the protocol — JSON, the event envelope, the command grammar, the
 state, health and answers it writes, the topics it writes them to, and the lease — and the
 core it will sit on — the two configuration slots, the identity, the timebase, the queue
 and the order a connection has to come up in. All of it compiled for the host and tested
 against the same contracts and fixtures the hub and the Pi Zero agent are tested against.
 
-**Nothing here has run on an RP2040 or an RP2350.** There is no SDK pinned, no Wi-Fi, no
-MQTT, no sensor, no UF2. `PICO-01` of the [implementation
-plan](../../docs/sentry-mode-pico-implementation-plan.md) also asks for a board target, a
-heartbeat and a proven watchdog, and `PICO-02` for flash, USB recovery and SNTP; those need
-hardware nobody has wired up yet, so, as §13.1 of the plan requires, what is delivered is
-the build, the host tests and a repeatable procedure, and the hardware gates are marked
-**not executed**.
+It has now also run on a board. A Raspberry Pi Pico 2 W (RP2350) was flashed on
+2026-09-17 with the device build below, and the events it published from its own die
+temperature were accepted by the hub's models and by the published schema — the same
+serializer, the same bytes, on a chip where `long` is 32 bits and unaligned access is not
+free. That is the first hardware gate of `PICO-01` and no more than that: there is still no
+Wi-Fi, no MQTT, no flash and no sensor driver on the board. The rest of the hardware gates
+in the [implementation plan](../../docs/sentry-mode-pico-implementation-plan.md) stay
+marked **not executed**.
 
 ## Building and running the tests
 
@@ -60,6 +61,55 @@ That writes configuration slots from the header layout rather than from the C++,
 the firmware (`sentry_unpack`) what it read back — including from a record whose last three
 bytes never made it, which must leave the previous configuration in charge.
 
+## Building for a board
+
+The SDK is not vendored. Clone it once, wherever you keep such things:
+
+```sh
+git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/pico-sdk ~/.local/share/pico-sdk
+cd ~/.local/share/pico-sdk && git submodule update --init --depth 1 \
+    lib/tinyusb lib/cyw43-driver lib/lwip lib/mbedtls
+```
+
+Then, with `gcc-arm-none-eabi` installed:
+
+```sh
+make pico-device                      # or: PICO_BOARD=pico_w make pico-device
+```
+
+That writes `build/pico2w/sentry_firmware.uf2`. Hold BOOTSEL while plugging the board in —
+or, if it is running MicroPython, `import machine; machine.bootloader()` — and copy the UF2
+onto the `RP2350` volume that appears. The board reboots into the firmware.
+
+`src/device/main.cpp` is one small program and not a satellite. It brings up USB serial and
+the wireless chip's LED, names itself from the board's own serial number, makes its boot id
+from `pico_rand`, reads the die temperature through `sensors.cpp` and publishes it with the
+same `write_event` the host tests exercise. It has no clock of its own, so it publishes
+nothing until something tells it the time — a board that stamped readings from the moment
+it booted would be writing timestamps nobody measured. Two commands on the serial line:
+`time <unix_ms>` and `sample`.
+
+The check that makes it worth having:
+
+```sh
+.venv/bin/python firmware/pico/tools/board_check.py --port /dev/ttyACM0 --events 3
+```
+
+It gives the board the time, reads what it publishes, and hands each event to the hub's
+Pydantic models and the satellite's schema checker — the cross-check of the section above,
+with the firmware running on the chip instead of on a computer. The first run, on a Pico
+2 W:
+
+```
+ok  board-temperature seq=0 32.66 °C valid clock=synced at 2026-09-17 11:56:24.789000+00:00
+ok  board-temperature seq=1 33.13 °C valid clock=synced at 2026-09-17 11:56:26.814000+00:00
+
+3 events from pico-cde2f882a116bf77, judged by the hub's models and the schema
+```
+
+The binary is 327 kB of text and 6.9 kB of static RAM, most of it the wireless firmware and
+TinyUSB; `arm-none-eabi-size build/pico2w/sentry_firmware.elf` says so on any change.
+
 ## What is in here
 
 | Path | What it is |
@@ -76,6 +126,7 @@ bytes never made it, which must leave the previous configuration in charge.
 | `include/sentry/identity.h`, `src/core/identity.cpp` | The provisioning record — the node id and where the broker is — and the boot id that must differ every boot. |
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
 | `tools/emit.cpp`, `tools/unpack.cpp` | Write events, and read configuration slots, for the two cross-checks above. |
+| `src/device/main.cpp` | The one program that runs on a board: USB serial, the LED, the die temperature, and the same event writer as everything else. |
 | `include/sentry/spool.h`, `src/core/spool.cpp` | The queue for an outage: which readings collapse into a newer one, which are never dropped for them, and what is counted when something is given up. |
 | `include/sentry/input.h`, `src/core/input.cpp` | What a wire may mean: the baseline that is not an intrusion, the settling window a PIR needs, the debounce, and the polarity software cannot guess. |
 | `include/sentry/sensors.h`, `src/core/sensors.cpp` | Turning what a sensor returned into a reading or into an admission there is none: the 1-Wire CRC, the 85 °C a DS18B20 holds after a reset, and an ADC count nothing could have produced. |
@@ -92,14 +143,14 @@ fails here, in a second, rather than at link time on a target with neither.
 
 ## What is not here, and what it waits on
 
-- The device build. It needs a pinned Pico SDK, a pinned lwIP and Mbed TLS, and a first
-  build on a real board. Offering `-DPICO_BOARD=pico_w` today would be offering a build
-  that has never produced a binary.
-- Lifecycle, watchdog and the USB/LED heartbeat — PICO-01's hardware half.
+- Lifecycle and the watchdog. The device program loops and blinks; nothing restarts it
+  when it stops, and PICO-01 asks for a watchdog that has been seen to fire.
 - The flash itself: the linker layout, the erase and program calls, USB recovery, and the
   certificates and private key a real provisioning tool writes. `store.cpp` says what a
   record looks like and `pack_provisioning.py` writes one; neither has touched a sector.
-- SNTP. `Timebase` is told the time by something; nothing here is that something yet.
+- SNTP. `Timebase` is told the time by something; on the board today that something is a
+  person typing `time <unix_ms>` into a serial port, which is enough to check a serializer
+  and is not a clock.
 - MQTT and TLS themselves — the lwIP client, the mTLS handshake, the CONNECT that
   registers the will, the QoS 1 flow. `Session` says what order things happen in and
   `control.cpp` writes the messages; nothing here has yet had a connection, so the

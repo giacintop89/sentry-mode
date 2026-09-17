@@ -9,24 +9,42 @@
 ##   cmake --build build/pico-host
 ##   ctest --test-dir build/pico-host --output-on-failure
 ##
-## The device build is not here yet. It needs a pinned SDK, a pinned lwIP and Mbed TLS, and
-## a first measurement on a real RP2040 — the hardware half of PICO-00, which nobody has
-## done. A CMakeLists that offered `-DPICO_BOARD=pico_w` today would be offering a build
-## that has never produced a binary, which is worse than not offering it.
+## The device build compiles the same modules for the board and adds one program that runs
+## them there, reporting over USB serial. It needs the SDK, which is not vendored:
+##
+##   cmake -S firmware/pico -B build/pico2w -G Ninja \
+##         -DSENTRY_PICO_TARGET=device -DPICO_BOARD=pico2_w -DPICO_SDK_PATH=~/.local/share/pico-sdk
+##   cmake --build build/pico2w          # build/pico2w/sentry_firmware.uf2
+##
+## There is no network in that program yet. It exists because the modules had only ever run
+## on a computer, and a serializer that agrees with itself on two architectures is worth
+## more than one that has only been seen on the machine it was written on.
 
 cmake_minimum_required(VERSION 3.20)
-project(sentry_pico LANGUAGES CXX)
 
+set(SENTRY_PICO_TARGET "host" CACHE STRING "host (the pure modules and their tests) or device")
+
+if(NOT SENTRY_PICO_TARGET STREQUAL "host" AND NOT SENTRY_PICO_TARGET STREQUAL "device")
+  message(FATAL_ERROR "SENTRY_PICO_TARGET is host or device, not ${SENTRY_PICO_TARGET}")
+endif()
+
+if(SENTRY_PICO_TARGET STREQUAL "device")
+  # The SDK decides the compiler, so it has to be imported before the project exists.
+  if(NOT DEFINED PICO_BOARD)
+    set(PICO_BOARD pico2_w)
+  endif()
+  include(pico_sdk_import.cmake)
+endif()
+
+project(sentry_pico LANGUAGES C CXX ASM)
+
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(SENTRY_PICO_TARGET "host" CACHE STRING "host (the pure modules and their tests) or device")
-
-if(NOT SENTRY_PICO_TARGET STREQUAL "host")
-  message(FATAL_ERROR
-    "Only the host build exists. The device build waits on a pinned SDK and a first "
-    "build on a real board; see docs/adr/pico-control-contracts.md.")
+if(SENTRY_PICO_TARGET STREQUAL "device")
+  pico_sdk_init()
 endif()
 
 # Where the contracts live, so the tests read the same fixtures as the hub and the agent.
@@ -56,6 +74,29 @@ target_compile_options(sentry_protocol PRIVATE
   # this way, a change that needs either of those fails here rather than on the board.
   -fno-exceptions -fno-rtti
 )
+
+if(SENTRY_PICO_TARGET STREQUAL "device")
+  # One program, and the same library the host tests are run against. What it proves is
+  # that these modules behave on the chip as they do on a computer; it is not a satellite.
+  add_executable(sentry_firmware src/device/main.cpp)
+  target_link_libraries(sentry_firmware PRIVATE
+    sentry_protocol
+    pico_stdlib
+    pico_rand
+    pico_unique_id
+    hardware_adc
+  )
+  if(PICO_CYW43_SUPPORTED)
+    target_link_libraries(sentry_firmware PRIVATE pico_cyw43_arch_none)
+  endif()
+  target_compile_options(sentry_firmware PRIVATE -Wall -Wextra -Wshadow -Werror)
+  # Over USB, so one cable carries the power and everything this program says. The UART
+  # stays off: the pins it would take are pins a source may be configured on.
+  pico_enable_stdio_usb(sentry_firmware 1)
+  pico_enable_stdio_uart(sentry_firmware 0)
+  pico_add_extra_outputs(sentry_firmware)
+  return()
+endif()
 
 enable_testing()
 
