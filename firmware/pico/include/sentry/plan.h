@@ -41,6 +41,9 @@ enum class Bias { kNone, kPullUp, kPullDown };
 // Eight sources on one of these boards. The limit is the loop's, not the contract's: every
 // one of them is sampled on the same thread that keeps the connection alive.
 inline constexpr size_t kMaxPlanned = 8;
+static_assert(kMaxSources <= kMaxPlanned,
+              "a command that carried more sources than the plan holds could be parsed and "
+              "then never applied, which is the one refusal worth making early");
 
 // The seconds a board measurement may be taken apart, and what it defaults to. Thirty is
 // what the Linux agent uses for the same reading, and a die temperature that changes by

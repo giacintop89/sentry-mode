@@ -1508,9 +1508,22 @@ void obey_a_command(const sentry::Command& command, const char* as_it_arrived,
   }
 }
 
+// The one command this node has in hand at a time, and the largest thing this firmware
+// holds: fourteen kilobytes with the sources in it. It lives here rather than in the three
+// functions that parse one, because a local that size is a stack frame this chip does not
+// have — the stack is eight kilobytes below the top of memory, and a frame that deep walks
+// into the heap on its way down. There is one loop and one command in flight at a time:
+// nothing here parses a command while another is being obeyed.
+//
+// Its zeros are in the image rather than in the section that is cleared at boot, because a
+// structure whose every field has a default is initialised rather than empty as far as the
+// compiler is concerned. That is fourteen kilobytes of flash, which this board has, to
+// keep fourteen kilobytes off a stack it does not have.
+sentry::Command command_in_hand;
+
 // One command as it arrived from the broker.
 void a_command_arrived(const char* payload, size_t size) {
-  sentry::Command command;
+  sentry::Command& command = command_in_hand;
   sentry::Refusal why = sentry::Refusal::kNone;
   if (!sentry::parse_command(payload, size, node_id, command, why)) {
     // Not answered, and deliberately: a command this node cannot read has no id it can
@@ -2234,7 +2247,7 @@ void take_back_what_was_kept() {
   }
   size = vault::load(sentry::Held::kConfiguration, kept, sizeof(kept));
   if (size == 0) return;
-  sentry::Command command;
+  sentry::Command& command = command_in_hand;
   sentry::Refusal why = sentry::Refusal::kNone;
   if (!sentry::parse_command(kept, size, node_id, command, why)) {
     if (why == sentry::Refusal::kNotForThisNode && provisioned) {
@@ -2370,7 +2383,7 @@ void obey(const char* line) {
     // The same path a command from the broker takes, so that what the lease does can be
     // tried on a bench with no hub at the other end — and so that what is tried there is
     // the code that runs when there is one.
-    sentry::Command command;
+    sentry::Command& command = command_in_hand;
     sentry::Refusal why = sentry::Refusal::kNone;
     if (!sentry::parse_command(line + 8, std::strlen(line + 8), node_id, command, why)) {
       std::printf("# not a command for this node: %s\n", sentry::name_of(why));

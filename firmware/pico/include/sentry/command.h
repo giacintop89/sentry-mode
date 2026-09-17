@@ -22,7 +22,14 @@
 
 namespace sentry {
 
-inline constexpr size_t kMaxSources = 32;
+// As many sources as this node can run, which is fewer than the contract allows anyone to
+// send. The schema's limit is 32, because that is what a Linux satellite takes; this board
+// plans eight, so a command carrying a ninth is one it could only refuse — and reading it
+// first would mean holding four times this structure to do it. A command is the largest
+// thing this firmware has at once, so what it holds is what it can act on, and the rest is
+// refused by size. The hub refuses it earlier still: a microcontroller platform is eight
+// sources there too.
+inline constexpr size_t kMaxSources = 8;
 inline constexpr size_t kMaxIdText = 65;      // 64 characters and the NUL after them
 inline constexpr size_t kMaxNameText = 41;    // a node or source name, from the contract
 inline constexpr size_t kMaxOptionText = 129; // an option value, from the contract
@@ -94,6 +101,15 @@ struct Command {
   int64_t port = 0;
   char token[kMaxOptionText] = {};
 };
+
+// Back to the state a freshly built one is in, for the next command to be read into it.
+//
+// A command is the largest thing this firmware holds, so a board keeps one and reuses it
+// rather than building one wherever a command arrives: `Command c;` is a stack frame of
+// fourteen kilobytes, and this chip's stack is eight. Assigning `Command{}` has the same
+// problem — the temporary is built before it is copied — which is why this exists and is
+// written the way it is.
+void clear(Command& out);
 
 // Read one command addressed to `node_id`. False, with `why` set, if it is not one.
 //

@@ -1,6 +1,7 @@
 #include "sentry/command.h"
 
 #include <cstring>
+#include <type_traits>
 
 #include "sentry/json.h"
 #include "sentry/names.h"
@@ -171,6 +172,16 @@ bool read_source(Reader& reader, Source& source, Refusal& why) {
 
 }  // namespace
 
+void clear(Command& out) {
+  // Every field is a scalar or an array of them, and every default is a zero, so this is
+  // exactly what the constructor writes — without the copy of one the compiler makes on
+  // the way to an assignment. The cast to `void*` is what tells the warning that this is
+  // not a class being memset by mistake, and the assertions are what make that true.
+  static_assert(std::is_standard_layout<Command>::value, "a command is a plain structure");
+  static_assert(std::is_trivially_copyable<Command>::value, "a command holds nothing that owns");
+  std::memset(static_cast<void*>(&out), 0, sizeof(out));
+}
+
 const char* name_of(Action action) {
   switch (action) {
     case Action::kGrant:
@@ -230,7 +241,9 @@ const char* name_of(Refusal refusal) {
 
 bool parse_command(const char* payload, size_t size, const char* node_id, Command& out,
                    Refusal& why) {
-  out = Command{};
+  // Not `out = Command{}`: that builds one before it copies it, and one of these is larger
+  // than the stack on the board this runs on.
+  clear(out);
   why = Refusal::kNone;
   Reader reader(payload, size);
   if (!reader.begin_object()) {

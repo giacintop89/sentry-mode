@@ -114,10 +114,10 @@ that should not be in it. Four boards are built by the workflow and were built b
 
 | `PICO_BOARD` | Chip | Radio | UF2 |
 |---|---|---|---|
-| `pico2_w` | RP2350 | yes | 1.24 MB |
-| `pico_w` | RP2040 | yes | 1.30 MB |
-| `pico2` | RP2350 | no | 333 kB |
-| `pico` | RP2040 | no | 354 kB |
+| `pico2_w` | RP2350 | yes | 1.26 MB |
+| `pico_w` | RP2040 | yes | 1.32 MB |
+| `pico2` | RP2350 | no | 356 kB |
+| `pico` | RP2040 | no | 375 kB |
 
 The wired ones are a quarter of the size because they compile a different network module —
 `net_wired.cpp`, which answers "no radio" and nothing else — and with it no lwIP, no
@@ -536,6 +536,63 @@ publishing every fifteen seconds, with nothing in either log to say so. The fix 
 `satellites/service.py` — everything that is not an event is settled as soon as it is
 handled, because nothing about it is written down and nothing would be gained by having it
 sent again — and `test_satellite_service.py` now holds a test that would have caught it.
+
+### The biggest thing on a small stack
+
+Both chips put the stack at the top of memory and the heap under it: `__StackTop` is the
+end of the scratch banks and `__StackLimit` is eight kilobytes below it, and what is below
+*that* is the heap growing the other way. Eight kilobytes is the whole budget for every
+frame this program has at once.
+
+A command did not fit in it. The wire grammar took 32 sources of 8 options because that is
+what the contract lets a hub send *any* node, and the structure that holds one was 56,808
+bytes on the host build. `parse_command` was handed one and cleared it with `out =
+Command{}` — which builds the empty one somewhere before copying it — and three functions
+kept one as a local. Compiled with `-fstack-usage`, which is the only way to see this
+without a board:
+
+```
+parse_command(const char*, size_t, const char*, Command&, Refusal&)   14712 bytes
+clear(Command&)                                                       14576 bytes
+```
+
+and before the grammar was made smaller, four times that. A frame that deep runs off the
+end of the stack and into the top of the heap. The reason nothing ever went wrong is that
+there was no heap up there to hit: an RP2350 with 400 kB free has its allocations far
+below, so the zeros landed on memory nobody was using. On an RP2040 with 99 kB — the
+`pico-w-sensor` profile — that is a different sentence, which is one more reason it is
+**built only**.
+
+Two changes, neither of them clever. The grammar now takes the eight sources this board
+plans rather than the thirty-two the contract allows anyone: a ninth is refused by size,
+which the hub already refuses earlier, and the structure is 14,568 bytes. And the one
+command a node has in hand lives in one place — there is one loop, and nothing parses a
+command while another is being obeyed — so no function holds one at all. `clear()` is a
+`memset` through a `void*` behind two static assertions that say a command is a plain
+structure, because the obvious way to write it is the way that built the temporary.
+
+What is left, measured the same way:
+
+```
+run_the_default_plan()                                                 1920 bytes
+read_provisioning(const char*, size_t, Provisioning&)                   824 bytes
+parse_command(const char*, size_t, const char*, Command&, Refusal&)     696 bytes
+```
+
+On the board, with nine sources pushed down the cable by hand — the hub will not send them,
+so the cable is the only way to ask:
+
+```
+command {"command_id":"eb5ac938-…","action":"configure","node_id":"pico-cablato",…}
+# not a command for this node: too_many
+# plan=3 revision=5      (unchanged: it was refused before anything was touched)
+```
+
+and with eight, which is the other side of the same boundary:
+
+```
+# plan=8 revision=98
+```
 
 ### A rule, fired from a pin here
 
@@ -1350,14 +1407,12 @@ fails here, in a second, rather than at link time on a target with neither.
   part has 270,336 bytes and the second has 532,480. That is 99 kB for the heap, the TLS
   handshake and the stack on one, and 355 kB on the other, which is the measured reason
   `pico-w-sensor` stays **built only** rather than a profile anybody is invited to run.
-- The largest thing this firmware holds at once, which is a command. The wire grammar
-  takes 32 sources with 8 options each because that is what the hub may send any node; this
-  board plans at most 8, and refuses the rest by name. The structure is 56,808 bytes as the
-  host build measures it — smaller on either chip, where its pointers are half as wide —
-  and it is a stack local in the three places that parse one. On an RP2350 with 520 kB that
-  has never come near anything; on an RP2040 with 264 kB it is a quarter of the part, and
-  the `pico-w-sensor` profile has never been run on a board. The manifest records the
-  number rather than leaving it to be found.
+- Where the zeros of the command live. The one command a board holds is 14,568 bytes and
+  it is in the image rather than in the section cleared at boot, because a structure whose
+  every field has a default is initialised as far as the compiler is concerned: fourteen
+  kilobytes of nothing, written into flash and copied out of it at boot. Flash is what this
+  board has most of, and the alternatives are a section attribute the compiler refuses or a
+  union with a constructor that does nothing, so it stays as it is and is written down here.
 - A node approved again while it is already connected. A session begins at a `state`
   message, and the retained one was delivered when the hub subscribed, so a node that was
   revoked and then approved again stays offline in a hub that would now accept it — until

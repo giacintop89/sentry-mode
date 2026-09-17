@@ -155,19 +155,52 @@ TEST(a_command_that_names_no_action_or_no_sender_is_not_a_command) {
   }
 }
 
-TEST(more_sources_than_the_node_can_hold_are_refused_not_truncated) {
+// A configuration of `count` sources, named apart so that nothing is refused for being a
+// repeat of something.
+std::string with_sources(size_t count) {
   std::string document =
       R"({"command_id":"c-1","action":"configure","node_id":"n","hub_epoch":1,)"
       R"("revision":1,"sources":[)";
-  for (int index = 0; index < 33; ++index) {
+  for (size_t index = 0; index < count; ++index) {
     if (index > 0) document += ",";
-    document += R"({"id":"pir-)" + std::to_string(index % 9) + R"(","kind":"gpio"})";
+    document += R"({"id":"pir-)" + std::to_string(index) + R"(","kind":"gpio"})";
   }
-  document += "]}";
+  return document + "]}";
+}
+
+TEST(more_sources_than_the_node_can_hold_are_refused_not_truncated) {
+  // Eight is what this board plans, and the grammar holds exactly that many: a command it
+  // could only refuse is refused by size, before fourteen kilobytes are filled in to find
+  // out. The contract allows a hub 32, which is for a satellite with a Linux under it.
   Command command;
   Refusal why = Refusal::kNone;
-  CHECK(!parse_command(document.data(), document.size(), "n", command, why));
+  const std::string eight = with_sources(sentry::kMaxSources);
+  CHECK(parse_command(eight.data(), eight.size(), "n", command, why));
+  CHECK(command.source_count == sentry::kMaxSources);
+
+  const std::string one_more = with_sources(sentry::kMaxSources + 1);
+  CHECK(!parse_command(one_more.data(), one_more.size(), "n", command, why));
   CHECK(why == Refusal::kTooMany);
+}
+
+TEST(a_command_is_emptied_without_a_copy_of_one_being_made) {
+  // What `clear` is for: the board keeps one command and reads each new one into it, so
+  // nothing of the last one may survive. `parse_command` starts with it, which is why a
+  // refused command leaves nothing of the one before behind either.
+  Command command;
+  const std::string eight = with_sources(sentry::kMaxSources);
+  Refusal why = Refusal::kNone;
+  CHECK(parse_command(eight.data(), eight.size(), "n", command, why));
+  CHECK(command.source_count == sentry::kMaxSources);
+  sentry::clear(command);
+  CHECK(command.source_count == 0);
+  CHECK(command.command_id[0] == '\0');
+  CHECK(command.action == Action::kUnknown);
+  CHECK(command.sources[0].id[0] == '\0');
+
+  const char* nonsense = R"({"command_id":"c-2","action":"configure"})";
+  CHECK(!parse_command(nonsense, std::strlen(nonsense), "n", command, why));
+  CHECK(command.source_count == 0);
 }
 
 TEST(a_stream_command_carries_a_ticket_and_a_stop_does_not) {
