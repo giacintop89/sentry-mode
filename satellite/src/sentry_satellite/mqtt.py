@@ -136,6 +136,7 @@ class MqttTransport:
 
     def connect(self, connection_id: str) -> None:
         self.connection_id = connection_id
+        self.disconnect()  # an attempt that was given up on must not leave its socket open
         self._client = self._build()
         if self._will is not None:
             topic, payload = self._will

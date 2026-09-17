@@ -6,6 +6,7 @@ import tomllib
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Timer
 
 import pytest
 
@@ -137,6 +138,37 @@ def reading(value=True, source_id="pir-1"):
     )
 
 
+class SlowLink(FakeTransport):
+    """A link that comes up on another thread a moment later, as the real one does."""
+
+    def __init__(self, delay: float = 0.2) -> None:
+        super().__init__()
+        self.delay = delay
+        self.connects = 0
+
+    def connect(self, connection_id) -> None:
+        self.connection_id = connection_id
+        self.connects += 1
+        Timer(self.delay, self._come_up).start()
+
+    def _come_up(self) -> None:
+        self._connected = True
+
+
+def test_a_link_that_takes_a_moment_to_come_up_is_waited_for_rather_than_reopened():
+    """Connecting finishes on another thread, so the link is not up when connect() returns.
+
+    Taking that for a failure opens a second socket, and a third, which is a flood at the
+    broker rather than a retry.
+    """
+    transport = SlowLink()
+    agent, _ = build(transport=transport)
+    agent.start()
+    assert until(lambda: transport.on("state"))
+    agent.stop()
+    assert transport.connects == 1
+
+
 def test_a_node_with_nothing_attached_starts_and_stops():
     agent, transport = build()
     agent.start()
@@ -189,6 +221,25 @@ def test_nothing_is_published_before_the_hub_allows_it():
     assert event["source_id"] == "pir-1"
     assert event["value"] is True
     assert transport.on("events")[0]["delivery"]["grant_id"] == "g-1"
+
+
+def test_only_a_reading_that_waited_for_a_link_is_sent_as_history():
+    """`replayed` means the reading waited for a link, not that it went through the spool.
+
+    Every event is spooled on its way out, so timing that hop marks all of them as history
+    and nothing a node reports is ever news the hub may act on.
+    """
+    agent, transport = build()
+    agent._record(reading())  # nothing is connected yet: this one waits
+    agent.start()
+    grant(transport, agent)
+    assert until(lambda: transport.on("events"))
+    agent._record(reading(False))  # the link is up: news
+    assert until(lambda: len(transport.on("events")) == 2)
+    agent.stop()
+    waited, news = (event["delivery"]["replayed"] for event in transport.on("events"))
+    assert waited is True
+    assert news is False
 
 
 def test_a_grant_that_has_run_out_stops_the_flow_without_losing_the_readings():

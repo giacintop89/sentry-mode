@@ -88,6 +88,7 @@ class Agent:
     clock: Callable[[], float] = time.monotonic
     now: Callable[[], datetime] = lambda: datetime.now(UTC)
     reconnect_seconds: float = 2.0
+    link_seconds: float = 10.0
     idle_seconds: float = 0.05
     join_seconds: float = 2.0
     builder: Rebuilder | None = None
@@ -108,6 +109,7 @@ class Agent:
     _driver_threads: dict[int, Thread] = field(default_factory=dict, init=False, repr=False)
     _swap: Lock = field(default_factory=Lock, init=False, repr=False)
     _configuring: Lock = field(default_factory=Lock, init=False, repr=False)
+    _linked_at: float = field(default=0.0, init=False, repr=False)
     _videos: dict[str, Publisher] = field(default_factory=dict, init=False, repr=False)
     """Every stream running, video or sound, by the source it carries."""
     published: int = field(default=0, init=False)
@@ -260,8 +262,25 @@ class Agent:
             log.warning("no link to the hub: %s", error)
             self._stop.wait(self.reconnect_seconds)
             return
+        if not self._linked():
+            # Giving up on this attempt without closing it would leave the socket behind
+            # and open another one immediately, which is a flood, not a retry.
+            log.warning("the hub did not answer the connection in time")
+            self.transport.disconnect()
+            self._stop.wait(self.reconnect_seconds)
+            return
+        self._linked_at = self.clock()
         self._publish_state(online=True)
         self._publish_health()
+
+    def _linked(self) -> bool:
+        """Wait for the link to come up, because connecting finishes on another thread."""
+        deadline = self.clock() + self.link_seconds
+        while not self.transport.connected and not self._stop.is_set():
+            if self.clock() >= deadline:
+                return False
+            self._stop.wait(0.05)
+        return self.transport.connected
 
     def _record(self, reading: Reading) -> None:
         """Turn a reading into an event and put it in the queue. Never blocks on the link."""
@@ -283,7 +302,14 @@ class Agent:
         self.spool.put(self._topic("events"), event, size, initial=reading.initial)
 
     def _send(self, held) -> None:
-        delivery = self._delivery(queued_ms=self.spool.queued_ms(held), initial=held.initial)
+        queued_ms = self.spool.queued_ms(held)
+        delivery = self._delivery(
+            queued_ms=queued_ms,
+            initial=held.initial,
+            # History is what waited for a link, not what took a moment to get through the
+            # spool: an event recorded before this link came up is the former.
+            replayed=self.clock() - queued_ms / 1000 < self._linked_at,
+        )
         if delivery is None:
             self.spool.requeue(held)
             return
@@ -674,7 +700,9 @@ class Agent:
             return False
         return grant.valid(self.clock())
 
-    def _delivery(self, *, queued_ms: int, initial: bool = False) -> protocol.Delivery | None:
+    def _delivery(
+        self, *, queued_ms: int, initial: bool = False, replayed: bool = False
+    ) -> protocol.Delivery | None:
         with self._lock:
             grant = self._grant
         if grant is None or not grant.valid(self.clock()):
@@ -684,7 +712,7 @@ class Agent:
             hub_epoch=grant.hub_epoch,
             grant_id=grant.grant_id,
             queued_ms=queued_ms,
-            replayed=queued_ms > 0,
+            replayed=replayed,
             initial_state=initial,
         )
 
