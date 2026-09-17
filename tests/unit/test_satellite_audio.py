@@ -231,6 +231,24 @@ def test_listening_asks_for_sound_and_hears_it(microphone):
     assert status["blocks"]["blocks"] == 2  # kept from the connection that ended
 
 
+def test_a_connection_is_counted_once_however_many_times_it_is_closed(microphone):
+    link = microphone.link_for_test
+    with microphone.listen() as heard:
+        assert until(lambda: link.started)
+        _, connect, _ = link.started[0]
+        sink = connect()
+        sink.feed(block(0) + block(1))
+        assert next(heard) == b"\x01\x00" * (2 * BLOCK_SAMPLES)
+        # The gateway closes the sink of a connection that has ended, and so does the
+        # stream that asked for that connection. In between, the stream is still holding
+        # it and somebody can ask for the status.
+        sink.close()
+        assert microphone.status()["blocks"]["blocks"] == 2
+        sink.close()
+        assert microphone.status()["blocks"]["blocks"] == 2
+    assert microphone.status()["blocks"]["blocks"] == 2
+
+
 def test_only_so_many_browsers_listen_at_once(microphone):
     held = [microphone.subscribe("listening", f"b{n}") for n in range(MAX_LISTENERS)]
     with pytest.raises(BlockingIOError, match="listeners"):

@@ -118,7 +118,12 @@ class _Sink:
             self.microphone._pcm(chunks)
 
     def close(self) -> None:
-        self.microphone._retire(self.reassembler)
+        # Once, whoever closes it. Both the gateway and the stream that asked for it close
+        # a connection's sink when it ends, and the stream can still be holding this one
+        # when somebody asks for the status — so what was counted is handed over and an
+        # empty count left in its place, and nothing is added to the totals twice.
+        counted, self.reassembler = self.reassembler, Reassembler()
+        self.microphone._retire(counted)
 
 
 class RemoteMicrophone(LeasedStream):

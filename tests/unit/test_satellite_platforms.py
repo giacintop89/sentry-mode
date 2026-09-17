@@ -95,12 +95,12 @@ def test_a_node_registered_before_any_of_this_is_what_it_has_always_been():
 
 
 def test_a_microcontroller_has_no_camera_and_nothing_to_test_by_hand():
-    assert PICO.streams == ()
     assert PICO.manual_tests is False
     assert PICO.experimental is True
     assert "csi" not in PICO.drivers
-    # A microphone it does drive, and still offers no stream: the board says that
-    # something was loud and has nowhere to put the sound it heard it in.
+    # Sound is the one thing it has to send, so it is the one stream it offers: no camera
+    # means no video, whatever anybody configures.
+    assert PICO.streams == ("audio",)
     assert "microphone" in PICO.drivers
 
 
@@ -274,8 +274,8 @@ def test_a_microphone_on_a_board_is_pins_and_never_a_sound_card():
         "hall: a microphone source needs pin, and this one names none",
         "hall: a microphone source needs clock_pin, and this one names none",
     ]
-    # No sound leaves the board, so no stream is offered for one.
-    assert PICO.streams == ()
+    # A microphone that is configured properly is one the hub can be asked to hear.
+    assert PICO.streams == ("audio",)
 
 
 def test_an_option_the_firmware_has_no_place_for_is_refused_by_the_driver_that_has_none():
@@ -365,7 +365,7 @@ def test_the_page_is_told_what_kinds_of_satellite_exist():
     catalogue = {one["name"]: one for one in overview({"enabled": True, "nodes": []})["platforms"]}
     assert set(catalogue) == set(platforms.CATALOGUE)
     assert catalogue["pico-w-sensor"]["experimental"] is True
-    assert catalogue["pico-w-sensor"]["streams"] == []
+    assert catalogue["pico-w-sensor"]["streams"] == ["audio"]
     assert catalogue["linux-agent"]["drivers"] == list(platforms.LINUX.drivers)
 
 

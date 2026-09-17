@@ -80,12 +80,16 @@ PICO_W = Platform(
     architecture="rp2040",
     summary=(
         "A Pico W running the Sentry firmware: sensors only, no camera. A microphone on "
-        "it reports that something was loud and never sends any sound."
+        "it says something was loud, and the hub can listen to it while it is happening."
     ),
     drivers=("gpio", "onewire", "adc", "ble", "microphone", "board"),
     max_sources=8,
     max_config_bytes=2048,
-    streams=(),
+    # Sound, and only sound: a board with no camera on it has no video to offer, and a
+    # microphone on one is a microphone the hub can ask to hear. It is a second TLS
+    # connection made when somebody is listening and dropped when nobody is, which is why
+    # it is a stream the board offers rather than one it keeps open.
+    streams=("audio",),
     manual_tests=False,
     experimental=True,
     board_fields=("uptime_seconds", "temperature_c", "memory_available_kb", "reset"),
@@ -97,7 +101,7 @@ PICO_2W = PICO_W.model_copy(
         "architecture": "rp2350",
         "summary": (
             "A Pico 2 W running the Sentry firmware: sensors only, with more room. A "
-            "microphone on it reports that something was loud and never sends any sound."
+            "microphone on it says something was loud, and the hub can listen to it live."
         ),
         # More room in memory and in flash, and the same firmware: the limits on what it
         # may be configured with come from the firmware, so they are the same as well.
