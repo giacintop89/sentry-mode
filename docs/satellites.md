@@ -102,10 +102,16 @@ own word — there is no field on the wire in which a node declares what it supp
 
 A configuration is checked against the node's platform before it is sent, and refused with
 a reason: a driver the firmware does not have, more sources than the board takes, an option
-naming a file or an ALSA device on a board that has neither, or a list too large to hold.
-The node checks all of it again and has the last word; this is here so that a mistake the
-hub can see is an error on the page rather than a round trip that can only come back
-`failed`. For the same reason, the card for a microcontroller shows only the board numbers
+naming a file or an ALSA device on a board that has neither, a list too large to hold, a
+source that names no pin when its driver is a pin, or an option the driver has no place for
+— `interval_seconds` on a wire that only speaks when it changes. The same word can belong
+to one driver and not another, and is judged per driver: `device` on a 1-Wire source is a
+probe on a bus rather than a sound card. The node checks all of it again and has the last
+word; this is here so that a mistake the hub can see is an error on the page rather than a
+round trip that can only come back `failed`.
+
+`"enabled": false` keeps a source in the list without reading it, on a microcontroller as
+on the agent: it is written down and reported, and it takes no pin and starts no driver. For the same reason, the card for a microcontroller shows only the board numbers
 such a board can actually take — uptime, chip temperature, free memory — and no load
 average, because a zero there would be a number nobody measured.
 

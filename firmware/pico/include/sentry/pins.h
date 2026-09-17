@@ -36,6 +36,12 @@ class PinMap {
   // Take one pin for one source. False leaves the map as it was.
   bool claim(int gpio, const char* source_id, PinRefusal& why);
 
+  // Whether the board would allow this pin at all, without taking it. A source that is in
+  // the configuration but is not being read holds nothing, and so cannot be in anybody's
+  // way — but the number it names still has to be a pin, so that switching it back on is
+  // not the first time anyone finds out it is not.
+  bool allows(int gpio, PinRefusal& why) const;
+
   // Who has it, or null.
   const char* holder(int gpio) const;
 

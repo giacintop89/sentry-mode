@@ -120,6 +120,24 @@ def known(name: str) -> bool:
     return name in CATALOGUE
 
 
+# What each driver on a microcontroller takes: the options it has a place for, and the
+# ones it cannot start without. The firmware is the authority — this is `kBoardOptions` and
+# its neighbours in `firmware/pico/src/core/plan.cpp` — and it is written down again here
+# for the same reason the rest of this file is: so that a mistake the hub can see is an
+# error on the page rather than a round trip that can only come back `failed`.
+#
+# `enabled` is left out on purpose. It is a field of every source rather than an option of
+# any driver, and both sides treat it that way.
+FIRMWARE_OPTIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "board": ((), ("measure", "interval_seconds")),
+    "gpio": (
+        ("pin",),
+        ("pin", "active_high", "bias", "debounce_ms", "settle_seconds", "event_kind"),
+    ),
+    "adc": (("pin",), ("pin", "output", "event_kind", "interval_seconds")),
+    "onewire": (("pin",), ("pin", "device", "event_kind", "interval_seconds")),
+}
+
 # An option that names something only a Linux machine has. Sending one to a microcontroller
 # is not a small mistake: `/dev/video0` on a board with no filesystem is a string that can
 # only be stored, never acted on, and the node would have to answer `failed` for it.
@@ -148,14 +166,27 @@ def check_configuration(chosen: Platform, entries: list[dict]) -> list[str]:
         kind = entry.get("kind")
         if kind not in chosen.drivers:
             reasons.append(f"{name}: a {chosen.name} has no {kind} driver")
+        if chosen.architecture == "linux":
+            continue
+        # What this driver has a place for. A kind the firmware does not have at all has
+        # been refused by name already, and nothing more can be said about its options.
+        needed, known = FIRMWARE_OPTIONS.get(kind, ((), ()))
+        for option in needed:
+            if entry.get(option) is None:
+                reasons.append(f"{name}: a {kind} source needs {option}, and this one names none")
         for option, value in entry.items():
-            if option in ("id", "kind"):
+            if option in ("id", "kind", "enabled") or option in known:
                 continue
-            if chosen.architecture == "linux":
-                continue
+            # An option this driver knows is this driver's business even when the agent
+            # uses the same word for something else: `device` on a 1-Wire source is a probe
+            # on a bus, not a sound card.
             if option in LINUX_ONLY_OPTIONS or _looks_like_a_linux_thing(value):
                 reasons.append(
                     f"{name}.{option}: a {chosen.name} has no filesystem and no audio stack"
+                )
+            elif kind in FIRMWARE_OPTIONS:
+                reasons.append(
+                    f"{name}.{option}: a {kind} source on a {chosen.name} has no {option}"
                 )
     size = _size_of(entries)
     if size > chosen.max_config_bytes:
@@ -200,6 +231,7 @@ def as_document(chosen: Platform) -> dict:
 
 __all__ = [
     "CATALOGUE",
+    "FIRMWARE_OPTIONS",
     "DEFAULT",
     "Platform",
     "as_document",

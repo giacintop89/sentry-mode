@@ -683,6 +683,48 @@ turn, so a `gpio` source answers from the debounced input: the same value if not
 moved, an age of zero because it was just read, and a quality that stops saying `unknown`
 once the sensor has had its settling time.
 
+### A source kept without being read
+
+The hub's page says, under the editor: *Set `"enabled": false` to keep a source in the
+list without reading it.* Sending that to this board used to come back as
+`failed: a gpio source has no enabled` — the word is a field of every source rather than an
+option of any driver, and this firmware had only ever seen it as an option it did not know.
+
+It is now what it says it is. A source that is switched off is planned, validated and
+reported, and nothing else: it takes no pin, starts no driver, is never sampled, and stands
+in nobody's way.
+
+```
+#   board-temperature board measure=temperature every=30s readings=1
+#   pir-1 gpio disabled
+#   light-1 adc pin=26 output=ratio every=20s readings=1
+```
+
+```
+$ drive 15 1
+# nothing in the plan is on pin 15
+```
+
+Its pin is still judged — a switched-off source on GPIO 25 is refused for naming the LED,
+not accepted and then refused the day somebody switches it on — but it is not claimed, so
+two sources may name one pin as long as only one of them is being read.
+
+Switching one back on found a real fault, on the board and not in a test. A pad that has
+been left with no function and no pull on it floats, and on an RP2350 it can float up and
+stay up: `pir-1` came back with its pull-down enabled and read **high**, and stayed high
+for as long as it was watched, while the same pin read low on a fresh boot and across a
+configuration that never let go of it. A page would have shown motion at a sensor that is
+not there. So a gpio source now drives the level its own configuration calls idle onto the
+pad for ten microseconds before handing it to the input — `pull_down` is already a claim
+that the wire idles low, and this asserts what was claimed rather than guessing at the
+wiring. Measured, on the board, before and after:
+
+```
+--- off, then on, with the pad floating in between
+#   pir-1 gpio pin=15 level=high state=on readings=1     (before)
+#   pir-1 gpio pin=15 level=low state=off readings=1     (after)
+```
+
 ### Why it came back
 
 A restart is evidence. A board that comes back because somebody unplugged it and a board

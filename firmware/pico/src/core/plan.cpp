@@ -136,6 +136,10 @@ bool event_kind_of(const Source& source, const char* id, char* out, size_t capac
 // The one pin a source is on, or none. Two drivers here take a pin and the map does not
 // care which: what it is protecting is the wire.
 int pin_of(const Planned& planned) {
+  // A source that is in the list without being read holds no wire. That is what makes
+  // `"enabled": false` a way to keep a source written down rather than a way to reserve a
+  // pin nobody is using.
+  if (!planned.enabled) return -1;
   if (planned.driver == Driver::kGpio) return planned.gpio.pin;
   if (planned.driver == Driver::kAdc) return planned.adc.pin;
   if (planned.driver == Driver::kOneWire) return planned.onewire.pin;
@@ -297,6 +301,20 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
       return false;
     }
 
+    // `enabled` is a field of every source rather than an option of any driver: the hub's
+    // own file spells it beside the driver's options, and a node that refused it would be
+    // refusing the one way a configuration has of keeping a source without reading it.
+    const Option* switched = option_named(source, "enabled");
+    if (switched != nullptr) {
+      if (switched->type != Option::Type::kBoolean) {
+        why = Unplanned::kWrongType;
+        say(detail, capacity, "%s: enabled is true or false", source.id);
+        clear();
+        return false;
+      }
+      planned.enabled = switched->boolean;
+    }
+
     const char* const* known = kGpioOptions;
     size_t how_many = sizeof(kGpioOptions) / sizeof(kGpioOptions[0]);
     if (planned.driver == Driver::kBoard) {
@@ -310,6 +328,7 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
       how_many = sizeof(kOneWireOptions) / sizeof(kOneWireOptions[0]);
     }
     for (size_t at = 0; at < source.option_count; ++at) {
+      if (std::strcmp(source.options[at].name, "enabled") == 0) continue;
       if (!known_option(source.options[at].name, known, how_many)) {
         why = Unplanned::kNoSuchOption;
         say(detail, capacity, "%s: a %s source has no %s", source.id, source.kind,
@@ -401,7 +420,8 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
       }
 
       PinRefusal refusal = PinRefusal::kNone;
-      if (!pins_.claim(planned.adc.pin, planned.source_id, refusal)) {
+      if (!(planned.enabled ? pins_.claim(planned.adc.pin, planned.source_id, refusal)
+                            : pins_.allows(planned.adc.pin, refusal))) {
         why = Unplanned::kPinRefused;
         if (refusal == PinRefusal::kTaken) {
           say(detail, capacity, "%s and %s both use GPIO %d", source.id,
@@ -465,7 +485,8 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
       }
 
       PinRefusal refusal = PinRefusal::kNone;
-      if (!pins_.claim(planned.onewire.pin, planned.source_id, refusal)) {
+      if (!(planned.enabled ? pins_.claim(planned.onewire.pin, planned.source_id, refusal)
+                            : pins_.allows(planned.onewire.pin, refusal))) {
         why = Unplanned::kPinRefused;
         switch (refusal) {
           case PinRefusal::kOutOfRange:
@@ -590,7 +611,8 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
     planned.gpio.input = input;
 
     PinRefusal refusal = PinRefusal::kNone;
-    if (!pins_.claim(planned.gpio.pin, planned.source_id, refusal)) {
+    if (!(planned.enabled ? pins_.claim(planned.gpio.pin, planned.source_id, refusal)
+                          : pins_.allows(planned.gpio.pin, refusal))) {
       why = Unplanned::kPinRefused;
       switch (refusal) {
         case PinRefusal::kOutOfRange:

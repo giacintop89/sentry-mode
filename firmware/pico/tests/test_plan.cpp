@@ -421,4 +421,69 @@ TEST(a_plan_that_is_adopted_owns_its_own_pins) {
   CHECK(std::strcmp(running.at(0).source_id, "pir-1") == 0);
 }
 
+TEST(a_source_can_be_kept_in_the_configuration_without_being_read) {
+  // The hub's page offers this, in those words. A node that refused it would be refusing
+  // the only way a configuration has of keeping a source written down while it is unwired.
+  Source sources[2];
+  sources[0] = a_source("pir-1", "gpio");
+  with_integer(sources[0], "pin", 15);
+  with_boolean(sources[0], "enabled", false);
+  sources[1] = a_source("board-temperature", "board");
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(plan, sources, 2));
+  CHECK(plan.size() == 2);
+  CHECK(!plan.at(0).enabled);
+  CHECK(plan.at(0).gpio.pin == 15);  // still judged, so that switching it on cannot fail
+  CHECK(plan.at(1).enabled);
+}
+
+TEST(a_source_nobody_reads_is_not_in_the_way_of_one_somebody_does) {
+  Source sources[2];
+  sources[0] = a_source("pir-1", "gpio");
+  with_integer(sources[0], "pin", 15);
+  with_boolean(sources[0], "enabled", false);
+  sources[1] = a_source("door-1", "gpio");
+  with_integer(sources[1], "pin", 15);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(plan, sources, 2));
+  CHECK(std::strcmp(plan.holder(15), "door-1") == 0);
+
+  // Both switched on, and it is the conflict it always was.
+  Source both[2];
+  both[0] = a_source("pir-1", "gpio");
+  with_integer(both[0], "pin", 15);
+  both[1] = a_source("door-1", "gpio");
+  with_integer(both[1], "pin", 15);
+  CHECK(!attempt.of(plan, both, 2));
+  CHECK(attempt.why == Unplanned::kPinRefused);
+  CHECK(attempt.said("both use GPIO 15"));
+}
+
+TEST(a_pin_that_is_not_a_pin_is_refused_even_for_a_source_nobody_reads) {
+  Source off = a_source("pir-1", "gpio");
+  with_integer(off, "pin", 25);  // the LED, on every one of these boards
+  with_boolean(off, "enabled", false);
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &off, 1));
+  CHECK(attempt.why == Unplanned::kPinRefused);
+  CHECK(attempt.said("belongs to the board itself"));
+}
+
+TEST(enabled_is_true_or_false_and_not_the_word) {
+  Source sources[1];
+  sources[0] = a_source("pir-1", "gpio");
+  with_integer(sources[0], "pin", 15);
+  with_text(sources[0], "enabled", "no");
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, sources, 1));
+  CHECK(attempt.why == Unplanned::kWrongType);
+  CHECK(attempt.said("enabled is true or false"));
+}
+
 int main() { return harness::run_all("plan"); }

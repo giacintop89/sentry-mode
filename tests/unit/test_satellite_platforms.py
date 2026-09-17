@@ -137,10 +137,12 @@ def test_a_driver_that_was_never_compiled_in_is_refused_by_name():
 
 
 def test_an_option_naming_a_file_is_refused_because_there_is_no_filesystem():
-    wrong = platforms.check_configuration(PICO, [{"id": "mic", "kind": "adc", "device": "hw:1,0"}])
+    entry = {"id": "mic", "kind": "adc", "pin": 26, "device": "hw:1,0"}
+    wrong = platforms.check_configuration(PICO, [entry])
     assert len(wrong) == 1 and "no filesystem" in wrong[0]
     # Not the name of the option but what it holds: a path is a path whatever it is called.
-    wrong = platforms.check_configuration(PICO, [{"id": "led", "kind": "gpio", "at": "/dev/gpio0"}])
+    entry = {"id": "led", "kind": "gpio", "pin": 17, "at": "/dev/gpio0"}
+    wrong = platforms.check_configuration(PICO, [entry])
     assert len(wrong) == 1 and "led.at" in wrong[0]
     # The same options on a machine that has a filesystem are nobody's business here.
     assert (
@@ -151,8 +153,44 @@ def test_an_option_naming_a_file_is_refused_because_there_is_no_filesystem():
     )
 
 
+def test_a_source_that_names_no_pin_is_refused_before_it_is_sent():
+    # The firmware refuses it too, and says the same thing. The round trip is what this
+    # saves: a configuration that can only come back `failed` never leaves the hub.
+    wrong = platforms.check_configuration(PICO, [{"id": "pir-1", "kind": "gpio"}])
+    assert wrong == ["pir-1: a gpio source needs pin, and this one names none"]
+    # A board source measures the die it is on and needs nothing named.
+    assert platforms.check_configuration(PICO, [{"id": "die", "kind": "board"}]) == []
+
+
+def test_an_option_the_firmware_has_no_place_for_is_refused_by_the_driver_that_has_none():
+    wrong = platforms.check_configuration(
+        PICO, [{"id": "pir-1", "kind": "gpio", "pin": 17, "interval_seconds": 30}]
+    )
+    assert wrong == [
+        "pir-1.interval_seconds: a gpio source on a pico-w-sensor has no interval_seconds"
+    ]
+    # The same word means different things to different drivers, and `device` on a 1-Wire
+    # source is a probe on a bus rather than a sound card on a machine that has neither.
+    assert (
+        platforms.check_configuration(
+            PICO, [{"id": "probe-1", "kind": "onewire", "pin": 22, "device": "28-0000071cbc42"}]
+        )
+        == []
+    )
+    # `enabled` is a field of every source rather than an option of any driver.
+    assert (
+        platforms.check_configuration(
+            PICO, [{"id": "pir-1", "kind": "gpio", "pin": 17, "enabled": False}]
+        )
+        == []
+    )
+
+
 def test_more_sources_than_the_board_has_room_for_are_refused_before_anything_is_sent():
-    entries = [{"id": f"pin-{index}", "kind": "gpio"} for index in range(PICO.max_sources + 1)]
+    entries = [
+        {"id": f"pin-{index}", "kind": "gpio", "pin": index}
+        for index in range(PICO.max_sources + 1)
+    ]
     wrong = platforms.check_configuration(PICO, entries)
     assert wrong == [f"{len(entries)} sources: a pico-w-sensor takes at most {PICO.max_sources}"]
 
@@ -160,7 +198,13 @@ def test_more_sources_than_the_board_has_room_for_are_refused_before_anything_is
 def test_a_configuration_too_large_to_hold_is_refused_by_its_size_on_the_wire():
     # As many sources as the board takes, each with options as long as a request allows.
     entries = [
-        {"id": f"pin-{index}", "kind": "gpio", "note": "x" * 128, "label": "y" * 128}
+        {
+            "id": f"probe-{index}",
+            "kind": "onewire",
+            "pin": index,
+            "device": "28-" + "0" * 125,
+            "event_kind": "climate." + "x" * 120,
+        }
         for index in range(PICO.max_sources)
     ]
     wrong = platforms.check_configuration(PICO, entries)

@@ -54,4 +54,23 @@ TEST(a_refused_configuration_leaves_the_map_as_it_was) {
   CHECK(pins.holder(16) == nullptr);
 }
 
+TEST(a_pin_can_be_asked_about_without_being_taken) {
+  // A source that is in the configuration without being read holds nothing, and so cannot
+  // be in anybody's way. The number it names still has to be a pin on this board.
+  PinMap map(Board::kPico2W);
+  PinRefusal why = PinRefusal::kNone;
+  CHECK(map.allows(15, why));
+  CHECK(map.size() == 0);
+  CHECK(map.holder(15) == nullptr);
+
+  CHECK(!map.allows(25, why));
+  CHECK(why == PinRefusal::kReserved);
+  CHECK(!map.allows(30, why));
+  CHECK(why == PinRefusal::kOutOfRange);
+
+  // Asking never takes, so somebody else can still have it.
+  CHECK(map.claim(15, "pir-1", why));
+  CHECK(map.allows(15, why));  // and asking again says nothing about who has it
+}
+
 int main() { return harness::run_all("pins"); }

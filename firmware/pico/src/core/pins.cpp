@@ -59,6 +59,19 @@ bool PinMap::claim(int gpio, const char* source_id, PinRefusal& why) {
   return true;
 }
 
+bool PinMap::allows(int gpio, PinRefusal& why) const {
+  why = PinRefusal::kNone;
+  if (gpio < 0 || gpio > kMaxGpio) {
+    why = PinRefusal::kOutOfRange;
+    return false;
+  }
+  if (is_reserved(board_, gpio)) {
+    why = PinRefusal::kReserved;
+    return false;
+  }
+  return true;
+}
+
 const char* PinMap::holder(int gpio) const {
   for (size_t index = 0; index < count_; ++index) {
     if (claims_[index].gpio == gpio) return claims_[index].source_id;

@@ -523,6 +523,7 @@ void read_the_sources() {
   const uint64_t now_ms = now_us() / 1000;
   for (size_t index = 0; index < running.size(); ++index) {
     const sentry::Planned& source = running.at(index);
+    if (!source.enabled) continue;
     Live& state = live[index];
     if (source.driver == sentry::Driver::kGpio) {
       state.level = gpio_get(static_cast<uint>(source.gpio.pin));
@@ -556,6 +557,7 @@ void take_every_baseline() {
   const uint64_t now_ms = now_us() / 1000;
   for (size_t index = 0; index < running.size(); ++index) {
     const sentry::Planned& source = running.at(index);
+    if (!source.enabled) continue;
     Live& state = live[index];
     if (source.driver == sentry::Driver::kBoard) {
       take_a_board_reading(source, state, true);
@@ -585,9 +587,25 @@ void start_the_plan() {
     const sentry::Planned& source = running.at(index);
     Live& state = live[index];
     state = Live{};
+    // A source that is in the configuration without being read takes no pin and starts no
+    // driver. It is still reported, as itself and as disabled: a list the hub can see is
+    // the point of writing it down at all.
+    if (!source.enabled) continue;
     if (source.driver == sentry::Driver::kGpio) {
       const uint pin = static_cast<uint>(source.gpio.pin);
       gpio_init(pin);
+      // A pad that has been left with no function and no pull on it floats, and on this
+      // chip it can float up and stay up: a pin switched off and back on read high with
+      // its pull-down enabled, for as long as it was watched, while the same pin read low
+      // on a fresh boot and across a configuration that never let go of it. So the level
+      // the configuration calls idle is driven onto the pad for a moment first. That is
+      // not a guess about the wiring: `pull_down` is a claim that the wire idles low, and
+      // this asserts what was already claimed for ten microseconds before letting go.
+      if (source.gpio.bias != sentry::Bias::kNone) {
+        gpio_put(pin, source.gpio.bias == sentry::Bias::kPullUp);
+        gpio_set_dir(pin, GPIO_OUT);
+        sleep_us(10);
+      }
       gpio_set_dir(pin, GPIO_IN);
       gpio_set_pulls(pin, source.gpio.bias == sentry::Bias::kPullUp,
                      source.gpio.bias == sentry::Bias::kPullDown);
@@ -609,6 +627,7 @@ void start_the_plan() {
 void stop_the_plan() {
   for (size_t index = 0; index < running.size(); ++index) {
     const sentry::Planned& source = running.at(index);
+    if (!source.enabled) continue;
     if (source.driver == sentry::Driver::kGpio) {
       const uint pin = static_cast<uint>(source.gpio.pin);
       gpio_set_pulls(pin, false, false);
@@ -1284,6 +1303,10 @@ void say_the_plan() {
               static_cast<long long>(config_revision));
   for (size_t index = 0; index < running.size(); ++index) {
     const sentry::Planned& source = running.at(index);
+    if (!source.enabled) {
+      std::printf("#   %s %s disabled\n", source.source_id, sentry::name_of(source.driver));
+      continue;
+    }
     if (source.driver == sentry::Driver::kGpio) {
       std::printf("#   %s gpio pin=%d level=%s state=%s readings=%lld\n", source.source_id,
                   source.gpio.pin, live[index].level ? "high" : "low",
