@@ -56,11 +56,40 @@
 #define MBEDTLS_SSL_SERVER_NAME_INDICATION
 #define MBEDTLS_SSL_KEEP_PEER_CERTIFICATE
 
-/* The records this node exchanges are a handshake and then MQTT packets of at most a few
- * hundred bytes. Sixteen kilobytes each way is what the standard allows and not what this
- * conversation needs, and on a board it is memory that could have been a queue. */
+/* And 1.3, because the hub's media gateway will not speak anything older. The broker will
+ * take either and ends up on 1.3 as well, which is the right way round: the node offers
+ * the best it has and the other end chooses, rather than the hub being asked to come down
+ * to what a microcontroller found easy.
+ *
+ * In mbedTLS 3.6 the 1.3 code goes through PSA for its own key schedule, so PSA comes with
+ * it, and `psa_crypto_init` is called once before any connection is made. Only ephemeral
+ * key exchange is compiled in: this node has no pre-shared keys and no session tickets, so
+ * every handshake is a fresh one with forward secrecy and there is no resumption path to
+ * get wrong. */
+#define MBEDTLS_SSL_PROTO_TLS1_3
+#define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
+#define MBEDTLS_PSA_CRYPTO_C
+#define MBEDTLS_HKDF_C
+
+/* And the empty change-cipher-spec record 1.3 kept so that middleboxes written for 1.2
+ * would let the connection past. OpenSSL sends one, so a client that treats it as a bad
+ * record is a client that cannot talk to the hub or the broker: without this the handshake
+ * ends at the encrypted extensions with an invalid record. It carries nothing and is
+ * ignored; the one place it matters is that it is allowed to arrive. */
+#define MBEDTLS_SSL_TLS1_3_COMPATIBILITY_MODE
+
+/* The records this node exchanges are a handshake, MQTT packets, and blocks of sound.
+ * Sixteen kilobytes each way is what the standard allows and not what this conversation
+ * needs, and on a board it is memory that could have been a queue.
+ *
+ * Outgoing has to hold the largest single thing this node writes, because an MQTT packet
+ * goes whole or not at all and one record is the only place it can go whole. That is
+ * `sentry::mqtt::kMaxPacketBytes`, plus the byte a 1.3 record spends saying what it really
+ * carries and the padding that hides it — `net.cpp` works out what is left and has the
+ * assertion that keeps the two numbers honest. Sound is not held to that: it is a stream,
+ * and it goes a record at a time. */
 #define MBEDTLS_SSL_IN_CONTENT_LEN 4096
-#define MBEDTLS_SSL_OUT_CONTENT_LEN 2048
+#define MBEDTLS_SSL_OUT_CONTENT_LEN 2576
 
 /* Error strings, because a handshake that failed with a number nobody can look up is a
  * night spent guessing. */

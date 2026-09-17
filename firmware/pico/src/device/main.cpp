@@ -49,6 +49,7 @@
 
 #include "ble.h"
 #include "i2s.h"
+#include "media.h"
 #include "flash_vault.h"
 #include "hardware/adc.h"
 #include "hardware/watchdog.h"
@@ -584,8 +585,9 @@ void serve_the_radio(uint64_t now_ms) {
   }
 }
 
-// That something was loud. It is the whole of what a microphone produces on this board:
-// no sound leaves it, nothing is recorded, and there is no way to ask for either.
+// That something was loud. It is what a microphone produces here whether or not anybody is
+// listening, and it is decided on the board: the sound itself goes out only while the hub
+// has asked for it, and nothing is ever recorded here to ask for afterwards.
 void take_an_acoustic_reading(const sentry::Planned& source, Live& state, bool active,
                               bool baseline) {
   uint64_t moment = 0;
@@ -627,6 +629,10 @@ void serve_the_microphone(const sentry::Planned& source, Live& state) {
   size_t count = 0;
   for (size_t taken = 0; taken < kMostPerTurn && i2s::next(samples, count); ++taken) {
     ++state.blocks;
+    // The same samples, offered to the stream if the hub is asking for one. It copies what
+    // it needs and keeps nothing else: this is the only place sound goes anywhere but into
+    // a number, and it happens only while a granted stream is open.
+    if (media::wants(source.source_id)) media::offer(samples, count);
     const sentry::Activity::Change change =
         state.activity.step(sentry::dbfs(samples, count), kBlockSeconds);
     if (change != sentry::Activity::Change::kNothing) {
@@ -833,7 +839,10 @@ void stop_the_plan() {
       onewire::give_back(static_cast<uint>(source.onewire.pin));
     } else if (source.driver == sentry::Driver::kMicrophone) {
       // This one is given back, unlike the radio: it holds three pins and keeps a clock
-      // running on one of them, and the next plan may want them for something else.
+      // running on one of them, and the next plan may want them for something else. A
+      // stream from it ends here too — the hub asked for sound from a source that is
+      // about to stop existing.
+      media::stop(nullptr, "the source it was streaming from is no longer configured");
       i2s::stop();
     }
   }
@@ -1269,6 +1278,10 @@ void end_the_connection(const char* why) {
       std::printf("# %s\n", why);
     }
   }
+  // The sound goes with it. A stream is permission the hub gave over this connection, and
+  // a node that kept sending on the other one while the hub could not reach it would be
+  // exactly the node nobody can switch off.
+  media::stop(nullptr, "the connection this node was granted on is gone");
   net::hang_up();
   broker.closed();
   incoming_size = 0;
@@ -1318,16 +1331,53 @@ const char* beyond_this_firmware(sentry::Action action) {
     case sentry::Action::kVideoRenew:
     case sentry::Action::kVideoStop:
       return "this node has no camera";
-    case sentry::Action::kAudioStart:
-    case sentry::Action::kAudioRenew:
-    case sentry::Action::kAudioStop:
-      // A microphone it may well have. What it has no way to do is send what the
-      // microphone heard: there is no encoder here, no room to hold a second of sound and
-      // no stream for it to go out on. `audio.activity` is the whole of what it says.
-      return "this node sends no sound";
     default:
       return nullptr;
   }
+}
+
+// Which source in the running plan is a microphone that is actually listening, or none.
+// A stream is asked for by source, and a source that is in the configuration but switched
+// off, or that is a pin rather than a microphone, is not one this node can send.
+const sentry::Planned* a_microphone_called(const char* source_id) {
+  for (size_t index = 0; index < running.size(); ++index) {
+    const sentry::Planned& source = running.at(index);
+    if (source.driver != sentry::Driver::kMicrophone || !source.enabled) continue;
+    if (std::strcmp(source.source_id, source_id) == 0) return &source;
+  }
+  return nullptr;
+}
+
+// A stream the hub has asked for. Everything here is a refusal except the last line: a
+// node that started streaming on a command it had not checked would be a node whose
+// microphone is switched on by whoever can reach the broker.
+const char* answer_about_sound(const sentry::Command& command, uint64_t now_ms) {
+  if (command.action == sentry::Action::kAudioStop) {
+    media::stop(command.stream_id, "the hub asked it to stop");
+    return nullptr;
+  }
+  // A stream rides on the events grant and never replaces it. A node whose permission has
+  // run out does not start sending sound because a separate message said so.
+  if (!lease.live(now_ms)) return "there is no live grant to stream under";
+  const uint64_t until = now_ms + static_cast<uint64_t>(command.duration_seconds * 1000.0);
+  if (command.action == sentry::Action::kAudioRenew) {
+    const char* why_not = nullptr;
+    return media::renew(command.stream_id, until, why_not) ? nullptr : why_not;
+  }
+
+  const sentry::Planned* source = a_microphone_called(command.source_id);
+  if (source == nullptr) return "no microphone of that name is listening on this node";
+  if (!i2s::running()) return i2s::trouble();
+  const char* why_not = nullptr;
+  // The host is this node's own, from the record it was provisioned with. The command
+  // chose a port, which the parser has already held to the range a hub may name; it does
+  // not get to choose the machine.
+  if (!media::start(provisioning.mqtt_host, static_cast<uint16_t>(command.port),
+                    command.stream_id, command.source_id, command.token, until, credentials,
+                    why_not)) {
+    return why_not;
+  }
+  return nullptr;
 }
 
 // A configuration, judged whole on a copy and then adopted whole. Nothing is touched until
@@ -1381,6 +1431,16 @@ void obey_a_command(const sentry::Command& command, const char* as_it_arrived,
     queue_an_ack(command, sentry::Answer::kFailed, missing);
     return;
   }
+  if (command.action == sentry::Action::kAudioStart ||
+      command.action == sentry::Action::kAudioRenew ||
+      command.action == sentry::Action::kAudioStop) {
+    const char* why_not = answer_about_sound(command, now_us() / 1000);
+    const sentry::Answer answer =
+        why_not == nullptr ? sentry::Answer::kApplied : sentry::Answer::kFailed;
+    answered.remember(command.command_id, answer);
+    queue_an_ack(command, answer, why_not);
+    return;
+  }
   if (command.action == sentry::Action::kConfigure) {
     const char* detail = nullptr;
     const bool taken = take_a_configuration(command, detail, as_it_arrived, arrived_size);
@@ -1392,6 +1452,12 @@ void obey_a_command(const sentry::Command& command, const char* as_it_arrived,
   const sentry::Decision decision = lease.apply(command, now_us() / 1000);
   answered.remember(command.command_id, decision.answer);
   queue_an_ack(command, decision.answer, decision.detail);
+  if (command.action == sentry::Action::kRevoke || decision.stop_requested) {
+    // Whatever the sound was for, the permission behind it is gone. It stops here rather
+    // than when the stream's own clock runs out: a revoked node that kept sending for
+    // another two minutes would be a node the hub cannot switch off.
+    media::stop(nullptr, "the grant it was streaming under is gone");
+  }
   if (decision.stop_requested) {
     // Said, then gone: the answer and the retained state go out on this connection, and
     // nothing asks for another one until somebody at the cable does.
@@ -1704,6 +1770,17 @@ void say_status() {
               static_cast<unsigned long>(spool.losses().coalesced),
               static_cast<unsigned long>(spool.losses().dropped_transitions));
   const uint64_t now_ms = now_us() / 1000;
+  const media::Numbers sound = media::how_it_is_going();
+  if (sound.stream_id != nullptr || sound.error != nullptr) {
+    std::printf("# audio=%s%s%s blocks=%lu dropped=%lu connections=%lu%s%s\n", sound.state,
+                sound.source_id != nullptr ? " from=" : "",
+                sound.source_id != nullptr ? sound.source_id : "",
+                static_cast<unsigned long>(sound.blocks),
+                static_cast<unsigned long>(sound.dropped),
+                static_cast<unsigned long>(sound.connections),
+                sound.error != nullptr ? " last=" : "",
+                sound.error != nullptr ? sound.error : "");
+  }
   const char* grant = lease.grant_id();
   long long left = 0;
   if (lease.live(now_ms)) left = static_cast<long long>(lease.expires_at() - now_ms);
@@ -2129,6 +2206,9 @@ int main() {
     // Every pin, every loop: the debounce is measured in time and not in sleeping, so
     // nothing here waits on a wire while the connection waits on this.
     read_the_sources();
+    // The second connection, after the sources rather than before: what it sends is what
+    // they just produced, and a block finished this turn goes out this turn.
+    media::serve(now_us() / 1000, credentials);
     if (absolute_time_diff_us(get_absolute_time(), next) <= 0) {
       // A sign of life, and nothing more: it says the loop is turning, not that anything
       // was published.

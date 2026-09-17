@@ -34,17 +34,21 @@ TimeAnswers time_answers() { return TimeAnswers{}; }
 
 void poll() {}
 
-Dialled dial(const char*, uint16_t, const sentry::Credentials&) { return Dialled::kNotLinked; }
+Dialled dial(const char*, uint16_t, const sentry::Credentials&, Line) {
+  return Dialled::kNotLinked;
+}
 
-Socket socket() { return Socket::kIdle; }
+Socket socket(Line) { return Socket::kIdle; }
 
-const char* why_closed() { return "this board has no radio"; }
+const char* why_closed(Line) { return "this board has no radio"; }
 
-size_t send(const uint8_t*, size_t) { return 0; }
+size_t send(const uint8_t*, size_t, Line) { return 0; }
 
-size_t receive(uint8_t*, size_t) { return 0; }
+size_t send_some(const uint8_t*, size_t, Line) { return 0; }
 
-void hang_up() {}
+size_t receive(uint8_t*, size_t, Line) { return 0; }
+
+void hang_up(Line) {}
 
 const char* name_of(Joined joined) {
   switch (joined) {
@@ -69,11 +73,11 @@ const char* name_of(Dialled dialled) {
     case Dialled::kNoCredentials:
       return "no certificate to connect with, so there is no connection to make";
     case Dialled::kNoAddress:
-      return "the broker's name did not resolve";
+      return "the hub's name did not resolve";
     case Dialled::kNoMemory:
       return "not enough memory for a TLS connection";
     case Dialled::kBusy:
-      return "a connection is already open";
+      return "that line is already open";
   }
   return "unknown";
 }

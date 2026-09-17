@@ -103,7 +103,7 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
     set(SENTRY_BLE src/device/ble_none.cpp)
   endif()
   add_executable(sentry_firmware src/device/main.cpp ${SENTRY_NET} ${SENTRY_BLE}
-                                 src/device/onewire.cpp src/device/i2s.cpp
+                                 src/device/onewire.cpp src/device/i2s.cpp src/device/media.cpp
                                  src/device/flash_vault.cpp src/device/reset_reason.cpp)
   # The I²S receiver is a PIO program, assembled at build time into a header this build
   # includes. It is the one piece of this firmware that is not C++.
@@ -139,6 +139,19 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
       pico_btstack_ble
       pico_btstack_cyw43
     )
+    # The SDK compiles the 1.2 half of mbedTLS and leaves 1.3 out of its source list. The
+    # hub's media gateway will not speak 1.2, and lowering the hub is not on the table, so
+    # the four files that make a 1.3 client are compiled here. They are the library's own
+    # sources, taken from the same checkout as the rest, and they are built with warnings
+    # off: this firmware's warning level is a rule for the code in this repository, and a
+    # third party's code failing it would say nothing about either.
+    set(SENTRY_MBEDTLS_TLS13
+      ${PICO_MBEDTLS_PATH}/library/ssl_tls13_client.c
+      ${PICO_MBEDTLS_PATH}/library/ssl_tls13_generic.c
+      ${PICO_MBEDTLS_PATH}/library/psa_crypto_driver_wrappers_no_static.c
+      ${PICO_MBEDTLS_PATH}/library/psa_util.c)
+    target_sources(sentry_firmware PRIVATE ${SENTRY_MBEDTLS_TLS13})
+    set_source_files_properties(${SENTRY_MBEDTLS_TLS13} PROPERTIES COMPILE_OPTIONS "-w")
     # Which makes cyw43_arch load the firmware with the controller in it. Without this the
     # chip comes up with Wi-Fi only and the transport has nothing to talk to.
     target_compile_definitions(sentry_firmware PRIVATE CYW43_ENABLE_BLUETOOTH=1)
