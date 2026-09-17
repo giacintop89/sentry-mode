@@ -51,6 +51,13 @@
 #define LWIP_ALTCP_TLS 1
 #define LWIP_ALTCP_TLS_MBEDTLS 1
 
+// lwIP's default is MBEDTLS_SSL_VERIFY_OPTIONAL, which verifies the broker's certificate
+// and then carries on regardless of the answer. A board built with that connected happily
+// to this broker while trusting an authority that had signed nothing in this system — the
+// certificate was checked and the result was thrown away. Required means a chain that does
+// not lead to the authority in the provisioning record ends the handshake.
+#define ALTCP_MBEDTLS_AUTHMODE MBEDTLS_SSL_VERIFY_REQUIRED
+
 #define TCP_MSS 1460
 #define TCP_WND (8 * TCP_MSS)
 #define TCP_SND_BUF (8 * TCP_MSS)

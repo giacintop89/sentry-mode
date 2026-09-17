@@ -211,6 +211,29 @@ network last said it was, and nothing at all before an answer has arrived, so a 
 has not been told the time does not connect rather than accepting an expired certificate
 it has no way to judge.
 
+The other half of that run is the one worth reading. Handed an authority that had signed
+nothing in this system — a throwaway CA made for the purpose — the board connected anyway,
+announced itself and published. lwIP's default is `MBEDTLS_SSL_VERIFY_OPTIONAL`: the
+broker's certificate is verified and the answer is then thrown away. `lwipopts.h` now sets
+`ALTCP_MBEDTLS_AUTHMODE` to `MBEDTLS_SSL_VERIFY_REQUIRED`, and the same test says:
+
+```
+--- somebody else's authority
+# connecting to 192.168.11.240:8883
+# the broker closed the connection (trying again in 1025ms)
+# the broker closed the connection (trying again in 2152ms)
+# the broker closed the connection (trying again in 4041ms)
+…                                   (8316, 16416, 32228, and then a minute)
+--- the authority this system runs
+# the broker accepted this node
+# online, as pico-ingresso
+```
+
+A board that cannot get in waits longer each time, up to a minute, with a little of its own
+randomness in it so that a houseful of them coming back after a power cut does not arrive
+in step. That is `T06` for a wrong authority and `T23` for the backoff; an expired
+certificate, one issued for another name and a revoked one are still **not executed**.
+
 ## What is in here
 
 | Path | What it is |
@@ -264,9 +287,9 @@ fails here, in a second, rather than at link time on a target with neither.
 - Health, and saying what was given up. `spool.cpp` counts what it coalesced and dropped
   and `status` prints it, but nothing publishes a `health` message, so the hub sees a node
   that is online and nothing about how it is doing.
-- The failure cases of the handshake. The good one has been watched; a wrong authority, a
-  certificate for another name, an expired one and a revoked one have not, so `T06` and
-  `T07` are **not executed** even though the code paths for them are the same ones.
+- The rest of the failure cases of the handshake. A wrong authority has been watched, and
+  refused; a certificate issued for another name, an expired one and a revoked one have
+  not, so the rest of `T06` and all of `T07` are **not executed**.
 - Both clients at once through the broker: a Linux node speaking MQTT 5 and this one
   speaking 3.1.1, with the hub reading from both. `T13` is **not executed**.
 - Any sensor driver at all. What is here is the part of one that has no hardware in it:

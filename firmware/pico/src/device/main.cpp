@@ -109,6 +109,11 @@ bool announced_this_connection = false;
 // The client is told a connection opened once per connection. It stays offline until the
 // broker's CONNACK, so "it has not said it is connected" is not the same question.
 bool client_told = false;
+// Connections that ended before this node was online, since the last one that worked. A
+// handshake the broker refuses fails before the MQTT client is told anything at all, so
+// the waiting between attempts is counted here rather than by the client: a board with a
+// certificate the broker will not take must not spend the afternoon asking.
+uint32_t attempts_since_online = 0;
 
 uint64_t now_us() { return ticks.extend(time_us_32()); }
 
@@ -231,6 +236,18 @@ void take_the_time_if_it_arrived() {
 
 uint32_t monotonic_ms() { return static_cast<uint32_t>(now_us() / 1000); }
 
+// A second, then two, up to a minute, plus a little of this board's own randomness so that
+// a houseful of them coming back after a power cut does not arrive in step.
+uint32_t wait_before_trying_again() {
+  if (attempts_since_online == 0) return 0;
+  uint32_t wait = 1000;
+  for (uint32_t attempt = 1; attempt < attempts_since_online && wait < 60000; ++attempt) {
+    wait *= 2;
+  }
+  if (wait > 60000) wait = 60000;
+  return wait + (get_rand_32() % 500);
+}
+
 // The three topics this node uses and the goodbye the broker holds on its behalf. Built
 // when a record arrives, because every one of them is made out of the node's own name.
 bool prepare_the_connection() {
@@ -294,8 +311,9 @@ void start_a_connection() {
   const net::Dialled dialled =
       net::dial(provisioning.mqtt_host, provisioning.mqtt_port, credentials);
   if (dialled != net::Dialled::kOpening) {
+    ++attempts_since_online;
     std::printf("# %s\n", net::name_of(dialled));
-    next_attempt_ms = monotonic_ms() + 5000;
+    next_attempt_ms = monotonic_ms() + wait_before_trying_again();
     return;
   }
   client_told = false;
@@ -304,7 +322,11 @@ void start_a_connection() {
 }
 
 void end_the_connection(const char* why) {
-  if (why != nullptr && why[0] != '\0') std::printf("# %s\n", why);
+  if (broker.link() != sentry::Link::kOnline) ++attempts_since_online;
+  const uint32_t wait = wait_before_trying_again();
+  if (why != nullptr && why[0] != '\0') {
+    std::printf("# %s (trying again in %lums)\n", why, static_cast<unsigned long>(wait));
+  }
   net::hang_up();
   broker.closed();
   incoming_size = 0;
@@ -314,7 +336,7 @@ void end_the_connection(const char* why) {
   // Whatever was in flight was never acknowledged, so it stays at the front of the queue
   // and goes again on the next connection, marked as arriving late.
   spool.link_lost();
-  next_attempt_ms = monotonic_ms() + broker.backoff_ms();
+  next_attempt_ms = monotonic_ms() + wait;
 }
 
 // One command from the hub. Answering it is PICO-03's other half — the lease and the ACK —
@@ -369,6 +391,7 @@ void serve_the_broker() {
       case sentry::mqtt::Effect::kAnnounced:
         std::printf("# online, as %s\n", node_id);
         outgoing_size = 0;
+        attempts_since_online = 0;
         break;
       case sentry::mqtt::Effect::kDelivered:
         // The broker has it. Only now does the queue let go of it.
