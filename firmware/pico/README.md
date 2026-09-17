@@ -725,6 +725,29 @@ wiring. Measured, on the board, before and after:
 #   pir-1 gpio pin=15 level=low state=off readings=1     (after)
 ```
 
+### Installed and configured from the hub
+
+`PICO-05` asks for a node whose profile can be installed and configured from the hub
+without a terminal open on it, and for the page to show what such a board actually has:
+its pins, its clock, its memory, why it reset, what drives each source and what it cannot
+be asked for. That is now what the card shows, and everything on it came from the node
+rather than from a guess about what a node like this would say.
+
+What the hub will not send has moved earlier: the catalogue's limits are the firmware's own
+— eight sources, about two kilobytes of configuration — and a driver this build does not
+have, a source that names no pin, an option its driver has no place for, a list too long or
+a configuration too large are all refused on the page instead of after a round trip. The
+node checks all of it again and has the last word; nothing here trusts the hub's copy.
+
+Measured against the running hub, for a node that has been configured only over MQTT:
+
+```
+400 {"error": "9 sources: a pico-2w-sensor takes at most 8"}
+400 {"error": "the configuration is 4361 bytes; a pico-2w-sensor holds 2048"}
+400 {"error": "pir-1: a gpio source needs pin, and this one names none"}
+400 {"error": "pir-1.interval_seconds: a gpio source on a pico-2w-sensor has no interval_seconds"}
+```
+
 ### Why it came back
 
 A restart is evidence. A board that comes back because somebody unplugged it and a board
