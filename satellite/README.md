@@ -31,6 +31,19 @@ kind.
     python -m sentry_satellite.cli doctor
     python -m sentry_satellite.cli run --config /etc/sentry-satellite/node.toml
 
+A release is built from a checkout and installed on the board; nothing is compiled there,
+and the agent runs from `/opt/sentry-satellite/current` under the system Python:
+
+    python -m sentry_satellite.cli package --into dist      # reproducible: same tree, same bytes
+    sudo scripts/install.sh --release dist/sentry-satellite-0.1.0.tar.gz
+    sudo scripts/backup.sh --into /var/backups
+    sudo scripts/rollback.sh --list
+    python -m sentry_satellite.cli verify                   # is what is installed still intact
+
+`install.sh` can be run again with the same release and changes nothing, never writes over
+a configuration or an identity, and touches no service but its own. See
+[satellites](../docs/satellites.md#installing-a-node-updating-it-and-going-back).
+
 The agent is a peripheral of the protocol, not a second Sentry: it reads, it reports, and
 it does what a signed command from the hub tells it to. It holds no rules and takes no
 decisions about the house.

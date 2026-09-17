@@ -31,6 +31,7 @@ and where its limits are.
 - [Architecture](architecture.md) — how the parts fit together.
 - [Raspberry Pi setup](raspberry-pi-setup.md) — hardware, audio session, service install.
 - [USB devices](usb-devices.md) — what the link allows, why devices drop out, kernel quirks.
+- [Release checklist](release-checklist.md) — the acceptance criteria, where each is checked, and what is not claimed.
 - [Roadmap](roadmap.md) — what is implemented and what comes next.
 
 ## Plans

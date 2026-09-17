@@ -11,7 +11,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sentry_satellite import __version__, drivers, health, identity, remote
+from sentry_satellite import __version__, drivers, health, identity, release, remote
 from sentry_satellite import config as configuration
 from sentry_satellite.agent import Agent
 from sentry_satellite.mqtt import MqttTransport, TransportError, media_connector, tls_context
@@ -305,6 +305,34 @@ def run(arguments) -> int:
     return 0 if agent.stopped_cleanly else 1
 
 
+DEFAULT_RELEASE = Path("/opt/sentry-satellite/current")
+
+
+def package(arguments) -> int:
+    """Build a release from a source tree: the same bytes for the same tree, every time."""
+    try:
+        built = release.package(arguments.source, arguments.into)
+    except release.ReleaseError as error:
+        print(f"refused: {error}", file=sys.stderr)
+        return 2
+    listing = release.manifest(arguments.source)
+    print(f"{built}\n{listing['release_id']}  {len(listing['files'])} files")
+    return 0
+
+
+def verify(arguments) -> int:
+    """Say whether what is installed is still the release it says it is."""
+    problems = release.verify(arguments.release)
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    if problems:
+        return 1
+    listing = json.loads((arguments.release / release.MANIFEST).read_text())
+    print(f"{arguments.release} holds {listing['name']} {listing['version']}")
+    print(listing["release_id"])
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sentry-satellite", description=__doc__)
     parser.add_argument("--version", action="version", version=__version__)
@@ -324,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
     named.add_argument("--create", metavar="NODE_ID", help="provision this node, once")
     runner = commands.add_parser("run", help="read the sensors and report to the hub")
     runner.add_argument("--verbose", action="store_true")
+    builder = commands.add_parser("package", help="build a release from a source tree")
+    builder.add_argument("--source", type=Path, default=Path.cwd())
+    builder.add_argument("--into", type=Path, default=Path.cwd() / "dist")
+    checker = commands.add_parser("verify", help="check an installed release against its manifest")
+    checker.add_argument("--release", type=Path, default=DEFAULT_RELEASE)
     return parser
 
 
@@ -334,6 +367,8 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": doctor,
         "identity": show_identity,
         "run": run,
+        "package": package,
+        "verify": verify,
     }[arguments.command](arguments)
 
 

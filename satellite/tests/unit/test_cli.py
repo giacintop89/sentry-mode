@@ -38,7 +38,14 @@ kind = "dummy"
 def test_the_command_names_are_the_ones_that_were_agreed():
     parser = cli.build_parser()
     actions = [action for action in parser._actions if action.choices and action.dest == "command"]
-    assert set(actions[0].choices) == {"run", "validate", "doctor", "identity"}
+    assert set(actions[0].choices) == {
+        "run",
+        "validate",
+        "doctor",
+        "identity",
+        "package",
+        "verify",
+    }
 
 
 def test_validate_accepts_a_node_it_could_run(installation, capsys, tmp_path):

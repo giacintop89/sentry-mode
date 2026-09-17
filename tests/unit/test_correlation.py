@@ -546,8 +546,9 @@ def test_a_sensor_rule_with_nothing_to_look_at_survives_a_detector_fault(engine)
     engine.arm()
     detector_fails(engine)
     assert wait_for(lambda: "person" in engine.suspended)
+    # The rule is paused before the camera is let go, so the camera is waited for too.
+    assert wait_for(lambda: engine.video.set_sentry.call_args_list[-1].args == (False,))
     assert not engine.plan.camera
-    assert engine.video.set_sentry.call_args_list[-1].args == (False,)
     assert engine.armed
 
 

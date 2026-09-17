@@ -97,6 +97,7 @@
         "tls_key_file": "str",
         "topic_prefix": "str"
       },
+      "network": "null",
       "nodes_file": "str",
       "sessions": {
         "grant_seconds": "int",

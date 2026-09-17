@@ -179,6 +179,29 @@ def test_saying_hello_opens_a_session_and_earns_a_grant(service):
     assert command["capability"] == "events"
 
 
+def test_an_agent_from_another_version_is_refused_rather_than_half_believed(service):
+    approve(service)
+    service.handle(message("state", dict(hello(), schema_version=2)))
+    assert service.sessions.current("zero-entrance") is None
+    assert service.counters.reasons["unsupported_protocol"] == 1
+    assert "zero-entrance.pir-1" not in service.sources
+    assert service._transport.commands == []
+    card = next(
+        node for node in overview(service.status())["nodes"] if node["node_id"] == "zero-entrance"
+    )
+    assert "1 × unsupported_protocol" in card["errors"]
+    assert card["online"] is False
+
+
+def test_an_agent_that_comes_back_speaking_another_protocol_loses_its_session(service):
+    online(service)
+    service.handle(message("state", dict(hello("a-newer-one"), schema_version=None)))
+    assert service.sessions.current("zero-entrance") is None
+    assert service.counters.reasons["unsupported_protocol"] == 1
+    service.handle(event(service))
+    assert service.counters.accepted == 0
+
+
 def test_the_sensors_a_node_declares_become_sources_the_hub_knows_about(service):
     online(service)
     record = service.sources.require("zero-entrance.pir-1")

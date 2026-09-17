@@ -9,7 +9,10 @@ Type=simple
 User=sentry-satellite
 Group=sentry-satellite
 SupplementaryGroups=gpio i2c spi audio video bluetooth
-ExecStart=/opt/sentry-satellite/venv/bin/sentry-satellite --config /etc/sentry-satellite/node.toml --identity /etc/sentry-satellite/identity.json --state-dir /var/lib/sentry-satellite run
+# The release is a source tree, run by the system Python: nothing is built on the
+# board, and `current` is a symlink an install or a rollback moves in one step.
+Environment=PYTHONPATH=/opt/sentry-satellite/current/src
+ExecStart=/usr/bin/python3 -m sentry_satellite.cli --config /etc/sentry-satellite/node.toml --identity /etc/sentry-satellite/identity.json --state-dir /var/lib/sentry-satellite run
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
@@ -30,7 +33,7 @@ RestrictRealtime=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
-ReadOnlyPaths=/etc/sentry-satellite
+ReadOnlyPaths=/etc/sentry-satellite /opt/sentry-satellite
 RuntimeDirectory=sentry-satellite
 # Sources the hub configured live here, never in /etc: the installed file stays as written.
 StateDirectory=sentry-satellite

@@ -48,6 +48,7 @@ from sentry_mode.hardware.camera import Camera, list_cameras
 from sentry_mode.hardware.microphone import Microphone
 from sentry_mode.hardware.speaker import Speaker
 from sentry_mode.hardware.status import inspect_hardware, network_available
+from sentry_mode.security import addresses, exposure, report
 from sentry_mode.sentry.config import Rule, RuleV2, SentryConfig, SentryConfigV2, TuneAction
 from sentry_mode.sentry.engine import Sentry
 from sentry_mode.sentry.migration import SchemaUpgradeRequired
@@ -1148,6 +1149,27 @@ def make_handler(controls: NodeControls):
     return Handler
 
 
+def _say_what_the_satellites_can_reach(
+    config: Settings, host: str, port: int, secure_host: str, https_port: int | None
+) -> None:
+    """Warn if the dashboard answers on the network the nodes are on. It still serves."""
+    if not config.satellites.enabled or not config.satellites.network:
+        return
+    listeners = [("dashboard", host, port)]
+    if https_port is not None:
+        listeners.append(("phone controls", secure_host, https_port))
+    media = config.satellites.media
+    if media.enabled:
+        listeners.append(("media gateway", media.bind_host, media.port))
+    report(
+        exposure(
+            listeners=listeners,
+            satellite_network=config.satellites.network,
+            addresses=addresses(),
+        )
+    )
+
+
 def serve(
     config: Settings,
     host: str = "0.0.0.0",
@@ -1208,6 +1230,7 @@ def serve(
             server.daemon_threads = False
             server.timeout = 0.5
             logger.info("Serving Sentry Mode on %s:%s", host, port)
+            _say_what_the_satellites_can_reach(config, host, port, secure_host, https_port)
             try:
                 while not stopped.is_set():
                     server.handle_request()

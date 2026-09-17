@@ -66,6 +66,10 @@ SENTRY_MODE_WEB_FRAME_ORIGINS='["http://127.0.0.1:8092"]'
   sending (`connect_timeout_seconds`), how long silence is tolerated (`stall_seconds`,
   `handshake_seconds`), `max_streams`, the decoder's `backlog_bytes`, and the `ffmpeg`
   program. See [satellites](satellites.md#cameras).
+  `network` is the subnet the satellites are on, written as a CIDR such as
+  `192.168.11.0/24`. It opens and closes nothing; it is what lets the hub say at
+  startup whether the dashboard is reachable from the network the nodes live on
+  ([security](security.md#what-the-satellite-network-can-reach)).
 - `logging` — level (`DEBUG` … `CRITICAL`).
 - `web_frame_origins` — up to 16 exact HTTP(S) origins allowed to embed the app, without
   paths; empty blocks embedding.

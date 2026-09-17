@@ -378,6 +378,39 @@ A rule is set off by it as [a device arriving or leaving](rules-v2.md#a-device-a
 which can name several nodes watching the same device. Why BlueZ over D-Bus, and what a
 scan costs on a Zero W, are in [presence](adr/satellite-presence.md).
 
+## Installing a node, updating it, and going back
+
+A node runs a release: a tar of the agent's source tree with a manifest beside it that
+names every file by its SHA-256. It is built from a checkout, not on the board, and the
+same tree always produces the same bytes, so two boards holding the same release id are
+running the same code.
+
+    python -m sentry_satellite.cli package --into dist     # on your machine
+    scp dist/sentry-satellite-0.1.0.tar.gz pi@zero-entrance:
+    sudo ./install.sh --release sentry-satellite-0.1.0.tar.gz    # on the board
+
+The install unpacks the release beside the one before it, checks every file against the
+manifest, and only then moves `/opt/sentry-satellite/current` to it — one symlink, so a
+board that loses power at the wrong moment is running one release or the other and never
+half of each. Running it again with the same release changes nothing. It writes
+`/etc/sentry-satellite/node.toml` from the example only if there is none, and never
+touches an identity, a certificate or a service that is not its own.
+
+    cd /opt/sentry-satellite/current/scripts    # they travel with the release
+    sudo ./rollback.sh --list
+    sudo ./rollback.sh --to 0.1.0
+    sudo ./backup.sh --into /var/backups
+
+A backup holds what makes a node that node — its configuration, identity, certificates and
+the sources the hub last sent it — and not the release, which can be installed again from
+its own file. It contains a private key, so it is written `0600` and belongs somewhere
+that stays that way. `rollback.sh --to <version> --data <backup>` puts both back together,
+because a certificate and the file that says who the node is belong to the same moment or
+to neither.
+
+`sentry-satellite verify` says whether what is installed is still what was packaged, file
+by file, and names anything that has appeared inside a release that was not part of it.
+
 ## Changing a node's sources from the hub
 
 The **Satellites** page, in the menu once satellites are on, lists every node: whether it

@@ -27,6 +27,7 @@ from sentry_mode.satellites.identity import (
 )
 from sentry_mode.satellites.ingress import EventIngress, NormalizedEvent, RateLimiter
 from sentry_mode.satellites.mqtt import HubTransport, Message, TransportError, new_client_id
+from sentry_mode.satellites.protocol import SCHEMA_VERSION
 from sentry_mode.satellites.sessions import BrokerState, Freshness, SessionManager
 from sentry_mode.satellites.store import Store, StoreUnavailable
 from sentry_mode.sources.models import SourceKind, SourceRecord, SourceRef, SourceState
@@ -345,6 +346,8 @@ class SatelliteService:
 
     def _on_state(self, message: Message, document: dict) -> None:
         """A node saying what it is. This is where a session begins and ends."""
+        if not self._speaks_our_protocol(message.node_id, document):
+            return
         connection_id = document.get("connection_id")
         online = bool(document.get("online"))
         if online:
@@ -383,6 +386,28 @@ class SatelliteService:
             session.hub_epoch,
             len(document.get("sources", [])),
         )
+
+    def _speaks_our_protocol(self, node_id: str, document: dict) -> bool:
+        """Whether this hub and that agent are talking about the same wire at all.
+
+        An agent from another version is not a node with a small problem: nothing it says
+        can be read safely, so no session opens, no grant is issued, and whatever it was
+        streaming ends. It is refused loudly rather than left green while its events are
+        quietly dropped one at a time.
+        """
+        spoken = document.get("schema_version")
+        if spoken == SCHEMA_VERSION:
+            return True
+        self._refuse(node_id, "unsupported_protocol")
+        log.warning(
+            "%s speaks protocol %r; this hub speaks %d, so it is not being listened to",
+            node_id,
+            spoken,
+            SCHEMA_VERSION,
+        )
+        if self.sessions.close(node_id, connection_id=None, reason="unsupported protocol"):
+            self._end_video(node_id, "the node speaks a protocol this hub does not")
+        return False
 
     def _remember_report(self, node_id: str, document: dict) -> None:
         declared = document.get("sources")

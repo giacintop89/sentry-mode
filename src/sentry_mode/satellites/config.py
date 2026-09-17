@@ -1,5 +1,6 @@
 """Settings for the satellite side of the node, off until there is something to talk to."""
 
+import ipaddress
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -139,3 +140,17 @@ class SatellitesConfig(Section):
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     sessions: SessionsConfig = Field(default_factory=SessionsConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
+    network: str | None = None
+    """The subnet the satellites are on, as a CIDR such as `192.168.11.0/24`.
+
+    It opens nothing and closes nothing. The hub uses it to say, once at startup, whether
+    an administrative listener — the dashboard, not the broker or the media gateway — is
+    reachable from the network the nodes live on, which a wildcard bind does by accident.
+    """
+
+    @field_validator("network")
+    @classmethod
+    def a_network(cls, value: str | None) -> str | None:
+        if value:
+            ipaddress.ip_network(value, strict=False)  # raises if it is not one
+        return value or None

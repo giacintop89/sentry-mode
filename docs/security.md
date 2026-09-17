@@ -38,6 +38,44 @@ never passed through a shell built by the node. OpenSSH runs in batch mode with 
 host-key checking: no password prompts, no automatic trust of unknown hosts. Standard output
 is discarded and stderr is bounded in the log.
 
+## What the satellite network can reach
+
+The satellites live on their own network, and only two things on this hub belong on it:
+the broker they publish to and the media gateway they send pictures and sound to. The
+dashboard is administrative — it arms and disarms, edits rules and opens the microphone —
+so a node that has been taken over should not be able to knock on its door.
+
+Set `satellites.network` to that subnet and the hub says, once at startup, whether an
+administrative listener answers on it:
+
+    WARNING dashboard listens on every interface and is reachable from the satellite
+    network 192.168.11.0/24 at 192.168.11.10. Bind it to the house network instead.
+
+It is a warning and not a refusal: the hub keeps serving, because the person who set the
+interfaces up is the one who decides. `serve --host` takes the address to bind to, and
+binding the dashboard to the house address is the fix.
+
+## Taking a node away
+
+Revoking a node takes back all four of the things it was given, at once and on this hub's
+side, without waiting for the broker to notice:
+
+| Channel | What happens |
+|---|---|
+| Events | the session and its grant end, and anything that arrives afterwards is refused as `not_approved` |
+| Commands | the node is told once, and nothing else is ever sent to it |
+| Video | an open publication is closed with *the node was revoked*, and its ticket cannot be used again |
+| Audio | the same, on the same gateway |
+
+Its retained snapshot is erased, its sources are marked disabled, and its health entry is
+dropped. Reloading the broker's own configuration does not close connections that are
+already open, which is exactly why the hub does not rely on it.
+
+An agent that speaks a protocol this hub does not is refused in the same breath rather
+than left looking healthy: no session opens, nothing it publishes is acted on, and the
+node's card says `unsupported_protocol`. A node whose events are being dropped one at a
+time while its card stays green is the failure this prevents.
+
 ## Actions and uncertainty
 
 Nothing is retried automatically. A Telegram request that timed out or was cancelled has an
