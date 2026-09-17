@@ -473,6 +473,11 @@ thermometer-1 climate.temperature null °C unavailable initial
 thermometer-1 climate.temperature null °C unavailable live
 ```
 
+Through all of that the connection, the die temperature and the converter carried on: a bus
+with nothing on it is a source that has nothing to say, not a node that has stopped. That is
+the shape of what `PICO-04` asks for when it says an I²C fault must not take MQTT and GPIO
+with it — there is no I²C here, and this is the same failure on the bus there is.
+
 Nothing answered the reset pulse, and the node says so every interval rather than saying
 nothing: a probe that has fallen off its wire and a probe nobody asked about look identical
 from the hub otherwise. What has **not** been seen is a probe that answers — there is no
@@ -555,6 +560,11 @@ fails here, in a second, rather than at link time on a target with neither.
   has been exercised on the hardware — but by the board driving its own pad, not by a PIR
   or a reed switch. What a real sensor does that a driven pin does not — the settling after
   power, the pulse a PIR holds, the bounce of a contact — has not been watched yet.
+- A rule on the hub that a sensor here fires. The events arrive, the hub records them and
+  marks them eligible, and its engine acts on eligible events only while Sentry is armed —
+  but this hub has one rule on it and that rule watches a camera. A sensor rule and an
+  arming are somebody's decision about their own house, not this firmware's, so what has
+  been shown is everything up to the engine's door and nothing past it.
 - A DS18B20 that answers. The bus is written, the conversion is timed, the scratchpad is
   read and the CRC is checked, but no probe has ever answered the reset on this board: the
   only 1-Wire transcript here is an empty bus. The pull-up is the chip's own, which is
