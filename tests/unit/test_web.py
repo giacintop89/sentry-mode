@@ -1313,3 +1313,13 @@ def test_a_satellite_configuration_is_checked_before_it_is_sent(web):
     assert code == 400
     assert len(controls.satellites.sent) == 1
     controls.satellites = None
+
+
+def test_microphones_are_listed_and_an_unknown_one_is_not_heard(web):
+    controls, base = web
+    listed = request(base, "/api/microphones")[1]["microphones"]
+    assert [m["source_id"] for m in listed] == ["legacy-microphone"]
+    assert listed[0]["remote"] is False
+    status, data, _ = request(base, "/api/audio/monitor?source_id=zero-entrance.mic-1")
+    assert status == 404
+    assert "not a microphone" in data["error"]

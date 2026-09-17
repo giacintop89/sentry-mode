@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import Lock
 
+from sentry_satellite.audio.source import AlsaMicrophone
 from sentry_satellite.camera.source import CsiCamera
 from sentry_satellite.config import Config, Source
 from sentry_satellite.sensors import Driver
@@ -24,12 +25,11 @@ from sentry_satellite.sensors.i2c import Bus, Device
 from sentry_satellite.sensors.onewire import Ds18b20
 from sentry_satellite.sensors.periodic import Periodic
 
-SUPPORTED = ("gpio", "onewire", "bme280", "adc", "csi", "dummy")
+SUPPORTED = ("gpio", "onewire", "bme280", "adc", "csi", "microphone", "dummy")
 """Kinds this version of the agent can drive. Remote configuration is limited to these."""
 
 PENDING = {
     "uvc": "a later increment, once a USB camera is qualified on the Zero W",
-    "microphone": "PR-11",
     "ble": "PR-12",
 }
 
@@ -46,6 +46,8 @@ class Hardware:
     open_i2c: Callable[[int, int], Bus] = Device
     encoder: str | None = None
     """The encoder program, when it is not the one on the PATH (the tests use a fake)."""
+    recorder: str | None = None
+    """The capture program, likewise."""
     consumer: str = "sentry-satellite"
     _buses: dict[tuple[int, int], Bus] = field(default_factory=dict)
     _parts: dict[tuple[int, int], Bme280] = field(default_factory=dict)
@@ -75,6 +77,8 @@ def build_one(source: Source, hardware: Hardware | None = None) -> Driver:
     options = source.options
     if source.kind == "csi":
         return CsiCamera(source.id, options, program=hardware.encoder)
+    if source.kind == "microphone":
+        return AlsaMicrophone(source.id, options, program=hardware.recorder)
     if source.kind == "dummy":
         return Motion(source.id, interval=float(options.get("interval_seconds", 1.0)))
     if source.kind == "gpio":

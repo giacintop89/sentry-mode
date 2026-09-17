@@ -192,6 +192,7 @@ def test_a_stream_introduces_itself_and_then_carries_only_video():
     assert hub.headers == [
         {
             "schema_version": 1,
+            "kind": "video",
             "stream_id": "stream-0001",
             "source_id": "camera-1",
             "token": "t" * 32,
@@ -348,6 +349,7 @@ def test_other_commands_do_not_describe_streams():
 
 class FakePublisher:
     made: list["FakePublisher"] = []
+    kind = "video"
 
     def __init__(self, stream, argv, connect, *, expires_at, clock) -> None:
         self.stream, self.argv, self.expires_at = stream, argv, expires_at

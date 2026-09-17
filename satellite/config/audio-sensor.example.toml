@@ -1,5 +1,6 @@
 # A board with an I2S microphone and sensors. The microphone is a source of acoustic
-# events and of a stream the hub may ask for; it is never a speech recogniser.
+# events and of a stream the hub may ask for; it is never a speech recogniser. Nothing
+# it hears leaves the board unless the hub asks for a stream.
 
 [node]
 id = "zero-hall"
@@ -24,6 +25,14 @@ heartbeat_seconds = 15
 [[sources]]
 id = "mic-1"
 kind = "microphone"
+# The ALSA capture device; `arecord --list-devices` names them. Capture is always
+# 16 kHz mono, converted by the plughw layer if the microphone does not do it itself.
 device = "plughw:0,0"
-rate = 16000
-channels = 1
+interface = "i2s"
+# Report `audio.activity` when the level stays above the threshold, and again when it
+# has been quiet for a while. Off by default: the microphone then opens nothing until
+# the hub asks for sound.
+activity = true
+activity_threshold_dbfs = -35.0
+activity_min_seconds = 0.3
+activity_hold_seconds = 3.0

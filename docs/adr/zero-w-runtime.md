@@ -92,7 +92,8 @@ Three consequences for the plans:
 - **`audioop` is gone.** It was removed in Python 3.13, and this board runs 3.13.5, so the
   RMS and dBFS of AUD-07 cannot use it. `array` computes it in the standard library, but a
   per-sample Python loop on ARMv6 over continuous audio is a real cost to decide in PR-11,
-  not a detail.
+  not a detail. PR-11 measures every fourth sample
+  ([audio profile](satellite-audio-profile.md#cost-on-the-zero-w)).
 - **The card registers with nothing attached.** Its presence proves the overlay loaded, not
   that a microphone exists. All-zero samples are "no signal", never "silence detected",
   exactly as SNS-03 requires for a sensor that cannot be read.

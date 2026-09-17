@@ -2,12 +2,11 @@
 
 The list is short and it is closed. A command can grant a capability for a while, renew
 that grant, or take it away, and it can replace the list of sources with one made only of
-drivers this agent already has. It can ask a camera to send video for a while, to a port
-on the hub this node already talks to. It cannot name a program to run, a file to read, a
-rule to apply, another host to send anything to, or touch the certificates or the installed
-packages. That is the difference
-between a peripheral and a second Sentry, and it is enforced here rather than trusted to
-the sender.
+drivers this agent already has. It can ask a camera for video, or a microphone for sound,
+for a while, to a port on the hub this node already talks to. It cannot name a program to
+run, a file to read, a rule to apply, another host to send anything to, or touch the
+certificates or the installed packages. That is the difference between a peripheral and a
+second Sentry, and it is enforced here rather than trusted to the sender.
 """
 
 import re
@@ -27,8 +26,13 @@ ACTIONS = (
     "video_start",
     "video_renew",
     "video_stop",
+    "audio_start",
+    "audio_renew",
+    "audio_stop",
 )
 VIDEO_ACTIONS = ("video_start", "video_renew", "video_stop")
+AUDIO_ACTIONS = ("audio_start", "audio_renew", "audio_stop")
+MEDIA_ACTIONS = VIDEO_ACTIONS + AUDIO_ACTIONS
 MAX_SOURCES = 32
 MAX_VIDEO_SECONDS = 600
 STREAM_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
@@ -113,8 +117,8 @@ def parse(message: dict, *, node_id: str) -> Command:
             raise CommandError("each configured source is an object")
     elif "revision" in message or "sources" in message:
         raise CommandError(f"a {action} command does not take a configuration")
-    video = _video(action, message, duration) if action in VIDEO_ACTIONS else {}
-    if action not in VIDEO_ACTIONS and VIDEO_FIELDS & set(message):
+    video = _video(action, message, duration) if action in MEDIA_ACTIONS else {}
+    if action not in MEDIA_ACTIONS and VIDEO_FIELDS & set(message):
         raise CommandError(f"a {action} command does not describe a stream")
     return Command(
         command_id=command_id,
@@ -132,17 +136,17 @@ def parse(message: dict, *, node_id: str) -> Command:
 
 
 def _video(action: str, message: dict, duration: object) -> dict:
-    """The stream a video command is about. The host is never among them: it is the hub."""
+    """The stream a media command is about. The host is never among them: it is the hub."""
     stream_id = message.get("stream_id")
     if not isinstance(stream_id, str) or not STREAM_ID.fullmatch(stream_id):
-        raise CommandError("a video command names its stream")
-    if action == "video_stop":
+        raise CommandError(f"a {action.partition('_')[0]} command names its stream")
+    if action.endswith("_stop"):
         if set(message) & (VIDEO_FIELDS - {"stream_id"}):
             raise CommandError("stopping a stream needs only its id")
         return {"stream_id": stream_id}
     if not 0 < duration <= MAX_VIDEO_SECONDS:  # type: ignore[operator]
         raise CommandError(f"a stream lasts more than 0 and at most {MAX_VIDEO_SECONDS} s")
-    if action == "video_renew":
+    if action.endswith("_renew"):
         if set(message) & (VIDEO_FIELDS - {"stream_id"}):
             raise CommandError("renewing a stream needs only its id and a duration")
         return {"stream_id": stream_id}

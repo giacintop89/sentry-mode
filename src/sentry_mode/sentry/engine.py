@@ -16,6 +16,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import partial
@@ -23,6 +24,7 @@ from pathlib import Path
 
 from pydantic import SecretStr
 
+from sentry_mode.audio.remote import MicrophoneTable
 from sentry_mode.audio.sounds import SoundLibrary
 from sentry_mode.audio.speech import speak
 from sentry_mode.audio.tunes import TUNES, play_tune
@@ -31,6 +33,7 @@ from sentry_mode.core.errors import HardwareError
 from sentry_mode.hardware.microphone import Microphone
 from sentry_mode.sentry.config import (
     AudioAction,
+    AudioEventTrigger,
     PhotoAction,
     Rule,
     RuleV2,
@@ -69,6 +72,7 @@ from sentry_mode.sentry.triggers import (
     cooled,
     detection_matches,
     sensor_fires,
+    sound_fires,
     threshold_fires,
 )
 from sentry_mode.sources.legacy import register_legacy
@@ -82,7 +86,7 @@ from sentry_mode.sources.models import (
 from sentry_mode.sources.registry import SourceRegistry
 from sentry_mode.vision.detection import Detection
 from sentry_mode.vision.labels import CLASSES
-from sentry_mode.vision.recording import Captures
+from sentry_mode.vision.recording import Captures, SoundSource
 from sentry_mode.vision.stream import VideoStream
 
 logger = logging.getLogger(__name__)
@@ -107,6 +111,8 @@ BOOST_SECONDS = 10.0
 FRESH_SECONDS = 2.0
 """A picture older than this is not evidence of what is happening now."""
 FRAME_WAIT_SECONDS = 3.0
+ECHO_SECONDS = 2.0
+"""How long after the hub stops playing sound a microphone is still taken to be hearing it."""
 READY_FPS = 5.0
 """The rate a camera kept ready for photos runs at, when nothing else asks for more."""
 
@@ -145,6 +151,7 @@ class Sentry:
         audio_lock,
         sources: SourceRegistry | None = None,
         cameras: SourceManager | None = None,
+        microphones: MicrophoneTable | None = None,
     ):
         self.settings, self.video, self.audio_lock = settings, video, audio_lock
         self.guard = threading.RLock()
@@ -155,10 +162,13 @@ class Sentry:
             sources if sources is not None else register_legacy(SourceRegistry(), settings)
         )
         self.cameras = cameras if cameras is not None else SourceManager(self.sources)
+        self.microphones = microphones if microphones is not None else MicrophoneTable()
+        """Satellite microphones this hub can record from."""
         self.planner = ResourcePlanner(
             self.sources,
             satellites_enabled=settings.satellites.enabled,
             cameras=_Others(self.cameras),
+            microphones=self.microphones,
         )
         self.freshness: Callable[[str], str] | None = None
         """How recently a satellite node proved it was there, when satellites are on."""
@@ -187,6 +197,8 @@ class Sentry:
         self.captures = Captures(settings.captures_directory)
         self.sounds = SoundLibrary(settings.sounds_directory)
         self.recorders: list[threading.Thread] = []
+        self.quiet_from = 0.0
+        """When this hub's own sound last stopped, for telling an echo from an intruder."""
         self._load()
         self.video.detection.on_result = self.observe
         self.video.detection.on_error = self.fault
@@ -777,16 +789,29 @@ class Sentry:
                 return
             if event.kind in MOTION_KINDS and event.value is True and event.quality == "valid":
                 self._boost()
-            for rule in self._watching(SensorEventTrigger, ThresholdTrigger, SequenceTrigger):
+            watched = (SensorEventTrigger, ThresholdTrigger, SequenceTrigger, AudioEventTrigger)
+            for rule in self._watching(*watched):
                 trigger = rule.trigger
                 state = self.states[rule.id]
-                if isinstance(trigger, SequenceTrigger):
+                if isinstance(trigger, AudioEventTrigger):
+                    if not sound_fires(trigger, event):
+                        continue
+                    if self._playing(event.received_monotonic):
+                        self._event(
+                            "skipped",
+                            f"{event.ref.id} heard sound while this hub was playing its own; "
+                            "nothing was done.",
+                            rule.name,
+                        )
+                        continue
+                    fired = True
+                elif isinstance(trigger, SequenceTrigger):
                     camera = self.sources.get(trigger.vision.source_id)
                     zone = camera.zone if camera is not None else None
                     for kind, message in sequence_event(trigger, state, event, zone):
                         self._event(kind, message, rule.name)
                     continue
-                if isinstance(trigger, SensorEventTrigger):
+                elif isinstance(trigger, SensorEventTrigger):
                     fired = sensor_fires(trigger, event)
                 else:
                     assert isinstance(trigger, ThresholdTrigger)
@@ -801,6 +826,10 @@ class Sentry:
                     "triggered", f"{event.kind} from {event.ref.id}: {event.value!r}.", rule.name
                 )
                 self._fire(rule, event.received_monotonic, (event.event_id,), event.zone)
+
+    def _playing(self, at: float) -> bool:
+        """Whether a microphone may be hearing this hub rather than the house."""
+        return self.audio_lock.locked() or at - self.quiet_from < ECHO_SECONDS
 
     def _boost(self) -> None:
         """A motion sensor fired: look harder, for a while, with every watching camera."""
@@ -928,7 +957,7 @@ class Sentry:
                     )
                     notes = sequence_event(trigger, state, observed, sample.get("camera_zone"))
                 fired = any(kind == "triggered" for kind, _ in notes)
-            elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger)):
+            elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger, AudioEventTrigger)):
                 observed = Simulated(
                     ref=SourceRef.parse(sample.get("source_id", trigger.source_id)),
                     kind=sample.get("kind", trigger.kind),
@@ -938,6 +967,8 @@ class Sentry:
                 )
                 if isinstance(trigger, SensorEventTrigger):
                     hit = sensor_fires(trigger, observed)
+                elif isinstance(trigger, AudioEventTrigger):
+                    hit = sound_fires(trigger, observed)
                 else:
                     hit = threshold_fires(trigger, state, observed)
                 if hit and cooled(state, rule.cooldown_seconds, at):
@@ -1194,6 +1225,7 @@ class Sentry:
                         )
                         self._play_tune(action)
                 finally:
+                    self.quiet_from = time.monotonic()
                     self.audio_lock.release()
             elif isinstance(action, SSHAction):
                 self._label("SSH: " + action.command_id)
@@ -1381,34 +1413,43 @@ class Sentry:
 
         def record():
             try:
-                microphone = sound_error = None
-                if microphone_id == PRIMARY_MICROPHONE:
-                    try:
-                        microphone = self._microphone()
-                    except HardwareError as exc:
-                        sound_error = str(exc)
-                elif microphone_id is not None:
-                    sound_error = f"{microphone_id} cannot be recorded by this hub"
-                elif action.audio:
-                    sound_error = f"no microphone is chosen for {source_id}"
-                started = time.monotonic()
-                name, audio_error = self.captures.record_video(
-                    frames,
-                    seconds,
-                    rule,
-                    cancelled,
-                    size=size,
-                    microphone=microphone,
-                    meta=self._evidence(
-                        context,
-                        source_id,
-                        timing="after_trigger",
-                        audio_source_id=microphone_id,
-                        seconds_after_trigger=None
-                        if context is None
-                        else round(started - context.decided_at, 3),
-                    ),
-                )
+                with ExitStack() as stack:
+                    microphone: SoundSource | None = None
+                    sound_error = None
+                    alignment: dict[str, str] = {}
+                    if microphone_id == PRIMARY_MICROPHONE:
+                        try:
+                            microphone = self._microphone()
+                        except HardwareError as exc:
+                            sound_error = str(exc)
+                    elif microphone_id is not None:
+                        remote = self.microphones.get(microphone_id)
+                        if remote is None:
+                            sound_error = f"{microphone_id} cannot be recorded by this hub"
+                        else:
+                            microphone = stack.enter_context(remote.recording(f"rule:{rule}"))
+                            alignment = {"sound_alignment": "hub_arrival"}
+                    elif action.audio:
+                        sound_error = f"no microphone is chosen for {source_id}"
+                    started = time.monotonic()
+                    name, audio_error = self.captures.record_video(
+                        frames,
+                        seconds,
+                        rule,
+                        cancelled,
+                        size=size,
+                        microphone=microphone,
+                        meta=self._evidence(
+                            context,
+                            source_id,
+                            timing="after_trigger",
+                            audio_source_id=microphone_id,
+                            seconds_after_trigger=None
+                            if context is None
+                            else round(started - context.decided_at, 3),
+                            **alignment,
+                        ),
+                    )
                 sound_error = sound_error or audio_error
                 where = "" if source_id == PRIMARY_CAMERA else f" from {source_id}"
                 self._event(
@@ -1435,18 +1476,23 @@ class Sentry:
             action = AudioAction(duration_seconds=action)
         cancelled, seconds = self.cancelled, action.duration_seconds
         microphone_id = action.audio_source_id
-        if microphone_id != PRIMARY_MICROPHONE:
+        remote = self.microphones.get(microphone_id)
+        if microphone_id != PRIMARY_MICROPHONE and remote is None:
             raise Unavailable(f"{microphone_id} cannot be recorded by this hub")
 
         def record():
             try:
-                name = self.captures.record_audio(
-                    self._microphone(),
-                    seconds,
-                    rule,
-                    cancelled,
-                    meta=self._evidence(context, microphone_id, timing="after_trigger"),
-                )
+                meta = self._evidence(context, microphone_id, timing="after_trigger")
+                if remote is None:
+                    name = self.captures.record_audio(
+                        self._microphone(), seconds, rule, cancelled, meta=meta
+                    )
+                else:
+                    meta["sound_alignment"] = "hub_arrival"
+                    with remote.recording(f"rule:{rule}") as sound:
+                        name = self.captures.record_audio(
+                            sound, seconds, rule, cancelled, meta=meta
+                        )
                 self._event("action_finished", "Audio saved: " + name, rule)
             except Exception as exc:
                 self._event("action_failed", f"Audio recording failed: {exc}", rule)

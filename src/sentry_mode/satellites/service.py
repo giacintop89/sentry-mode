@@ -33,6 +33,7 @@ from sentry_mode.sources.models import SourceKind, SourceRecord, SourceRef, Sour
 from sentry_mode.sources.registry import SourceRegistry
 
 if TYPE_CHECKING:
+    from sentry_mode.audio.remote import MicrophoneTable
     from sentry_mode.config import DetectionConfig
     from sentry_mode.sources.manager import SourceManager
     from sentry_mode.vision.media_gateway import MediaGateway
@@ -88,6 +89,7 @@ class SatelliteService:
         inference: InferenceScheduler | None = None,
         detection: DetectionConfig | None = None,
         gateway: MediaGateway | None = None,
+        microphones: MicrophoneTable | None = None,
     ) -> None:
         self.config = config
         self.sources = sources
@@ -120,6 +122,8 @@ class SatelliteService:
         self.detection = detection
         self.gateway = gateway
         self.media_error: str | None = None
+        # Sound: satellite microphones, heard while somebody listens or records.
+        self.microphones = microphones
         self._transport = transport or HubTransport(
             config.mqtt,
             on_message=self.handle,
@@ -156,7 +160,10 @@ class SatelliteService:
     def _open_media(self) -> None:
         """Open the media port, or report why not and carry on with events only."""
         media = self.config.media
-        if not media.enabled or self.cameras is None or self.inference is None:
+        wanted = (self.cameras is not None and self.inference is not None) or (
+            self.microphones is not None
+        )
+        if not media.enabled or not wanted:
             return
         try:
             if self.gateway is None:
@@ -167,7 +174,7 @@ class SatelliteService:
         except Exception as error:  # noqa: BLE001 - cameras on this hub do not depend on it
             self.gateway = None
             self.media_error = str(error)
-            log.error("satellite video is unavailable: %s", error)
+            log.error("satellite video and sound are unavailable: %s", error)
 
     def _open_journal(self) -> None:
         """Open the journal, or carry on without it and say so where it can be seen.
@@ -425,6 +432,8 @@ class SatelliteService:
             named.add(ref)
             if entry.get("kind") == "csi" and entry.get("enabled") is not False:
                 self._adopt_camera(node_id, source_id, entry)
+            if entry.get("kind") == "microphone" and entry.get("enabled") is not False:
+                self._adopt_microphone(node_id, source_id, entry)
             state = SourceState.DISABLED if entry.get("enabled") is False else SourceState.READY
             existing = self.sources.get(ref)
             if existing is not None:
@@ -479,7 +488,31 @@ class SatelliteService:
             return
         log.info("%s is a camera of this hub now", ref)
 
-    # -- video -------------------------------------------------------------------
+    def _adopt_microphone(self, node_id: str, source_id: str, entry: dict) -> None:
+        """Make a satellite microphone one this hub can hear. It sends nothing until asked."""
+        if self.microphones is None:
+            return
+        ref = f"{node_id}.{source_id}"
+        if ref in self.microphones:
+            return
+        from sentry_mode.audio.remote import RemoteMicrophone
+
+        options = entry.get("options")
+        microphone = RemoteMicrophone(
+            node_id,
+            source_id,
+            options if isinstance(options, dict) else {},
+            link=self,
+            media=self.config.media,
+            display_name=entry.get("display_name") or None,
+        )
+        try:
+            self.microphones.add(microphone)
+        except ValueError:
+            return
+        log.info("%s is a microphone this hub can hear now", ref)
+
+    # -- video and sound ---------------------------------------------------------
 
     def start_video(
         self,
@@ -489,8 +522,40 @@ class SatelliteService:
         on_end: Callable[[str, bool], None],
     ) -> str:
         """Ask a node for one camera's video. The stream id comes back; the token does not."""
+        return self._start_media("video", node_id, source_id, connect, on_end)
+
+    def start_audio(
+        self,
+        node_id: str,
+        source_id: str,
+        connect: Callable[[], Any],
+        on_end: Callable[[str, bool], None],
+    ) -> str:
+        """Ask a node for one microphone's sound, the same way."""
+        return self._start_media("audio", node_id, source_id, connect, on_end)
+
+    def renew_video(self, node_id: str, stream_id: str) -> bool:
+        return self._renew_media("video", node_id, stream_id)
+
+    def renew_audio(self, node_id: str, stream_id: str) -> bool:
+        return self._renew_media("audio", node_id, stream_id)
+
+    def stop_video(self, node_id: str, stream_id: str) -> None:
+        self._stop_media("video", node_id, stream_id)
+
+    def stop_audio(self, node_id: str, stream_id: str) -> None:
+        self._stop_media("audio", node_id, stream_id)
+
+    def _start_media(
+        self,
+        kind: str,
+        node_id: str,
+        source_id: str,
+        connect: Callable[[], Any],
+        on_end: Callable[[str, bool], None],
+    ) -> str:
         if self.gateway is None:
-            raise BlockingIOError(self.media_error or "satellite video is switched off")
+            raise BlockingIOError(self.media_error or f"satellite {kind} is switched off")
         record = self.nodes.get(node_id)
         if record is None or record.status != "approved":
             raise BlockingIOError(f"{node_id} is not approved")
@@ -499,11 +564,11 @@ class SatelliteService:
             raise BlockingIOError(f"{node_id} is offline")
         if self.sessions.granted(node_id) is None:
             raise BlockingIOError(f"{node_id} has no current grant")
-        ticket = self.gateway.open(node_id, source_id, connect, on_end=on_end)
+        ticket = self.gateway.open(node_id, source_id, connect, on_end=on_end, kind=kind)
         sent = self._command(
             node_id,
             {
-                "action": "video_start",
+                "action": f"{kind}_start",
                 "hub_epoch": session.hub_epoch,
                 "stream_id": ticket.stream_id,
                 "source_id": source_id,
@@ -515,10 +580,10 @@ class SatelliteService:
         if not sent:
             self.gateway.close(ticket.stream_id, "the command could not be sent")
             raise BlockingIOError("the satellite link is down")
-        log.info("asked %s for video from %s as %s", node_id, source_id, ticket.stream_id)
+        log.info("asked %s for %s from %s as %s", node_id, kind, source_id, ticket.stream_id)
         return ticket.stream_id
 
-    def renew_video(self, node_id: str, stream_id: str) -> bool:
+    def _renew_media(self, kind: str, node_id: str, stream_id: str) -> bool:
         session = self.sessions.current(node_id)
         if self.gateway is None or session is None:
             return False
@@ -527,21 +592,21 @@ class SatelliteService:
         return self._command(
             node_id,
             {
-                "action": "video_renew",
+                "action": f"{kind}_renew",
                 "hub_epoch": session.hub_epoch,
                 "stream_id": stream_id,
                 "duration_seconds": self.config.media.stream_seconds,
             },
         )
 
-    def stop_video(self, node_id: str, stream_id: str) -> None:
+    def _stop_media(self, kind: str, node_id: str, stream_id: str) -> None:
         if self.gateway is not None:
             self.gateway.close(stream_id)
         session = self.sessions.current(node_id)
         if session is not None:
             self._command(
                 node_id,
-                {"action": "video_stop", "hub_epoch": session.hub_epoch, "stream_id": stream_id},
+                {"action": f"{kind}_stop", "hub_epoch": session.hub_epoch, "stream_id": stream_id},
             )
 
     def _end_video(self, node_id: str, reason: str) -> None:

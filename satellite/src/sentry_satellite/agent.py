@@ -16,6 +16,7 @@ from threading import Event, Lock, Thread
 from typing import Any, Callable, Iterable, Protocol
 
 from sentry_satellite import __version__, commands, health, protocol, remote
+from sentry_satellite.audio.publisher import AudioPublisher
 from sentry_satellite.camera.publisher import Connection, Publisher, Stream
 from sentry_satellite.config import Config
 from sentry_satellite.identity import Identity
@@ -94,8 +95,9 @@ class Agent:
     revision: int = 0
     probe_seconds: float = 2.0
     connect_media: Callable[[int], Connection] | None = None
-    """How a stream reaches the hub's media port. None: this node sends no video."""
+    """How a stream reaches the hub's media port. None: this node sends no video or sound."""
     publisher: Callable[..., Publisher] = Publisher
+    audio_publisher: Callable[..., Publisher] = AudioPublisher
 
     _stop: Event = field(default_factory=Event, init=False, repr=False)
     _threads: list[Thread] = field(default_factory=list, init=False, repr=False)
@@ -107,6 +109,7 @@ class Agent:
     _swap: Lock = field(default_factory=Lock, init=False, repr=False)
     _configuring: Lock = field(default_factory=Lock, init=False, repr=False)
     _videos: dict[str, Publisher] = field(default_factory=dict, init=False, repr=False)
+    """Every stream running, video or sound, by the source it carries."""
     published: int = field(default=0, init=False)
     refused: int = field(default=0, init=False)
     unstopped: list[str] = field(default_factory=list, init=False)
@@ -144,7 +147,7 @@ class Agent:
         self._stop.set()
         for publisher in self._end_videos():
             if not publisher.join(self.join_seconds):
-                self.unstopped.append(f"video:{publisher.stream.source_id}")
+                self.unstopped.append(f"{publisher.kind}:{publisher.stream.source_id}")
         with self._swap:
             running = list(self.drivers)
         self._stop_drivers(running)
@@ -359,9 +362,13 @@ class Agent:
         sources = {}
         for source_id, state in dict(self._states).items():
             entry = state.as_dict(now)
+            publisher = videos.get(source_id)
             if hasattr(state.driver, "argv"):
-                publisher = videos.get(source_id)
                 entry["video"] = None if publisher is None else publisher.status()
+            if hasattr(state.driver, "capture"):
+                entry["audio"] = None if publisher is None else publisher.status()
+                entry["capture"] = state.driver.capture.status()
+                entry["level_dbfs"] = state.driver.level_dbfs
             sources[source_id] = entry
         return sources
 
@@ -521,8 +528,8 @@ class Agent:
                 self._grant = None
             self._end_videos()
             return "applied", None
-        if command.action in commands.VIDEO_ACTIONS:
-            return self._video(command)
+        if command.action in commands.MEDIA_ACTIONS:
+            return self._media(command)
         if command.action in {"grant", "renew"}:
             if command.grant_id is None or command.capability is None:
                 return "failed", "a grant names a capability and has an id"
@@ -548,32 +555,38 @@ class Agent:
             return "applied", None
         return "failed", "unknown action"
 
-    # -- video -------------------------------------------------------------------
+    # -- video and sound ---------------------------------------------------------
 
-    def _video(self, command: commands.Command) -> tuple[commands.Outcome, str | None]:
-        """Start, extend or end one camera's stream.
+    def _media(self, command: commands.Command) -> tuple[commands.Outcome, str | None]:
+        """Start, extend or end one camera's or one microphone's stream.
 
-        Video rides on the events grant: a hub that has not granted this node in its
-        current epoch cannot ask for pictures either, and taking the grant away ends them.
+        Streams ride on the events grant: a hub that has not granted this node in its
+        current epoch cannot ask for pictures or sound either, and taking the grant away
+        ends them.
         """
+        kind, _, step = command.action.partition("_")
         now = self.clock()
         with self._lock:
             grant = self._grant
             current = next(
-                (p for p in self._videos.values() if p.stream.stream_id == command.stream_id),
+                (
+                    p
+                    for p in self._videos.values()
+                    if p.stream.stream_id == command.stream_id and p.kind == kind
+                ),
                 None,
             )
-        if command.action == "video_stop":
+        if step == "stop":
             if current is None:
                 return "applied", "that stream is not running"
             self._end_video(current)
             return "applied", None
         if grant is None or not grant.valid(now) or grant.capability != GRANT_REQUIRED:
-            return "failed", "video needs a current grant"
+            return "failed", f"{kind} needs a current grant"
         if grant.hub_epoch != command.hub_epoch:
             return "failed", "that command belongs to another run of the hub"
         expires_at = now + command.duration_seconds
-        if command.action == "video_renew":
+        if step == "renew":
             if current is None or not current.alive:
                 return "failed", "there is no such stream to renew"
             current.renew(expires_at)
@@ -586,13 +599,7 @@ class Agent:
         assert command.source_id is not None and command.token is not None
         assert command.stream_id is not None
         with self._swap:
-            camera = next((d for d in self.drivers if d.source_id == command.source_id), None)
-        if camera is None or not hasattr(camera, "argv"):
-            return "failed", f"{command.source_id} is not a camera on this node"
-        try:
-            argv = camera.argv()
-        except RuntimeError as error:
-            return "failed", str(error)
+            driver = next((d for d in self.drivers if d.source_id == command.source_id), None)
         stream = Stream(
             stream_id=command.stream_id,
             source_id=command.source_id,
@@ -600,9 +607,24 @@ class Agent:
             token=command.token,
             hub_epoch=command.hub_epoch,
         )
-        publisher = self.publisher(
-            stream, argv, self.connect_media, expires_at=expires_at, clock=self.clock
-        )
+        if kind == "audio":
+            if driver is None or not hasattr(driver, "capture"):
+                return "failed", f"{command.source_id} is not a microphone on this node"
+            if getattr(driver, "missing", None):
+                return "failed", driver.missing
+            publisher = self.audio_publisher(
+                stream, driver.capture, self.connect_media, expires_at=expires_at, clock=self.clock
+            )
+        else:
+            if driver is None or not hasattr(driver, "argv"):
+                return "failed", f"{command.source_id} is not a camera on this node"
+            try:
+                argv = driver.argv()
+            except RuntimeError as error:
+                return "failed", str(error)
+            publisher = self.publisher(
+                stream, argv, self.connect_media, expires_at=expires_at, clock=self.clock
+            )
         with self._lock:
             previous = self._videos.get(command.source_id)
             self._videos[command.source_id] = publisher

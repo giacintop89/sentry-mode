@@ -280,6 +280,54 @@ was, and `/api/video/stop` still stops it for everybody. Why this is raw
 H.264 over TLS rather than RTSP is in [the video profile](adr/satellite-video-profile.md),
 with the measurements.
 
+## Microphones
+
+A board with a microphone declares it in the `audio-sensor` profile (or alongside a
+camera, since an I²S microphone leaves the camera port free):
+
+```toml
+[[sources]]
+id = "mic-1"
+kind = "microphone"
+device = "plughw:0,0"          # the ALSA capture device, as arecord --list-devices names it
+interface = "i2s"              # or "usb"; an I²S microphone holds GPIO 18 to 21
+activity = true                # report audio.activity; off by default
+activity_threshold_dbfs = -35  # -90 to -1
+activity_min_seconds = 0.3     # loud for this long before it says so
+activity_hold_seconds = 3.0    # quiet (6 dB under the threshold) for this long before it says false
+```
+
+It needs `arecord` (`sudo apt install alsa-utils`) and the service user in the `audio`
+group, which the unit sets; `sentry-satellite doctor` lists the capture cards it finds.
+Two microphones may not capture from the same device. Capture is always 16 kHz mono.
+
+The microphone sends no sound on its own. With `activity` on, it keeps a capture running
+and reports `audio.activity` — `true` when the level has stayed above the threshold for
+`activity_min_seconds`, `false` when it has been quiet for `activity_hold_seconds` — and
+nothing about what it heard. With `activity` off it opens nothing at all until the hub
+asks.
+
+The hub adds it to the microphones it can hear as `zero-entrance.mic-1`. Only while
+something holds it — a browser listening, a rule recording — does the hub ask for sound;
+the node sends it, as numbered blocks of raw PCM, to the same media port and with the same
+checks as video. The hub puts the blocks back in order, fills a short gap with silence,
+and gives each reader its own two-second queue, so a slow browser loses its own oldest
+sound and nobody else's. Two browsers can listen to one satellite microphone at once.
+Why this is not a WebSocket, and the block layout, are in
+[the audio profile](adr/satellite-audio-profile.md).
+
+A rule can record from it (an `audio` step, or a video's sound) and be set off by it
+([sound on a satellite](rules-v2.md#sound-on-a-satellite)). The Video view's **Enable
+audio** has a list of microphones once there is more than one.
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/api/microphones` | `microphones`: `source_id`, `display_name`, `remote`, `zone`, `state`, `listeners`; a satellite's also has `source_state`, `error`, `level_dbfs` and `blocks` (`blocks`, `duplicates`, `gaps`, `node_gaps`, `lost_samples`, `filled_samples`) |
+| GET | `/api/audio/monitor?source_id=…` | raw 16-bit mono PCM at 16 kHz from that microphone; `404` for one the hub does not know, `409` when two browsers already listen |
+
+The node's own health reports, for each microphone, whether its capture runs, its last
+error and its level.
+
 ## Changing a node's sources from the hub
 
 The **Satellites** page, in the menu once satellites are on, lists every node: whether it
@@ -288,8 +336,8 @@ reading, and what went wrong recently.
 
 An approved, online node can be given a new list of sources from its card. Open *Change
 sources*, edit the list — it is the node's `[[sources]]` written as JSON — and send it.
-Only the kinds in the tables above can be sent; a USB camera, a microphone or Bluetooth
-are refused with a note on when they arrive. The network, the certificates and the hub address
+Only the kinds in the tables above can be sent; a USB camera or Bluetooth are
+refused with a note on when they arrive. The network, the certificates and the hub address
 cannot be changed this way, on purpose.
 
 Each change has a revision number, higher than the last. The node checks the whole list

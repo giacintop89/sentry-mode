@@ -23,6 +23,9 @@ CSI camera
 The browser never sees the node's stream. The hub is its only reader, and anything a
 person watches is the hub's own MJPEG.
 
+Sound from a satellite microphone uses the same gateway, opened as another kind of
+stream ([audio profile](satellite-audio-profile.md)).
+
 ## Why not RTSPS and MediaMTX
 
 The plan named RTSPS through MediaMTX as the candidate. Measured on the board, the

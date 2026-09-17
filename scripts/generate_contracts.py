@@ -15,13 +15,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from sentry_mode.audio.blocks import contract as audio_contract  # noqa: E402
 from sentry_mode.satellites.protocol import contract_schema  # noqa: E402
 
 CONTRACTS = Path(__file__).resolve().parent.parent / "contracts" / "satellite" / "v1"
 
 
 def files() -> dict[Path, str]:
-    return {CONTRACTS / "event.schema.json": json.dumps(contract_schema(), indent=2) + "\n"}
+    return {
+        CONTRACTS / "event.schema.json": json.dumps(contract_schema(), indent=2) + "\n",
+        CONTRACTS / "audio.json": json.dumps(audio_contract(), indent=2) + "\n",
+    }
 
 
 def main() -> int:

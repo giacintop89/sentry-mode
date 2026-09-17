@@ -11,7 +11,8 @@ satellite camera ([rules](rules-v2.md#where-the-evidence-comes-from)).
 - **Record** on the Voice view — a message from the phone microphone, up to 120 s.
 
 A picture is the newest camera frame as a JPEG; a series takes the first at once and the
-rest in the background. An audio recording is node-microphone sound as an AAC `.m4a`. A rule
+rest in the background. An audio recording is sound from the microphone the step names — this node's, or a
+satellite's — as an AAC `.m4a`. A rule
 video is an H.264 MP4 at up to 1280 pixels wide and 10 frames/second, and while it records
 the camera temporarily switches to that size and rate. **Record sound with the video** (on
 by default) muxes microphone audio in; when the microphone is unavailable the video is still
@@ -45,6 +46,8 @@ Next to each new file, a JSON sidecar with the same name records where it came f
   picture or clip taken later, and `manual` for **Record** on the Video view.
 - A video adds `audio_source_id` (null when silent), `requested_seconds`,
   `recorded_seconds` (less when the camera stopped sending), `sound` and `sound_error`.
+- Sound from a satellite microphone adds `sound_alignment: "hub_arrival"`: it is lined up
+  by when it reached the hub, not by the node's clock.
 - A message from the phone has `origin: "browser"` and no source.
 
 `GET /api/captures` adds an `evidence` object with the main fields to each capture that

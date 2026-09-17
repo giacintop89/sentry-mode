@@ -43,6 +43,7 @@ I2C_ADDRESSES = {"bme280": (0x76, 0x77), "adc": (0x48, 0x49, 0x4A, 0x4B)}
 I2C_LINES = {1: (2, 3)}
 I2S_LINES = (18, 19, 20, 21)
 CSI_SIZES = ((320, 240), (640, 480), (1280, 720))
+ALSA_DEVICE = r"^[A-Za-z0-9_][A-Za-z0-9_:=,.-]{0,63}$"
 
 
 def _between(low: float, high: float) -> Any:
@@ -61,6 +62,12 @@ def _kind(value: str) -> str | None:
     except InvalidName as error:
         return str(error)
     return None
+
+
+def _alsa_device(value: str) -> str | None:
+    if re.fullmatch(ALSA_DEVICE, value):
+        return None
+    return "must be an ALSA device name, such as default or plughw:CARD=sndrpii2scard"
 
 
 def _onewire_id(value: str) -> str | None:
@@ -112,6 +119,16 @@ OPTIONS: dict[str, dict[str, tuple]] = {
         "fps": (int, 10, _between(1, 15)),
         "bitrate_kbps": (int, 1000, _between(100, 4000)),
         "keyframe_seconds": (float, 2.0, _between(0.5, 10)),
+    },
+    # Raw 16 kHz mono from ALSA. An I2S microphone holds the I2S pins; a USB one does not.
+    "microphone": {
+        "device": (str, "default", _alsa_device),
+        "interface": (str, "i2s", _one_of("i2s", "usb")),
+        "activity": (bool, False, None),
+        "activity_threshold_dbfs": (float, -35.0, _between(-90, -1)),
+        "activity_min_seconds": (float, 0.3, _between(0.1, 10)),
+        "activity_hold_seconds": (float, 3.0, _between(0.5, 120)),
+        "event_kind": (str, "audio.activity", _kind),
     },
 }
 
@@ -193,8 +210,15 @@ def check_conflicts(sources: "list[Source]") -> None:
             parts[("onewire", options["device"])] = source.id
             reserved.setdefault(options["line"], f"the 1-Wire bus (used by {source.id})")
         elif source.kind == "microphone":
-            for line in I2S_LINES:
-                reserved.setdefault(line, f"the I2S microphone {source.id}")
+            if ("microphone", options["device"]) in parts:
+                raise ConfigError(
+                    f"{source.id} and {parts[('microphone', options['device'])]} "
+                    f"both capture from {options['device']}"
+                )
+            parts[("microphone", options["device"])] = source.id
+            if options["interface"] == "i2s":
+                for line in I2S_LINES:
+                    reserved.setdefault(line, f"the I2S microphone {source.id}")
     for source in sources:
         options = source.options
         if source.kind != "gpio" or not options.get("enabled", True):

@@ -26,15 +26,15 @@ fit the first version.
 - `id` is permanent. It is lowercase letters, digits and hyphens, at most 64
   characters. Renaming a rule changes `name` and leaves `id` alone. The engine's state,
   the event log and the context of every queued action are keyed by `id`.
-- `trigger` is one of the types below. Only `vision`, `sensor_event`, `threshold` and
-  `sequence` can be armed today. The others can be saved, so an editor can prepare them, but arming
+- `trigger` is one of the types below. Only `vision`, `sensor_event`, `threshold`,
+  `sequence` and `audio_event` can be armed today. The others can be saved, so an editor can prepare them, but arming
   refuses them and says why.
 - `photo` and `video` actions take `source_id`, the camera to use (`legacy-primary` by
   default). See [where the evidence comes from](#where-the-evidence-comes-from).
 - `audio` actions take `audio_source_id`, the microphone (`legacy-microphone` by
-  default). `video` actions take it too, and choose sound as described below. A satellite
-  microphone is accepted in the document, but it cannot be used until the audio increment
-  arrives.
+  default) or a satellite microphone such as `zero-entrance.mic-1`. `video` actions take it
+  too, and choose sound as described below. Arming refuses a satellite microphone the hub
+  does not know.
 
 | Trigger | Fires when | Fields |
 |---|---|---|
@@ -42,7 +42,7 @@ fit the first version.
 | `sensor_event` | a sensor reports a change in the given direction | `source_id`, `kind` (e.g. `motion.pir`), `edge` = `rising`, `falling` or `any` |
 | `threshold` | a measurement stays past a limit for `for_seconds` | `source_id`, `kind`, exactly one of `above` / `below`, `hysteresis`, `for_seconds` |
 | `sequence` | a sensor event, then a camera confirming it within the window | `steps` (a `sensor_event`, then a `vision`), `within_seconds` (1–60, default 5), `time_basis`, `same_zone` |
-| `audio_event` | not armable yet | `source_id`, `kind`, `min_level` |
+| `audio_event` | a satellite microphone reports sound | `source_id`, `kind` (`audio.activity`); `min_level` is refused |
 | `presence_state` | not armable yet | `source_id`, `state` |
 | `health_event` | not armable yet | `node_id`, `state` |
 
@@ -102,6 +102,24 @@ rule asks for it. The editor shows the choice as a **Sound** list, with *No soun
 
 Every capture has a sidecar that records its source, the rule and trigger, and how old
 the picture was ([captures](captures.md#where-a-capture-came-from)).
+
+A recording from a satellite microphone is timed by when its sound reached the hub, and
+its sidecar says `sound_alignment: "hub_arrival"`.
+
+## Sound on a satellite
+
+An `audio_event` rule fires when a satellite microphone with `activity` switched on
+reports `audio.activity` as `true`; the `false` that follows only ends the episode. The
+node's own threshold decides what counts as loud, so `min_level` is refused when arming,
+and so is this hub's own microphone, which reports no events.
+
+```json
+{"type": "audio_event", "source_id": "zero-hall.mic-1", "kind": "audio.activity"}
+```
+
+While this hub is playing a sound, and for two seconds after it stops, such an event is
+logged as *…heard sound while this hub was playing its own; nothing was done.* and the
+rule does not run, so a tune or a spoken warning cannot set off the rule that played it.
 
 ## A sensor confirmed by a camera
 

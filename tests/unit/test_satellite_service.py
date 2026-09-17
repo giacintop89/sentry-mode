@@ -618,6 +618,7 @@ def test_the_page_shows_each_source_with_its_reading_and_its_trouble(service):
         "bme280",
         "adc",
         "csi",
+        "microphone",
         "dummy",
     ]
     node = page["nodes"][0]

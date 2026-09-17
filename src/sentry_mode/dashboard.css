@@ -433,4 +433,5 @@ body[data-view=video] .camera-panel>.actions{grid-column:1/-1}
   .satellite-card .actions button{flex:1}
 }
 .camera-panel .panel-title{min-width:0;flex-wrap:wrap}.camera-source{width:auto;max-width:100%;min-height:34px;padding:5px 24px 5px 9px;font-size:14.667px}.camera-info{margin:-10px 0 14px;font:13.667px/1.5 var(--mono);color:var(--muted);overflow-wrap:anywhere}
-@media(max-width:540px){.camera-source{flex:1 1 100%}}
+.listen-source{margin-left:8px}
+@media(max-width:540px){.camera-source{flex:1 1 100%}.listen-source{margin-left:0}}

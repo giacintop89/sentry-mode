@@ -3,9 +3,11 @@
   // block by block through the Web Audio API so the page — not a media element's own
   // buffering — decides how far behind the picture the sound is allowed to fall.
   // Listening follows the video: the node is only audible while the preview is running.
+  // A satellite microphone is heard the same way; the hub asks the node for sound only
+  // while somebody listens.
   const RATE = 16000, LEAD = 0.12, MAX_LEAD = 0.4;
   const toggle = document.getElementById('listen-audio'), result = document.getElementById('video-result');
-  const image = document.getElementById('video');
+  const image = document.getElementById('video'), choice = document.getElementById('listen-source');
   let context = null, abort = null, playAt = 0, notice = null;
   function hint(text) {
     if (notice === text) return;
@@ -36,7 +38,8 @@
       context = context || new AudioContext();
       await context.resume();
       if (context.state !== 'running') throw new Error('blocked');
-      const response = await fetch('/api/audio/monitor', {signal: abort.signal});
+      const url = choice.value ? '/api/audio/monitor?source_id=' + encodeURIComponent(choice.value) : '/api/audio/monitor';
+      const response = await fetch(url, {signal: abort.signal});
       if (!response.ok) throw new Error('unavailable');
       hint('');
       window.nodeRefresh?.();  // The node is now streaming audio; light the nav mark.
@@ -58,7 +61,7 @@
       if (error.name === 'AbortError') return;
       hint(context && context.state !== 'running'
         ? 'Click anywhere on the page to hear the node.'
-        : 'Live audio is unavailable on this node.');
+        : choice.value && choice.selectedIndex > 0 ? 'That microphone cannot be heard right now.' : 'Live audio is unavailable on this node.');
     }
     abort = null;
     if (wanted()) setTimeout(() => { if (wanted()) start(); }, 1000);
@@ -71,6 +74,22 @@
   // The preview image is only visible while video runs, so it tracks the camera state.
   function wanted() { return toggle.checked && !image.hidden && !document.hidden; }
   function sync() { if (wanted()) start(); else stop(); }
+  async function microphones() {
+    try {
+      const response = await fetch('/api/microphones');
+      if (!response.ok) return;
+      const listed = (await response.json()).microphones || [];
+      let saved = '';
+      try { saved = localStorage.getItem('sentry-microphone') || ''; } catch {}
+      choice.replaceChildren(...listed.map(m => new Option(m.display_name + (m.remote ? ' · satellite' : ''), m.remote ? m.source_id : '')));
+      choice.value = listed.some(m => m.remote && m.source_id === saved) ? saved : '';
+      choice.hidden = listed.length < 2;
+    } catch {}
+  }
+  choice.addEventListener('change', () => {
+    try { localStorage.setItem('sentry-microphone', choice.value); } catch {}
+    stop(); sync();
+  });
   toggle.addEventListener('change', sync);
   new MutationObserver(sync).observe(image, {attributeFilter: ['hidden']});
   document.addEventListener('visibilitychange', sync);
@@ -80,5 +99,5 @@
     document.addEventListener(event, () => { if (wanted() && (!context || context.state !== 'running')) { stop(); start(); } });
   }
   window.addEventListener('pagehide', stop);
-  sync();
+  microphones().then(sync);
 })();

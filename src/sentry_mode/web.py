@@ -23,6 +23,7 @@ from sentry_mode.app import run
 from sentry_mode.audio.effects import VoiceEffects
 from sentry_mode.audio.monitor import RATE as AUDIO_RATE
 from sentry_mode.audio.monitor import AudioMonitor
+from sentry_mode.audio.remote import MicrophoneTable
 from sentry_mode.audio.soundboard import Soundboard, SoundboardMessage
 from sentry_mode.audio.sounds import MAX_UPLOAD_BYTES
 from sentry_mode.audio.speech import (
@@ -52,7 +53,7 @@ from sentry_mode.sentry.engine import Sentry
 from sentry_mode.sentry.migration import SchemaUpgradeRequired
 from sentry_mode.sources.legacy import legacy_sources
 from sentry_mode.sources.manager import SourceManager
-from sentry_mode.sources.models import PRIMARY_CAMERA, PRIMARY_MICROPHONE
+from sentry_mode.sources.models import PRIMARY_CAMERA, PRIMARY_MICROPHONE, SourceRef
 from sentry_mode.sources.registry import SourceRegistry
 from sentry_mode.vision.capture import capture_image
 from sentry_mode.vision.preview import PreviewSessions
@@ -170,7 +171,11 @@ class NodeControls:
             self.sources.register(record)
         self.cameras = SourceManager(self.sources)
         self.cameras.add(self.video, register=False)
-        self.sentry = Sentry(config, self.video, self.audio_lock, self.sources, self.cameras)
+        # Satellite microphones, heard only while a browser listens or a rule records.
+        self.microphones = MicrophoneTable()
+        self.sentry = Sentry(
+            config, self.video, self.audio_lock, self.sources, self.cameras, self.microphones
+        )
         self.previews = PreviewSessions(self.cameras, self.video, self.sources)
         self.satellites_error: str | None = None
         self.satellites = self._open_satellites()
@@ -204,6 +209,7 @@ class NodeControls:
             cameras=self.cameras,
             inference=self.inference,
             detection=self.config.detection,
+            microphones=self.microphones,
         )
         assert service is not None
         # A rule that listens to a node pauses while the node is offline.
@@ -240,9 +246,42 @@ class NodeControls:
         }
 
     def stop_satellites(self) -> None:
+        self.microphones.close()
         if self.satellites is not None:
             self.satellites.stop()
             self.satellites = None
+
+    def microphone_listing(self) -> dict:
+        """Every microphone a browser can listen to: this node's own, then the satellites'."""
+        own = self.sources.get(SourceRef.parse(PRIMARY_MICROPHONE))
+        listed = [
+            {
+                "source_id": PRIMARY_MICROPHONE,
+                "display_name": own.display_name if own else "Primary microphone",
+                "remote": False,
+                "zone": None,
+                "state": own.state.value if own else "unknown",
+                "listeners": self.monitor.listening,
+            }
+        ]
+        for microphone in sorted(self.microphones, key=lambda m: m.source_id):
+            record = self.sources.get(SourceRef.parse(microphone.source_id))
+            status = microphone.status()
+            listed.append(
+                {
+                    "source_id": microphone.source_id,
+                    "display_name": record.display_name if record else microphone.display_name,
+                    "remote": True,
+                    "zone": record.zone if record else None,
+                    "state": status["state"],
+                    "source_state": record.state.value if record else "unknown",
+                    "error": status["error"],
+                    "listeners": status["listeners"],
+                    "level_dbfs": status["level_dbfs"],
+                    "blocks": status["blocks"],
+                }
+            )
+        return {"microphones": listed}
 
     def runtime_status(self) -> dict:
         return {
@@ -327,12 +366,16 @@ class NodeControls:
             # What the node is sending or receiving live, for the nav mark on every page.
             return {
                 "video": bool(self.video.status()["running"]),
-                "audio": self.monitor.listening > 0 or self.talk.active,
+                "audio": self.monitor.listening > 0
+                or self.talk.active
+                or any(m.listeners for m in self.microphones),
             }
         if path == "/api/video/status":
             return self.video_status()
         if path == "/api/cameras":
             return self.previews.listing()
+        if path == "/api/microphones":
+            return self.microphone_listing()
         if path == "/api/camera/list":
             return {"devices": list_cameras(), "configured": self.config.camera.device}
         if path == "/api/audio/list":
@@ -882,8 +925,18 @@ def make_handler(controls: NodeControls):
 
         def stream_audio(self):
             streaming = False
+            source_id = query(self.path).get("source_id") or PRIMARY_MICROPHONE
+            remote = controls.microphones.get(source_id)
+            if source_id != PRIMARY_MICROPHONE and remote is None:
+                self.respond({"error": f"{source_id} is not a microphone on this hub."}, 404)
+                return
             try:
-                with controls.monitor.listen(controls.config) as audio:
+                listening = (
+                    remote.listen("browser")
+                    if remote is not None
+                    else controls.monitor.listen(controls.config)
+                )
+                with listening as audio:
                     self.send_response(200)
                     self.send_header("Content-Type", f"audio/L16; rate={AUDIO_RATE}; channels=1")
                     self.send_header("Cache-Control", "no-store")

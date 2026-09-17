@@ -1,9 +1,11 @@
-"""The one door video from a satellite comes in through.
+"""The one door video and sound from a satellite come in through.
 
 A satellite never streams unasked. The hub opens a stream here first, which gives it a
 stream id and a one-off token, and sends both to the node in a `video_start` command. The
 node then connects to this port with its own certificate, says which stream it is, and
-sends H.264 until the hub stops renewing.
+sends H.264 until the hub stops renewing. A microphone does the same with `audio_start`,
+and sends blocks of PCM (see `sentry_mode.audio.blocks`); the header says which of the two
+it is, and a stream opened for one is refused to the other.
 
 Everything has to agree before a byte of video is read: the certificate is from the
 satellites CA, it is the one the node was approved with, the node is the one the stream was
@@ -36,6 +38,7 @@ log = logging.getLogger(__name__)
 MAX_HEADER = 1024
 READ_CHUNK = 64 * 1024
 MAX_WAITING_FOR_KEYFRAME = 4 * 1024 * 1024
+KINDS = ("video", "audio")
 
 
 class Sink(Protocol):
@@ -66,6 +69,7 @@ class _Stream:
     digest: bytes
     expires_at: float
     connect: Callable[[], Sink]
+    kind: str = "video"
     on_end: Callable[[str, bool], None] | None = None
     """Told why a connection ended, and whether the stream itself is over."""
     connection: socket.socket | None = None
@@ -125,7 +129,7 @@ class MediaGateway:
             thread = threading.Thread(target=target, name=f"media-{name}", daemon=True)
             thread.start()
             self._threads.append(thread)
-        log.info("waiting for satellite video on port %d", self.port)
+        log.info("waiting for satellite media on port %d", self.port)
 
     def stop(self) -> None:
         self._stopping.set()
@@ -150,8 +154,11 @@ class MediaGateway:
         *,
         on_end: Callable[[str, bool], None] | None = None,
         seconds: float | None = None,
+        kind: str = "video",
     ) -> Ticket:
         """Expect one stream from one node's source, for a while."""
+        if kind not in KINDS:
+            raise GatewayError(f"a stream carries {' or '.join(KINDS)}, not {kind}")
         if self._listener is None or self._stopping.is_set():
             raise GatewayError("the media port is not open")
         with self._lock:
@@ -166,6 +173,7 @@ class MediaGateway:
                 digest=_digest(token),
                 expires_at=self.clock() + (seconds or self.config.stream_seconds),
                 connect=connect,
+                kind=kind,
                 on_end=on_end,
             )
             self._streams[stream.stream_id] = stream
@@ -208,6 +216,7 @@ class MediaGateway:
                 {
                     "stream_id": stream.stream_id,
                     "source_id": f"{stream.node_id}.{stream.source_id}",
+                    "kind": stream.kind,
                     "connected": stream.connection is not None,
                     "connections": stream.connections,
                     "bytes_in": stream.bytes_in,
@@ -312,6 +321,8 @@ class MediaGateway:
                 reason = "unknown_stream"
             elif stream.source_id != document.get("source_id"):
                 reason = "wrong_source"
+            elif stream.kind != document.get("kind", "video"):
+                reason = "wrong_kind"
             elif not isinstance(token, str) or not hmac.compare_digest(
                 _digest(token), stream.digest
             ):
@@ -347,12 +358,12 @@ class MediaGateway:
         try:
             sink = stream.connect()
             connection.settimeout(self.config.stall_seconds)
-            waiting: bytes | None = b""
+            waiting: bytes | None = b"" if stream.kind == "video" else None
             while not self._stopping.is_set():
                 try:
                     data = connection.recv(READ_CHUNK)
                 except TimeoutError:
-                    reason = f"no video for {self.config.stall_seconds:g} s"
+                    reason = f"no {stream.kind} for {self.config.stall_seconds:g} s"
                     break
                 if not data:
                     break
@@ -379,7 +390,9 @@ class MediaGateway:
             if sink is not None:
                 sink.close()
             final = ended or reason
-            log.info("video from %s.%s ended: %s", stream.node_id, stream.source_id, final)
+            log.info(
+                "%s from %s.%s ended: %s", stream.kind, stream.node_id, stream.source_id, final
+            )
             if stream.on_end is not None:
                 stream.on_end(final, ended is not None)
 

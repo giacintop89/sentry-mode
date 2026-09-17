@@ -417,7 +417,11 @@ class ThresholdTrigger(Model):
 
 
 class AudioEventTrigger(Model):
-    """A sound class heard by a microphone. Accepted in a document; not armable yet."""
+    """A satellite microphone reporting sound: `audio.activity` when it gets loud.
+
+    The node decides what loud is, with its own threshold; the event says that it was, not
+    how loud. `min_level` is kept for documents that name it and refused when arming.
+    """
 
     type: Literal["audio_event"] = "audio_event"
     source_id: SourceId
@@ -515,7 +519,7 @@ Trigger = Annotated[
     Field(discriminator="type"),
 ]
 
-ARMABLE_TRIGGERS = frozenset({"vision", "sensor_event", "threshold", "sequence"})
+ARMABLE_TRIGGERS = frozenset({"vision", "sensor_event", "threshold", "sequence", "audio_event"})
 
 
 def trigger_camera(trigger) -> str | None:

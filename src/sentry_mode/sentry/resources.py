@@ -22,6 +22,7 @@ from sentry_mode.sentry.config import (
     TRIGGER_SOURCE,
     Action,
     AudioAction,
+    AudioEventTrigger,
     HealthEventTrigger,
     PhotoAction,
     RuleV2,
@@ -124,6 +125,7 @@ EXPECTED = {
     "vision": SourceKind.CAMERA,
     "sensor_event": SourceKind.SENSOR,
     "threshold": SourceKind.SENSOR,
+    "audio_event": SourceKind.MICROPHONE,
 }
 
 
@@ -134,11 +136,14 @@ class ResourcePlanner:
         *,
         satellites_enabled: bool,
         cameras: Container[str] = (),
+        microphones: Container[str] = (),
     ) -> None:
         self.sources = sources
         self.satellites_enabled = satellites_enabled
         self.cameras = cameras
         """Cameras besides the primary one that this hub can drive itself."""
+        self.microphones = microphones
+        """Satellite microphones this hub can hear."""
 
     def plan(self, rules: list[RuleV2]) -> Plan:
         problems: list[Problem] = []
@@ -178,6 +183,15 @@ class ResourcePlanner:
                     else:
                         fail(f"{trigger.source_id} is not a camera this hub can watch")
                 elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger)):
+                    watched.add(trigger.source_id)
+                elif isinstance(trigger, AudioEventTrigger):
+                    if trigger.min_level is not None:
+                        fail(
+                            "min_level is not available: a node reports that it heard "
+                            "something loud, and its own threshold decides what loud is"
+                        )
+                    if SourceRef.parse(trigger.source_id).is_local:
+                        fail(f"{trigger.source_id} reports no sound events; only satellites do")
                     watched.add(trigger.source_id)
 
             if self._actions(rule, used, fail, ready, notes):
@@ -276,11 +290,12 @@ class ResourcePlanner:
             )
             if microphone is not None:
                 used.add(microphone)
-                if self._check(microphone, SourceKind.MICROPHONE, fail):
-                    if not SourceRef.parse(microphone).is_local:
-                        fail("recording from a satellite microphone is not available yet")
-                    elif microphone != PRIMARY_MICROPHONE:
-                        fail(f"sound is recorded only from {PRIMARY_MICROPHONE} for now")
+                heard = microphone == PRIMARY_MICROPHONE or microphone in self.microphones
+                if self._check(microphone, SourceKind.MICROPHONE, fail) and not heard:
+                    if SourceRef.parse(microphone).is_local:
+                        fail(f"sound is recorded only from {PRIMARY_MICROPHONE} on this hub")
+                    else:
+                        fail(f"{microphone} is not a microphone this hub can hear")
         return camera
 
     def _check(self, source_id: str, kind: SourceKind | None, fail) -> bool:

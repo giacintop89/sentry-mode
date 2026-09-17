@@ -18,6 +18,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol
 
 from sentry_mode.audio.playback import command
 from sentry_mode.core.errors import HardwareError
@@ -38,6 +39,20 @@ STALE_PART_SECONDS = 600
 """A `.part` file this old belongs to no recording still running: the longest is 60 s."""
 PARTIAL = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-z0-9-]{1,40}\.(?:.*\.)?part")
 AAC = ["-ac", "1", "-c:a", "aac", "-b:a", "96k"]
+
+
+class SoundInput(Protocol):
+    """A microphone ffmpeg reads from an input it cannot be interrupted on, such as a pipe.
+
+    `end` makes that input finish, so ffmpeg writes a complete file of what it had.
+    """
+
+    argv: list[str]
+
+    def end(self) -> None: ...
+
+
+SoundSource = list[str] | SoundInput
 
 
 def slug(text: str) -> str:
@@ -204,9 +219,10 @@ class Captures:
         return path.name
 
     @staticmethod
-    def _start_audio(microphone: list[str], seconds: float, output: Path) -> subprocess.Popen:
+    def _start_audio(microphone: SoundSource, seconds: float, output: Path) -> subprocess.Popen:
+        argv = microphone if isinstance(microphone, list) else microphone.argv
         return subprocess.Popen(
-            ["ffmpeg", "-nostdin", "-v", "error", "-y", *microphone,
+            ["ffmpeg", "-nostdin", "-v", "error", "-y", *argv,
              "-t", f"{seconds:g}", *AAC, "-movflags", "+faststart", str(output)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -214,8 +230,16 @@ class Captures:
         )  # fmt: skip
 
     @staticmethod
-    def _finish_audio(process: subprocess.Popen, output: Path) -> str | None:
+    def _finish_audio(
+        process: subprocess.Popen, output: Path, microphone: SoundSource | None = None
+    ) -> str | None:
         """Stop a microphone recording so ffmpeg writes a playable file; return any error."""
+        if microphone is not None and not isinstance(microphone, list):
+            microphone.end()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
         if process.poll() is None:
             process.send_signal(signal.SIGINT)
         try:
@@ -232,7 +256,7 @@ class Captures:
 
     def record_audio(
         self,
-        microphone: list[str],
+        microphone: SoundSource,
         seconds: int,
         rule: str,
         stop_event: threading.Event,
@@ -247,7 +271,7 @@ class Captures:
             while process.poll() is None and time.monotonic() < deadline:
                 if stop_event.wait(0.1):
                     break
-            error = self._finish_audio(process, partial)
+            error = self._finish_audio(process, partial, microphone)
             if error:
                 raise HardwareError(f"Audio recording failed: {error}")
             self._commit(partial, path, meta, "audio")
@@ -294,7 +318,7 @@ class Captures:
         rule: str,
         stop_event: threading.Event,
         size: tuple[int, int] | None = None,
-        microphone: list[str] | None = None,
+        microphone: SoundSource | None = None,
         meta: dict | None = None,
     ) -> tuple[str, str | None]:
         """Sample the latest frame at a fixed rate so the file lasts as long as asked.
@@ -364,7 +388,7 @@ class Captures:
                 detail = errors.decode(errors="replace").strip()[-300:]
                 raise HardwareError(f"Video encoding failed: {detail or process.returncode}")
             if audio is not None:
-                audio_error = self._finish_audio(audio, audio_part)
+                audio_error = self._finish_audio(audio, audio_part, microphone)
             if audio is not None and not audio_error:
                 try:
                     command(

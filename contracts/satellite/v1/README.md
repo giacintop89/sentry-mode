@@ -6,6 +6,9 @@ means. This directory is that agreement, and it is the only place where it is wr
 - `event.schema.json` is generated from `src/sentry_mode/satellites/protocol.py` by
   `scripts/generate_contracts.py`. Do not edit it by hand: change the models and
   regenerate. A test fails if the committed file and the models have drifted apart.
+- `audio.json` is the layout of the blocks of sound a microphone sends to the hub's media
+  port, generated from `src/sentry_mode/audio/blocks.py` by the same script. The agent's
+  tests pack a block and check it against this file.
 - `fixtures/valid/` holds messages both sides must accept, `fixtures/invalid/` messages
   both sides must reject. The hub checks them against its Pydantic models; the satellite,
   which has no Pydantic, checks them against the schema. Same files, same verdicts.

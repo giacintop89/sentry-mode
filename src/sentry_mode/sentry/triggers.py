@@ -11,7 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from sentry_mode.sentry.config import SensorEventTrigger, ThresholdTrigger, VisionTrigger
+from sentry_mode.sentry.config import (
+    AudioEventTrigger,
+    SensorEventTrigger,
+    ThresholdTrigger,
+    VisionTrigger,
+)
 from sentry_mode.sources.models import SourceRef
 from sentry_mode.vision.detection import Detection
 
@@ -73,7 +78,9 @@ def detection_matches(trigger: VisionTrigger, detection: Detection) -> bool:
 # -- satellite events --------------------------------------------------------------------
 
 
-def is_for(trigger: SensorEventTrigger | ThresholdTrigger, event: Observed) -> bool:
+def is_for(
+    trigger: SensorEventTrigger | ThresholdTrigger | AudioEventTrigger, event: Observed
+) -> bool:
     return event.ref.id == trigger.source_id and event.kind == trigger.kind
 
 
@@ -93,6 +100,11 @@ def sensor_fires(trigger: SensorEventTrigger, event: Observed) -> bool:
     if trigger.edge == "falling":
         return event.value is False
     return True
+
+
+def sound_fires(trigger: AudioEventTrigger, event: Observed) -> bool:
+    """A microphone that has just become loud. Its going quiet again is not news."""
+    return is_for(trigger, event) and event.quality == "valid" and event.value is True
 
 
 def _number(event: Observed) -> float | None:

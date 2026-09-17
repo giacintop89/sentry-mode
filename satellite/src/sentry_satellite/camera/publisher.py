@@ -57,6 +57,9 @@ class Stream:
 
 
 class Publisher:
+    kind = "video"
+    """What the stream carries, as the header tells the hub."""
+
     def __init__(
         self,
         stream: Stream,
@@ -98,7 +101,9 @@ class Publisher:
     # -- control, from the command thread -----------------------------------------
 
     def start(self) -> None:
-        self._thread = Thread(target=self._run, name=f"video:{self.stream.source_id}", daemon=True)
+        self._thread = Thread(
+            target=self._run, name=f"{self.kind}:{self.stream.source_id}", daemon=True
+        )
         self._thread.start()
 
     def renew(self, expires_at: float) -> None:
@@ -211,6 +216,7 @@ class Publisher:
     def _handshake(self, connection: Connection) -> None:
         header = {
             "schema_version": 1,
+            "kind": self.kind,
             "stream_id": self.stream.stream_id,
             "source_id": self.stream.source_id,
             "token": self.stream.token,

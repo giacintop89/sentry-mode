@@ -95,6 +95,8 @@ def doctor(arguments) -> int:
             note(name, value)
         for name, value in _cameras(config):
             note(name, value)
+        for name, value in _microphones(config):
+            note(name, value)
         try:
             tls_context(config.tls.ca_file, config.tls.cert_file, config.tls.key_file)
             note("tls", "certificate, key and CA are a usable set")
@@ -153,6 +155,25 @@ def _buses(config: configuration.Config) -> list[tuple[str, str]]:
                 hint = "missing" + hint.removeprefix("not usable")
         found.append((name, f"{path} " + ("ready" if usable else hint)))
     return found
+
+
+def _microphones(config: configuration.Config) -> list[tuple[str, str]]:
+    """Whether ALSA has a capture device at all, asked of arecord itself."""
+    if not any(s.kind == "microphone" and s.enabled for s in config.sources):
+        return []
+    binary = shutil.which("arecord")
+    if binary is None:
+        return [("microphone", "arecord missing (apt install alsa-utils)")]
+    try:
+        listed = subprocess.run(
+            [binary, "--list-devices"], capture_output=True, text=True, timeout=15
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return [("microphone", f"could not be listed: {error}")]
+    cards = [line for line in listed.stdout.splitlines() if line.startswith("card ")]
+    if not cards:
+        return [("microphone", "no capture device (is the overlay set, and the audio group?)")]
+    return [("microphone", line.partition(": ")[2] or line) for line in cards]
 
 
 def _cameras(config: configuration.Config) -> list[tuple[str, str]]:

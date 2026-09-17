@@ -29,10 +29,10 @@ Status: accepted, PR-05.
 - **Context on every step.** A queued step carries `ActionContext`: rule id, revision,
   `arm_epoch`, zone, origin and sources. Arming and disarming each advance the epoch, and
   a step from an older epoch is dropped. A sequence is queued in full or not at all.
-- **Not everything is armable yet.** `audio_event`, `presence_state` and `health_event`
-  pass validation and can be saved, but arming refuses them. Satellite cameras and
-  microphones can be named in actions, but using one is refused until the media
-  increments add them.
+- **Not everything is armable yet.** `presence_state` and `health_event`
+  pass validation and can be saved, but arming refuses them. A satellite camera or
+  microphone named in an action is refused until the hub knows it (PR-08 added cameras,
+  PR-11 microphones and `audio_event`).
 
 ## Why
 

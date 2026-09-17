@@ -55,14 +55,21 @@ class DemandTable:
     """The leases held on one source. `on_change` runs after every change, outside the
     table's own lock."""
 
-    def __init__(self, source_id: str, on_change: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        source_id: str,
+        on_change: Callable[[], None] | None = None,
+        *,
+        purposes: tuple[str, ...] = PURPOSES,
+    ) -> None:
         self.source_id = source_id
         self.on_change = on_change
+        self.purposes = purposes
         self._lock = threading.Lock()
         self._leases: dict[int, Lease] = {}
 
     def hold(self, purpose: str, owner: str, **params: Any) -> Lease:
-        if purpose not in PURPOSES:
+        if purpose not in self.purposes:
             raise ValueError(f"unknown purpose {purpose!r}")
         lease = Lease(self.source_id, purpose, owner, params)
         lease._release = self._drop
@@ -92,7 +99,7 @@ class DemandTable:
             ]
 
     def summary(self) -> dict[str, int]:
-        return {purpose: self.count(purpose) for purpose in PURPOSES}
+        return {purpose: self.count(purpose) for purpose in self.purposes}
 
 
 class Camera(Protocol):

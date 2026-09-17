@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "magic": "SMA1",
+  "version": 1,
+  "byte_order": "little",
+  "header_bytes": 30,
+  "struct": "<4sBBHIQQH",
+  "fields": [
+    {
+      "name": "magic",
+      "type": "bytes4"
+    },
+    {
+      "name": "version",
+      "type": "u8"
+    },
+    {
+      "name": "flags",
+      "type": "u8"
+    },
+    {
+      "name": "reserved",
+      "type": "u16"
+    },
+    {
+      "name": "sequence",
+      "type": "u32"
+    },
+    {
+      "name": "first_sample",
+      "type": "u64"
+    },
+    {
+      "name": "captured_ns",
+      "type": "u64"
+    },
+    {
+      "name": "samples",
+      "type": "u16"
+    }
+  ],
+  "sample_format": "s16le",
+  "channels": 1,
+  "sample_rate": 16000,
+  "block_samples": 1600,
+  "max_block_samples": 3200,
+  "flags": {
+    "gap": 1
+  }
+}
