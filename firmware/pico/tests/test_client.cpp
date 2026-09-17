@@ -587,4 +587,69 @@ TEST(packet_ids_count_up_past_the_end_and_never_reach_zero) {
   CHECK(seen != 0);
 }
 
+TEST(a_goodbye_waits_for_what_was_owed_and_is_not_a_failure) {
+  // A node told to stop says so, rather than going quiet and letting the broker publish
+  // its will. What was in flight goes first: a goodbye that jumped the queue would leave
+  // the hub waiting for an event this node had already promised.
+  Fixture fixture;
+  Client client(fixture.connect, kTopic);
+  CHECK(bring_up(fixture, client, 1000, kFirst));
+
+  const uint8_t payload[] = "{\"schema_version\":1}";
+  Pending state;
+  state.topic = kState;
+  state.payload = payload;
+  state.size = sizeof(payload) - 1;
+  state.retain = true;
+  state.announcement = true;
+  CHECK(fixture.ask(client, 1000, &state) > 0);
+  CHECK(fixture.give(client, puback(published_id(fixture.out, sizeof(fixture.out)))) ==
+        Refusal::kNone);
+  CHECK(client.link() == Link::kOnline);
+
+  Pending pending = an_event(payload, sizeof(payload) - 1);
+  CHECK(fixture.ask(client, 1000, &pending) > 0);
+  CHECK(fixture.todo == Todo::kPublish);
+  const uint16_t id = published_id(fixture.out, sizeof(fixture.out));
+
+  client.leave();
+  CHECK(client.leaving());
+  // Not yet: the broker has not said it has the event.
+  CHECK(fixture.ask(client, 1000, &pending) == 0);
+  CHECK(fixture.todo == Todo::kNothing);
+
+  CHECK(fixture.give(client, puback(id)) == Refusal::kNone);
+  CHECK(fixture.effect == Effect::kDelivered);
+
+  const size_t bytes = fixture.ask(client, 1000, nullptr);
+  CHECK(bytes == 2);
+  CHECK(fixture.out[0] == 0xe0);  // DISCONNECT
+  CHECK(fixture.out[1] == 0x00);
+  CHECK(fixture.todo == Todo::kLeave);
+  CHECK(client.link() == Link::kOffline);
+  CHECK(!client.leaving());
+
+  // And it is a departure, not a fall: nothing here is counted as a connection that
+  // failed, so the next one is not made to wait as though something had gone wrong.
+  client.closed();
+  CHECK(client.failures() == 0);
+  CHECK(client.trouble() == Trouble::kNone);
+}
+
+TEST(a_command_owed_an_answer_is_answered_before_a_goodbye) {
+  Fixture fixture;
+  Client client(fixture.connect, kTopic);
+  CHECK(bring_up(fixture, client, 500, kSecond));
+  CHECK(fixture.give(client, command(77, "{}")) == Refusal::kNone);
+  CHECK(fixture.in.type == Type::kPublish);
+
+  client.leave();
+  CHECK(fixture.ask(client, 500) > 0);
+  CHECK(fixture.todo == Todo::kAcknowledge);
+  CHECK(fixture.out[0] == 0x40);
+
+  CHECK(fixture.ask(client, 500) == 2);
+  CHECK(fixture.todo == Todo::kLeave);
+}
+
 int main() { return harness::run_all("client"); }

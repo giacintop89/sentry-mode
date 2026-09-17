@@ -56,7 +56,7 @@ bool Spool::make_room(const Reading& reading, Kept kept) {
   return true;
 }
 
-bool Spool::offer(const Reading& reading, Kept kept) {
+bool Spool::offer(const Reading& reading, Kept kept, bool initial) {
   if (reading.source_id == nullptr || reading.kind == nullptr) {
     ++losses_.refused;
     return false;
@@ -93,6 +93,7 @@ bool Spool::offer(const Reading& reading, Kept kept) {
   entry.quality = reading.quality;
   entry.kept = kept;
   entry.replayed = false;
+  entry.initial = initial;
 
   size_t slot = (first_ + count_) % kSpoolCapacity;
   entries_[slot] = entry;
@@ -100,7 +101,7 @@ bool Spool::offer(const Reading& reading, Kept kept) {
   return true;
 }
 
-bool Spool::front(Reading& out, bool& replayed) const {
+bool Spool::front(Reading& out, bool& replayed, bool* initial) const {
   if (count_ == 0) return false;
   const Entry& held = at(0);
   out = Reading{};
@@ -117,6 +118,7 @@ bool Spool::front(Reading& out, bool& replayed) const {
   out.unit = held.has_unit ? held.unit : nullptr;
   out.quality = held.quality;
   replayed = held.replayed;
+  if (initial != nullptr) *initial = held.initial;
   return true;
 }
 

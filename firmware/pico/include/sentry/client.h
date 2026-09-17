@@ -65,6 +65,7 @@ enum class Todo {
   kAcknowledge, // a PUBACK the broker is owed
   kPing,
   kDrop,        // the pending message cannot be written as it stands; let go of it
+  kLeave,       // a DISCONNECT went out; send it, then close the socket
   kGiveUp,      // close the socket; `trouble()` says what went unanswered
 };
 
@@ -115,6 +116,12 @@ class Client {
   // The socket is gone, however it went: closed, reset, given up on. Nothing is in flight
   // afterwards, and what was in flight was never acknowledged and stays with the caller.
   void closed();
+
+  // Go, and say so. A broker told that a client meant to leave keeps the will to itself,
+  // so a node that was asked to stop does not also look like one that fell off the
+  // network. What is already owed and what is already in flight go first.
+  void leave() { leaving_ = true; }
+  bool leaving() const { return leaving_; }
 
   // What to send now. Returns the number of bytes written into `out`, and sets `todo` to
   // what they are — `kNothing` with zero bytes when there is nothing to do yet.
@@ -195,6 +202,7 @@ class Client {
   size_t owed_count_ = 0;
 
   uint32_t failures_ = 0;
+  bool leaving_ = false;
   uint32_t retransmissions_ = 0;
   uint32_t unacknowledged_ = 0;
   uint32_t unwritable_ = 0;

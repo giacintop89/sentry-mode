@@ -53,6 +53,7 @@ void Client::closed() {
   announcing_ = false;
   owed_count_ = 0;
   waiting_pong_ = false;
+  leaving_ = false;
 }
 
 uint16_t Client::take_packet_id() {
@@ -169,6 +170,24 @@ size_t Client::next(uint32_t now_ms, const Pending* pending, uint8_t* out, size_
     for (size_t index = 1; index < owed_count_; ++index) owed_[index - 1] = owed_[index];
     --owed_count_;
     todo = Todo::kAcknowledge;
+    return wrote(bytes, now_ms);
+  }
+
+  // Everything owed has gone and nothing is in flight: a goodbye that jumped the queue
+  // would leave the hub waiting for an answer that is never coming.
+  if (leaving_ && in_flight_ == 0) {
+    const size_t bytes = write_disconnect(out, capacity);
+    if (bytes == 0) {
+      give_up(Trouble::kProtocol);
+      todo = Todo::kGiveUp;
+      return 0;
+    }
+    // Not a failure and not something to try again: this node asked to go. The session
+    // ends here, and `closed()` afterwards has nothing left to count.
+    step_ = Step::kFinished;
+    session_.dropped();
+    leaving_ = false;
+    todo = Todo::kLeave;
     return wrote(bytes, now_ms);
   }
 

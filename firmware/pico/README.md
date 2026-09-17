@@ -12,11 +12,14 @@ It has now also run on a board. A Raspberry Pi Pico 2 W (RP2350) was flashed on
 2026-09-17 with the device build below, and the events it published from its own die
 temperature were accepted by the hub's models and by the published schema — the same
 serializer, the same bytes, on a chip where `long` is 32 bits and unaligned access is not
-free. The same board has since joined a network and taken its time from it. That is the
-first hardware gate of `PICO-01` and no more than that: there is still no MQTT, no flash
-and no sensor driver on the board. The rest of the hardware gates in the
-[implementation plan](../../docs/sentry-mode-pico-implementation-plan.md) stay marked
-**not executed**.
+free. The same board has since joined a network, taken its time from it, proved who it
+was to this system's own Mosquitto over mutual TLS, announced itself, and been granted,
+renewed, revoked and stopped by a hub speaking through the broker. What is still not on
+the board is flash — the record and the key live in RAM and are gone at the next boot —
+health messages, and any sensor driver at all. The hardware gates in the
+[implementation plan](../../docs/sentry-mode-pico-implementation-plan.md) that this has
+executed are named where they were executed, below; the rest stay marked **not
+executed**.
 
 ## Building and running the tests
 
@@ -123,7 +126,8 @@ What it listens for on the serial line:
 | `join` | Joins that network and starts asking `pool.ntp.org` what time it is. |
 | `credentials <json>` | The authority, the certificate and the key, as PEM. Nothing prints any of it back. |
 | `connect` | Opens the one connection this node makes, and keeps making it again if it drops. |
-| `disconnect` | Closes it and stops trying. |
+| `disconnect` | Says goodbye on it, then closes it and stops trying. |
+| `command <json>` | One command, down the same path a command from the broker takes: the lease, the answer, and the baseline if it is a new grant. For a bench with no hub at the other end. |
 | `status` | Address, signal, clock, credentials, socket, what the client thinks and what is queued. |
 | `time <unix_ms>` | The time, for a board with no network to ask. |
 | `sample` | A reading now, rather than at the next interval. |
@@ -234,6 +238,73 @@ randomness in it so that a houseful of them coming back after a power cut does n
 in step. That is `T06` for a wrong authority and `T23` for the backoff; an expired
 certificate, one issued for another name and a revoked one are still **not executed**.
 
+### Answering the hub
+
+A node that only publishes is a node nobody can stop. The board now reads the commands it
+subscribed to, decides what they mean with `lease.cpp`, and answers every one of them on
+its `acks` topic. Nothing is published until a hub has granted it: the readings taken
+before that wait in the queue, coalescing as they go, and `queued=16 coalesced=19` is a
+board that has been taking its own temperature for a while and telling nobody.
+
+The whole of it, driven from the hub's side of the broker with `mosquitto_pub` and watched
+from both ends on 2026-09-17:
+
+```
+# grant=none epoch=0 expires_in=0s owed=0 answered=0 unanswered=0
+--- a grant, for a minute
+# grant 7675bd49-…: applied
+# grant=8ef02d9c-… epoch=41 expires_in=54s owed=0 answered=1        queued=0
+--- the same grant again, the ack having gone missing
+# grant 7675bd49-…: applied, already handled
+# grant=8ef02d9c-… epoch=41 expires_in=49s owed=0 answered=1
+--- a renewal that is not newer than the grant it renews
+# renew edfbc700-…: failed, a renewal that is not newer than the grant it renews
+--- a renewal that is
+# renew a396f1ef-…: applied
+# grant=8ef02d9c-… epoch=41 expires_in=116s
+--- a configuration this firmware has no sources for
+# configure e3d18c40-…: failed, this firmware carries one source of its own and cannot yet be configured
+--- something that is not a command
+# a command arrived that this node will not act on: malformed
+--- a grant addressed to another node
+# a command arrived that this node will not act on: not_for_this_node
+--- taking it back
+# revoke 6eb5f240-…: applied
+# grant=none epoch=41 expires_in=0s answered=5                      queued=4
+--- stop
+# stop 7af2072c-…: applied, stopping
+# gone, as asked
+```
+
+The second line of each pair is what `status` said afterwards. The duplicate is the point
+of the third: the same `command_id` is answered again — `applied, already handled`, the
+answer it was given the first time — and the expiry goes on counting down from 54 to 49
+seconds rather than starting over. That is `T11`. A renewal that is not newer than the
+grant it renews is refused for the same reason.
+
+On the broker's side, in order: the retained `state` with `online: true`, seven acks for
+six commands, the readings that had been waiting, and among them one with
+
+```json
+"delivery":{…,"hub_epoch":41,"grant_id":"8ef02d9c-…","initial_state":true}
+```
+
+which is the baseline — where the source stands, taken the moment the grant arrived so
+that a hub which has just restarted is not told about a change it has no `before` for. It
+is queued like a thing that happened once, so the periodic reading two seconds later
+cannot quietly take its place. After the revocation, nothing: the queue fills again and
+the broker is told nothing, which is `T10`. Every event between the grant and the
+revocation carries the epoch and the grant id it was published under. That is `T09` and
+`T12` for what a node can show of them; the hub's own half of `T12` — an old will not
+ending a new session — is the hub's to prove.
+
+Two of those lines were not there the first time. `stop` used to be the node closing the
+socket, and the broker did what a broker does when a client vanishes: it published the
+will, so the hub saw the node go offline twice, once because it was told to stop and once
+as though it had fallen off the network. A goodbye is now said in full — what is owed,
+then the retained `online: false`, then an MQTT `DISCONNECT`, which is what tells a broker
+to keep the will to itself. The log above ends with one offline state, not two.
+
 ## What is in here
 
 | Path | What it is |
@@ -258,7 +329,7 @@ certificate, one issued for another name and a revoked one are still **not execu
 | `include/sentry/input.h`, `src/core/input.cpp` | What a wire may mean: the baseline that is not an intrusion, the settling window a PIR needs, the debounce, and the polarity software cannot guess. |
 | `include/sentry/sensors.h`, `src/core/sensors.cpp` | Turning what a sensor returned into a reading or into an admission there is none: the 1-Wire CRC, the 85 °C a DS18B20 holds after a reset, and an ADC count nothing could have produced. |
 | `include/sentry/pins.h`, `src/core/pins.cpp` | Which pins a configuration may use and who already has them, refused whole rather than in part. |
-| `tests/` | The fifteen suites, and a tiny harness rather than a test framework. |
+| `tests/` | The seventeen suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful
@@ -280,10 +351,14 @@ fails here, in a second, rather than at link time on a target with neither.
   two answers is, what happens when the network goes away mid-interval, and whether a node
   that has lost its clock should go back to `unsynced` rather than keep stamping readings
   from a counter nobody has checked.
-- Answering the hub. A board connects, announces itself and publishes; a command that
-  arrives is counted and then ignored. The lease, the ACK, the grant and the revocation —
-  `lease.cpp` and `command.cpp` know what they are and nothing on the board acts on them
-  yet, so `T09`–`T12` are **not executed**.
+- Anything a command could configure. A `configure` is parsed, judged and answered —
+  `failed`, because this firmware has one source soldered into it — and the same is true
+  of every camera and microphone command. Sources that can be added and taken away are
+  PICO-04's, and until then the answer is a refusal rather than a promise.
+- How long a reading waited. Every event goes out with `queued_ms: 0`, because the queue
+  does not record when something was put in it. A reading that waited forty seconds says
+  so only through its own `occurred_at`, which is the honest field but not the one the
+  hub uses to notice a node that is falling behind.
 - Health, and saying what was given up. `spool.cpp` counts what it coalesced and dropped
   and `status` prints it, but nothing publishes a `health` message, so the hub sees a node
   that is online and nothing about how it is doing.

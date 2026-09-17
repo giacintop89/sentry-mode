@@ -48,12 +48,17 @@ struct Losses {
 class Spool {
  public:
   // Take a reading into the queue. False when it was not kept, which is counted.
-  bool offer(const Reading& reading, Kept kept);
+  //
+  // A baseline is where a source stands, taken because a hub has just granted this node
+  // and needs to know before it can tell news from the way things already were. It is kept
+  // like a transition, and it travels marked, so that a door found open is not published
+  // as a door that just opened.
+  bool offer(const Reading& reading, Kept kept, bool initial = false);
 
   // The oldest reading still waiting, pointing into the spool's own storage. It stays
   // there until `accepted()`: a publish that was never acknowledged is retried with the
   // same event id rather than becoming a second event.
-  bool front(Reading& out, bool& replayed) const;
+  bool front(Reading& out, bool& replayed, bool* initial = nullptr) const;
 
   // The broker acknowledged the front. Only now is it gone.
   void accepted();
@@ -82,6 +87,7 @@ class Spool {
     Quality quality = Quality::kValid;
     Kept kept = Kept::kPeriodic;
     bool replayed = false;
+    bool initial = false;
   };
 
   Entry& at(size_t index) { return entries_[(first_ + index) % kSpoolCapacity]; }

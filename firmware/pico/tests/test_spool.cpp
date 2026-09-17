@@ -159,6 +159,29 @@ TEST(a_reading_keeps_its_own_value_and_not_the_next_ones) {
   CHECK_TEXT(front.unit, "\xc2\xb0" "C");
 }
 
+TEST(a_baseline_travels_marked_and_is_not_replaced_by_the_next_reading) {
+  // The hub asked where this source stands. What comes back must say that it is a
+  // baseline, or a contact found closed becomes a contact that just closed; and a
+  // periodic reading taken a moment later must not quietly take its place.
+  Spool spool;
+  CHECK(spool.offer(a_reading("door-1", "sensor.contact", 1), Kept::kTransition, true));
+  CHECK(spool.offer(a_reading("door-1", "sensor.contact", 2), Kept::kPeriodic));
+  CHECK(spool.size() == 2);
+
+  Reading front;
+  bool replayed = false;
+  bool initial = false;
+  CHECK(spool.front(front, replayed, &initial));
+  CHECK(initial);
+  CHECK(front.sequence == 1);
+  spool.accepted();
+
+  initial = true;
+  CHECK(spool.front(front, replayed, &initial));
+  CHECK(!initial);
+  CHECK(front.sequence == 2);
+}
+
 TEST(a_field_too_long_for_the_queue_is_refused_and_not_cut_down) {
   Spool spool;
   std::string long_name(sentry::kMaxSourceText + 4, 'a');
