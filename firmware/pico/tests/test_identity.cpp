@@ -88,3 +88,59 @@ TEST(a_boot_id_is_a_uuid_and_a_different_one_every_boot) {
 }
 
 int main() { return harness::run_all("identity"); }
+
+TEST(a_record_may_carry_the_network_this_board_joins) {
+  Provisioning found;
+  CHECK(reads(R"({"node_id":"pico-ingresso","mqtt_host":"hub.lan","mqtt_port":8883,)"
+              R"("wifi_ssid":"casa","wifi_password":"una password lunga"})",
+              found));
+  CHECK(found.has_wifi());
+  CHECK_TEXT(found.wifi_ssid, "casa");
+  CHECK_TEXT(found.wifi_password, "una password lunga");
+}
+
+TEST(a_node_reached_another_way_needs_no_network) {
+  Provisioning found;
+  CHECK(reads(R"({"node_id":"pico-ingresso","mqtt_host":"hub.lan","mqtt_port":8883})", found));
+  CHECK(!found.has_wifi());
+  CHECK_TEXT(found.wifi_ssid, "");
+}
+
+TEST(an_open_network_is_one_with_no_passphrase_not_one_nobody_named) {
+  Provisioning found;
+  CHECK(reads(R"({"node_id":"pico-ingresso","mqtt_host":"hub.lan","mqtt_port":8883,)"
+              R"("wifi_ssid":"ospiti","wifi_password":""})",
+              found));
+  CHECK(found.has_wifi());
+  CHECK_TEXT(found.wifi_password, "");
+}
+
+TEST(a_key_already_derived_is_taken_as_it_is) {
+  Provisioning found;
+  CHECK(reads(R"({"node_id":"pico-ingresso","mqtt_host":"hub.lan","mqtt_port":8883,)"
+              R"("wifi_ssid":"casa","wifi_password":")"
+              "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+              R"("})",
+              found));
+  CHECK(std::strlen(found.wifi_password) == 64);
+}
+
+TEST(a_network_this_board_could_never_join_is_refused_here_and_not_by_the_radio) {
+  Provisioning found;
+  const std::string head =
+      R"({"node_id":"pico-ingresso","mqtt_host":"hub.lan","mqtt_port":8883,)";
+  const std::string refused[] = {
+      head + R"("wifi_password":"una password lunga"})",       // a key for no network
+      head + R"("wifi_ssid":"","wifi_password":"lunghissima"})",  // the same, spelled out
+      head + R"("wifi_ssid":"casa","wifi_password":"corta"})",    // too short for WPA2
+      head + std::string(R"("wifi_ssid":"casa","wifi_password":")") + std::string(64, 'z') + R"("})",
+      head + std::string(R"("wifi_ssid":")") + std::string(33, 'a') + R"("})",  // 33 bytes
+      head + R"("wifi_ssid":"casa","wifi_password":123})",
+  };
+  for (const std::string& one : refused) {
+    if (reads(one.c_str(), found)) {
+      std::printf("    %s was accepted\n", one.c_str());
+      CHECK(false);
+    }
+  }
+}

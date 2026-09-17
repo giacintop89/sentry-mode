@@ -1,10 +1,10 @@
 // The first program in this repository that runs on a board rather than a computer.
 //
 // It is deliberately small, and deliberately honest about what it does not have. There is
-// no network here and no broker: the point of this binary is to prove that the modules
-// under src/protocol and src/core, which until now only ever ran on a host, produce the
-// same bytes on an RP2350 — a chip with a different word size for `long`, different
-// alignment rules and a real 12-bit converter attached to a real die.
+// no broker here yet: the point of this binary is to prove that the modules under
+// src/protocol and src/core, which until now only ever ran on a host, behave the same on
+// an RP2350 — a chip with different alignment rules and a real 12-bit converter attached to
+// a real die — and, now, that the board can join a network and find out what time it is.
 //
 // It speaks over USB serial, one line at a time:
 //
@@ -12,19 +12,29 @@
 //   # ...                  anything else it wants to say
 //   {"schema_version":1,…} an event, exactly as it would be published
 //
-// and it listens for two commands:
+// and it listens for:
 //
-//   time <unix_ms>         what time it is, because the board has no idea
+//   provision <json>       the identity and the network, as the provisioning tool writes it
+//   join                   join that network and start asking the time
+//   status                 what it has: address, signal, clock
+//   time <unix_ms>         what time it is, for a board with no network to ask
 //   sample                 take a reading now instead of waiting for the next one
 //
-// Until something tells it the time, it publishes nothing. A board with no clock could
-// stamp its readings from the moment it booted and call that a timestamp; it would be a
-// number nobody measured, and the hub decides what counts as live from those.
+// Until something tells it the time — SNTP, or that command — it publishes nothing. A board
+// with no clock could stamp its readings from the moment it booted and call that a
+// timestamp; it would be a number nobody measured, and the hub decides what counts as live
+// from exactly those.
+//
+// The provisioning record given here lives in RAM and is gone at the next boot. Writing it
+// to flash is PICO-02, and it is the part that needs the erase and program calls plus the
+// two slots `store.cpp` already describes.
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "hardware/adc.h"
+#include "net.h"
 #include "pico/rand.h"
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -44,9 +54,16 @@ namespace {
 // before it reads as anything but noise.
 constexpr uint kTemperatureInput = 4;
 constexpr uint32_t kIntervalMs = 2000;
+constexpr uint32_t kJoinPatienceMs = 20000;
+// Whoever runs the pool, rather than a vendor's own: a satellite that only ever reaches the
+// hub still has to agree with it about what time it is.
+constexpr const char* kTimeServer = "pool.ntp.org";
 
 sentry::Ticks ticks;
 sentry::Timebase clock_;
+sentry::Provisioning provisioning;
+bool provisioned = false;
+uint32_t answers_seen = 0;
 char node_id[sentry::kMaxNodeIdText] = {};
 char boot_id[sentry::kUuidText] = {};
 char connection_id[sentry::kUuidText] = {};
@@ -71,7 +88,8 @@ bool make_uuid(char* out) {
 }
 
 // A name the hub could actually have registered: the board's own serial number, which is
-// different on every board and the same across every boot of this one.
+// different on every board and the same across every boot of this one. A provisioned node
+// is called whatever the hub registered it as instead.
 void name_this_board() {
   pico_unique_board_id_t id;
   pico_get_unique_board_id(&id);
@@ -104,7 +122,7 @@ void publish_temperature() {
   const uint64_t moment = now_us();
   int64_t unix_ms = 0;
   if (!clock_.unix_ms(moment, unix_ms)) {
-    std::printf("# no time yet; send: time <unix_ms>\n");
+    std::printf("# no time yet; join a network, or send: time <unix_ms>\n");
     return;
   }
   char stamped[32] = {};
@@ -147,9 +165,70 @@ void publish_temperature() {
   std::fflush(stdout);
 }
 
+// Whatever the network last said the time was, handed to the timebase here rather than in
+// the callback: what a reading may claim about itself is decided in one place, on this
+// loop, and not from lwIP's context.
+void take_the_time_if_it_arrived() {
+  const net::TimeAnswers answers = net::time_answers();
+  if (answers.count == answers_seen || answers.count == 0) return;
+  answers_seen = answers.count;
+  clock_.sync(answers.last_unix_ms, ticks.extend(static_cast<uint32_t>(answers.taken_at_us)));
+  char stamped[32] = {};
+  if (sentry::write_timestamp(answers.last_unix_ms, stamped, sizeof(stamped))) {
+    std::printf("# the network says it is %s (answer %lu)\n", stamped,
+                static_cast<unsigned long>(answers.count));
+  }
+}
+
+void join_the_network() {
+  if (!provisioned || !provisioning.has_wifi()) {
+    std::printf("# no network in the provisioning record; send: provision <json>\n");
+    return;
+  }
+  std::printf("# joining %s\n", provisioning.wifi_ssid);
+  std::fflush(stdout);
+  const net::Joined joined =
+      net::join(provisioning.wifi_ssid, provisioning.wifi_password, kJoinPatienceMs);
+  if (joined != net::Joined::kYes) {
+    std::printf("# %s\n", net::name_of(joined));
+    return;
+  }
+  char address[20] = {};
+  net::address(address, sizeof(address));
+  std::printf("# joined %s as %s, %ld dBm\n", provisioning.wifi_ssid, address,
+              static_cast<long>(net::signal_strength()));
+  net::ask_the_time(kTimeServer);
+}
+
+void say_status() {
+  char address[20] = {};
+  const bool has_address = net::address(address, sizeof(address));
+  const net::TimeAnswers answers = net::time_answers();
+  std::printf("# node=%s provisioned=%s link=%s address=%s signal=%ld clock=%s answers=%lu\n",
+              node_id, provisioned ? "yes" : "no", net::linked() ? "up" : "down",
+              has_address ? address : "none", static_cast<long>(net::signal_strength()),
+              clock_.synced() ? "synced" : "unsynced", static_cast<unsigned long>(answers.count));
+}
+
+void take_provisioning(const char* document) {
+  sentry::Provisioning found;
+  if (!sentry::read_provisioning(document, std::strlen(document), found)) {
+    std::printf("# that is not a provisioning record this firmware can use\n");
+    return;
+  }
+  provisioning = found;
+  provisioned = true;
+  // Both are the same fixed array, and the record was checked before it got here.
+  std::memcpy(node_id, found.node_id, sizeof(node_id));
+  // The passphrase is never printed back: a serial log is a file like any other.
+  std::printf("# provisioned as %s, broker %s:%u, network %s\n", provisioning.node_id,
+              provisioning.mqtt_host, static_cast<unsigned>(provisioning.mqtt_port),
+              provisioning.has_wifi() ? provisioning.wifi_ssid : "none");
+}
+
 // Whatever the host has sent, up to a newline. Returns false when there is no full line.
 bool read_line(char* out, size_t capacity) {
-  static char pending[64];
+  static char pending[512];
   static size_t held = 0;
   int letter;
   while ((letter = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
@@ -167,6 +246,18 @@ bool read_line(char* out, size_t capacity) {
 }
 
 void obey(const char* line) {
+  if (std::strncmp(line, "provision ", 10) == 0) {
+    take_provisioning(line + 10);
+    return;
+  }
+  if (std::strcmp(line, "join") == 0) {
+    join_the_network();
+    return;
+  }
+  if (std::strcmp(line, "status") == 0) {
+    say_status();
+    return;
+  }
   if (std::strncmp(line, "time ", 5) == 0) {
     int64_t unix_ms = 0;
     if (std::sscanf(line + 5, "%lld", reinterpret_cast<long long*>(&unix_ms)) != 1) {
@@ -189,22 +280,19 @@ void obey(const char* line) {
 int main() {
   stdio_init_all();
 
-#if defined(CYW43_WL_GPIO_LED_PIN)
-  // The light on a W board is on the wireless chip, so bringing it up is also the first
-  // proof that the chip answers at all.
-  const bool wireless = cyw43_arch_init() == 0;
-#elif defined(PICO_DEFAULT_LED_PIN)
+  name_this_board();
+
+  // The radio is brought up whether or not there is a network to join: it is also what
+  // lights the LED on a W board, and bringing it up is the first proof that it answers.
+  const bool wireless = net::start(node_id);
+#if !defined(CYW43_WL_GPIO_LED_PIN) && defined(PICO_DEFAULT_LED_PIN)
   gpio_init(PICO_DEFAULT_LED_PIN);
   gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
-  const bool wireless = false;
-#else
-  const bool wireless = false;
 #endif
 
   adc_init();
   adc_set_temp_sensor_enabled(true);
 
-  name_this_board();
   if (!make_uuid(boot_id) || !make_uuid(connection_id)) {
     std::printf("# this board cannot make an identifier for this boot\n");
     return 1;
@@ -220,7 +308,9 @@ int main() {
 
   absolute_time_t next = make_timeout_time_ms(kIntervalMs);
   while (true) {
-    char line[64];
+    net::poll();
+    take_the_time_if_it_arrived();
+    char line[512];
     if (read_line(line, sizeof(line))) obey(line);
     if (absolute_time_diff_us(get_absolute_time(), next) <= 0) {
       led(true);

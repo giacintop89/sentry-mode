@@ -78,7 +78,10 @@ target_compile_options(sentry_protocol PRIVATE
 if(SENTRY_PICO_TARGET STREQUAL "device")
   # One program, and the same library the host tests are run against. What it proves is
   # that these modules behave on the chip as they do on a computer; it is not a satellite.
-  add_executable(sentry_firmware src/device/main.cpp)
+  add_executable(sentry_firmware src/device/main.cpp src/device/net.cpp)
+  # lwipopts.h lives beside them, because what of lwIP this firmware compiles in is part of
+  # the firmware and not of whoever builds it.
+  target_include_directories(sentry_firmware PRIVATE src/device)
   target_link_libraries(sentry_firmware PRIVATE
     sentry_protocol
     pico_stdlib
@@ -87,7 +90,11 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
     hardware_adc
   )
   if(PICO_CYW43_SUPPORTED)
-    target_link_libraries(sentry_firmware PRIVATE pico_cyw43_arch_none)
+    # The background context: lwIP runs from an alarm and the main loop never blocks on it.
+    target_link_libraries(sentry_firmware PRIVATE
+      pico_cyw43_arch_lwip_threadsafe_background
+      pico_lwip_sntp
+    )
   endif()
   target_compile_options(sentry_firmware PRIVATE -Wall -Wextra -Wshadow -Werror)
   # Over USB, so one cable carries the power and everything this program says. The UART

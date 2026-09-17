@@ -82,12 +82,31 @@ or, if it is running MicroPython, `import machine; machine.bootloader()` — and
 onto the `RP2350` volume that appears. The board reboots into the firmware.
 
 `src/device/main.cpp` is one small program and not a satellite. It brings up USB serial and
-the wireless chip's LED, names itself from the board's own serial number, makes its boot id
-from `pico_rand`, reads the die temperature through `sensors.cpp` and publishes it with the
-same `write_event` the host tests exercise. It has no clock of its own, so it publishes
-nothing until something tells it the time — a board that stamped readings from the moment
-it booted would be writing timestamps nobody measured. Two commands on the serial line:
-`time <unix_ms>` and `sample`.
+the wireless chip, names itself from the board's own serial number, makes its boot id from
+`pico_rand`, reads the die temperature through `sensors.cpp` and publishes it with the same
+`write_event` the host tests exercise. It has no clock of its own, so it publishes nothing
+until something tells it the time — a board that stamped readings from the moment it booted
+would be writing timestamps nobody measured.
+
+What it listens for on the serial line:
+
+| Line | What it does |
+|---|---|
+| `provision <json>` | The identity and the network, as `read_provisioning` reads them. It lives in RAM: flash is PICO-02. |
+| `join` | Joins that network and starts asking `pool.ntp.org` what time it is. |
+| `status` | Address, signal strength, whether the clock is synced, how many answers arrived. |
+| `time <unix_ms>` | The time, for a board with no network to ask. |
+| `sample` | A reading now, rather than at the next interval. |
+
+The record holds a passphrase, so it is handed over rather than committed:
+
+```sh
+firmware/pico/tools/provision_board.py --record .local/pico-provisioning.json --join
+```
+
+`.local/` is ignored by git. Nothing prints the passphrase back — not the tool, not the
+board — and `identity.cpp` refuses a record with a key for a network it was never given,
+because joining the wrong network is worse than refusing to join one.
 
 The check that makes it worth having:
 
@@ -109,6 +128,12 @@ ok  board-temperature seq=1 33.13 °C valid clock=synced at 2026-09-17 11:56:26.
 
 The binary is 327 kB of text and 6.9 kB of static RAM, most of it the wireless firmware and
 TinyUSB; `arm-none-eabi-size build/pico2w/sentry_firmware.elf` says so on any change.
+
+**The joining and the time are built but not yet proven on a board.** The temperature run
+above is; the Wi-Fi and SNTP path compiles and has not been watched to work, because the
+board's USB link failed during the attempt — `device descriptor read/64, error -110`, which
+is a cable or a port and not this firmware. Until somebody has seen `# joined` and a time
+from the network, that is where this stands.
 
 ## What is in here
 
