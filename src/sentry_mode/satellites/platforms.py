@@ -79,7 +79,7 @@ PICO_W = Platform(
     name="pico-w-sensor",
     architecture="rp2040",
     summary="A Pico W running the Sentry firmware: sensors only, no camera, no microphone.",
-    drivers=("gpio", "onewire", "adc", "board"),
+    drivers=("gpio", "onewire", "adc", "ble", "board"),
     max_sources=8,
     max_config_bytes=2048,
     streams=(),
@@ -136,6 +136,22 @@ FIRMWARE_OPTIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     "adc": (("pin",), ("pin", "output", "event_kind", "interval_seconds")),
     "onewire": (("pin",), ("pin", "device", "event_kind", "interval_seconds")),
+    # `ble` needs one of two things rather than any one thing, so its required half is
+    # empty and the choice is made below, where it can be said in words.
+    "ble": (
+        (),
+        (
+            "address",
+            "ibeacon_uuid",
+            "ibeacon_major",
+            "ibeacon_minor",
+            "rssi_min",
+            "enter_sightings",
+            "enter_window_seconds",
+            "absent_after_seconds",
+            "event_kind",
+        ),
+    ),
 }
 
 # An option that names something only a Linux machine has. Sending one to a microcontroller
@@ -174,6 +190,25 @@ def check_configuration(chosen: Platform, entries: list[dict]) -> list[str]:
         for option in needed:
             if entry.get(option) is None:
                 reasons.append(f"{name}: a {kind} source needs {option}, and this one names none")
+        if kind == "ble":
+            # One device, named the one way or the other. Both is two claims about what is
+            # being watched, and neither is a source that would match every phone that goes
+            # past the window — which the firmware refuses and so does this.
+            named = [
+                option for option in ("address", "ibeacon_uuid") if entry.get(option) is not None
+            ]
+            if len(named) != 1:
+                reasons.append(
+                    f"{name}: a device is watched by its address or by its iBeacon, not "
+                    + ("both" if named else "neither")
+                )
+            if "address" in named and (
+                entry.get("ibeacon_major") is not None or entry.get("ibeacon_minor") is not None
+            ):
+                reasons.append(
+                    f"{name}: ibeacon_major and ibeacon_minor are parts of an iBeacon, and "
+                    "this one watches an address"
+                )
         for option, value in entry.items():
             if option in ("id", "kind", "enabled") or option in known:
                 continue

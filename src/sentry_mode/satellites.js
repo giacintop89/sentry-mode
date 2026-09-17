@@ -38,6 +38,8 @@
     if (typeof options.pin === 'number') bits.push('GPIO ' + options.pin);
     if (options.device) bits.push(String(options.device));
     if (options.measure) bits.push(String(options.measure));
+    if (options.address) bits.push(String(options.address));
+    if (options.ibeacon_uuid) bits.push('beacon ' + String(options.ibeacon_uuid).slice(0, 8) + '…');
     if (typeof options.interval_seconds === 'number') bits.push('every ' + span(options.interval_seconds));
     return bits.join(' · ') || '—';
   }

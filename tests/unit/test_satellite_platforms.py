@@ -162,6 +162,68 @@ def test_a_source_that_names_no_pin_is_refused_before_it_is_sent():
     assert platforms.check_configuration(PICO, [{"id": "die", "kind": "board"}]) == []
 
 
+def test_a_watched_device_is_named_one_way_or_the_other_and_never_both():
+    # The firmware says the same thing and refuses the same configurations; this is only
+    # here so that the answer arrives on the page instead of after a round trip.
+    assert platforms.check_configuration(PICO, [{"id": "ghost", "kind": "ble"}]) == [
+        "ghost: a device is watched by its address or by its iBeacon, not neither"
+    ]
+    assert platforms.check_configuration(
+        PICO,
+        [
+            {
+                "id": "ghost",
+                "kind": "ble",
+                "address": "AA:BB:CC:DD:EE:FF",
+                "ibeacon_uuid": "e2c56db5-dffb-48d2-b060-d0f5a71096e0",
+            }
+        ],
+    ) == ["ghost: a device is watched by its address or by its iBeacon, not both"]
+    # A major and a minor are parts of a beacon. On a source watching an address they are a
+    # second claim about a different thing, and the node would ignore one of the two.
+    assert platforms.check_configuration(
+        PICO, [{"id": "phone", "kind": "ble", "address": "AA:BB:CC:DD:EE:FF", "ibeacon_minor": 7}]
+    ) == [
+        "phone: ibeacon_major and ibeacon_minor are parts of an iBeacon, and this one "
+        "watches an address"
+    ]
+    # And the two that are right are right on both boards, with nothing else named.
+    assert (
+        platforms.check_configuration(
+            PICO, [{"id": "phone", "kind": "ble", "address": "AA:BB:CC:DD:EE:FF"}]
+        )
+        == []
+    )
+    assert (
+        platforms.check_configuration(
+            PICO,
+            [
+                {
+                    "id": "keys",
+                    "kind": "ble",
+                    "ibeacon_uuid": "e2c56db5-dffb-48d2-b060-d0f5a71096e0",
+                    "ibeacon_major": 1,
+                    "ibeacon_minor": 7,
+                    "rssi_min": -80,
+                    "enter_sightings": 2,
+                    "enter_window_seconds": 10,
+                    "absent_after_seconds": 120,
+                    "event_kind": "presence.state",
+                }
+            ],
+        )
+        == []
+    )
+
+
+def test_a_board_with_a_radio_is_the_only_one_offered_a_watch():
+    assert "ble" in PICO.drivers
+    # A pin is not one of the words a watch knows, on either kind of node.
+    assert platforms.check_configuration(
+        PICO, [{"id": "phone", "kind": "ble", "address": "AA:BB:CC:DD:EE:FF", "pin": 15}]
+    ) == ["phone.pin: a ble source on a pico-w-sensor has no pin"]
+
+
 def test_an_option_the_firmware_has_no_place_for_is_refused_by_the_driver_that_has_none():
     wrong = platforms.check_configuration(
         PICO, [{"id": "pir-1", "kind": "gpio", "pin": 17, "interval_seconds": 30}]
