@@ -72,6 +72,16 @@ const char* kAdcOptions[] = {"pin", "output", "event_kind", "interval_seconds"};
 const char* kOneWireOptions[] = {"pin", "device", "event_kind", "interval_seconds"};
 // The same words the Linux agent takes for the same source, minus the adapter: a board
 // with one radio has nothing to choose between.
+// A microphone on this board reports that something was loud and nothing else. There is no
+// `activity` among these, because there is nothing else it could be doing: the agent's
+// microphone waits for the hub to ask for a stream, and this one has nowhere to put sound.
+const char* kMicrophoneOptions[] = {"pin",
+                                    "clock_pin",
+                                    "channel",
+                                    "activity_threshold_dbfs",
+                                    "activity_min_seconds",
+                                    "activity_hold_seconds",
+                                    "event_kind"};
 const char* kBleOptions[] = {"address",         "ibeacon_uuid",         "ibeacon_major",
                              "ibeacon_minor",   "rssi_min",             "enter_sightings",
                              "enter_window_seconds", "absent_after_seconds", "event_kind"};
@@ -196,17 +206,84 @@ bool watchfulness_of(const Source& source, const char* id, Watchfulness& out, Un
   return true;
 }
 
+// How loud, for how long, and how long a quiet ends it. Every one of them has the same
+// default the agent's microphone has, so a source file written for a Pi and sent to a board
+// behaves the same way for the same sound.
+bool loudness_of(const Source& source, const char* id, Loudness& out, Unplanned& why,
+                 char* detail, size_t capacity) {
+  struct Number {
+    const char* name;
+    double least;
+    double most;
+    double* into;
+  };
+  Loudness wanted;
+  const Number numbers[] = {
+      {"activity_threshold_dbfs", kLeastThresholdDbfs, kMostThresholdDbfs,
+       &wanted.threshold_dbfs},
+      {"activity_min_seconds", kLeastMinSeconds, kMostMinSeconds, &wanted.min_seconds},
+      {"activity_hold_seconds", kLeastHoldSeconds, kMostHoldSeconds, &wanted.hold_seconds},
+  };
+  for (const Number& number : numbers) {
+    const Option* option = option_named(source, number.name);
+    if (option == nullptr) continue;
+    double value = 0.0;
+    if (!any_number(*option, value)) {
+      why = Unplanned::kWrongType;
+      say(detail, capacity, "%s: %s is a number", id, number.name);
+      return false;
+    }
+    if (!(value >= number.least) || !(value <= number.most)) {
+      why = Unplanned::kOutOfRange;
+      say(detail, capacity, "%s: %s is between %.1f and %.1f", id, number.name, number.least,
+          number.most);
+      return false;
+    }
+    *number.into = value;
+  }
+  // The detector is the authority on what it can survive; this refuses earlier, with the
+  // name of the source on it.
+  Activity listening;
+  if (!listening.configure(wanted)) {
+    why = Unplanned::kOutOfRange;
+    say(detail, capacity, "%s: those levels and durations do not go together", id);
+    return false;
+  }
+  out = wanted;
+  return true;
+}
+
 // The one pin a source is on, or none. Two drivers here take a pin and the map does not
 // care which: what it is protecting is the wire.
-int pin_of(const Planned& planned) {
+// The most pins one source holds: a microphone's data, clock and word select.
+constexpr size_t kMostPins = 3;
+
+// The pins a source holds, into `out`. Most hold one; a microphone holds three and a watch
+// holds none.
+size_t pins_of(const Planned& planned, int out[kMostPins]) {
   // A source that is in the list without being read holds no wire. That is what makes
   // `"enabled": false` a way to keep a source written down rather than a way to reserve a
   // pin nobody is using.
-  if (!planned.enabled) return -1;
-  if (planned.driver == Driver::kGpio) return planned.gpio.pin;
-  if (planned.driver == Driver::kAdc) return planned.adc.pin;
-  if (planned.driver == Driver::kOneWire) return planned.onewire.pin;
-  return -1;
+  if (!planned.enabled) return 0;
+  if (planned.driver == Driver::kGpio) {
+    out[0] = planned.gpio.pin;
+    return 1;
+  }
+  if (planned.driver == Driver::kAdc) {
+    out[0] = planned.adc.pin;
+    return 1;
+  }
+  if (planned.driver == Driver::kOneWire) {
+    out[0] = planned.onewire.pin;
+    return 1;
+  }
+  if (planned.driver == Driver::kMicrophone) {
+    out[0] = planned.microphone.pin;
+    out[1] = planned.microphone.clock_pin;
+    out[2] = planned.microphone.clock_pin + 1;
+    return 3;
+  }
+  return 0;
 }
 
 }  // namespace
@@ -223,6 +300,8 @@ const char* name_of(Driver driver) {
       return "onewire";
     case Driver::kBle:
       return "ble";
+    case Driver::kMicrophone:
+      return "microphone";
     case Driver::kNone:
       break;
   }
@@ -268,12 +347,17 @@ Plan& Plan::operator=(const Plan& other) {
   for (size_t index = 0; index < kMaxPlanned; ++index) planned_[index] = other.planned_[index];
   pins_.clear();
   for (size_t index = 0; index < count_; ++index) {
-    const int pin = pin_of(planned_[index]);
-    if (pin < 0) continue;
+    int held[kMostPins] = {};
+    const size_t how_many = pins_of(planned_[index], held);
     PinRefusal refusal = PinRefusal::kNone;
-    // It was agreed to once, on the same board, so this cannot refuse; if it somehow did,
-    // the plan would be running a pin its own map does not know about, so it is dropped.
-    if (!pins_.claim(pin, planned_[index].source_id, refusal)) {
+    bool all_of_them = true;
+    // They were agreed to once, on the same board, so this cannot refuse; if it somehow
+    // did, the plan would be running a pin its own map does not know about, so it is
+    // dropped rather than kept.
+    for (size_t at = 0; at < how_many && all_of_them; ++at) {
+      all_of_them = pins_.claim(held[at], planned_[index].source_id, refusal);
+    }
+    if (!all_of_them) {
       count_ = index;
       break;
     }
@@ -313,6 +397,7 @@ Driver driver_of(const char* kind) {
   if (std::strcmp(kind, "adc") == 0) return Driver::kAdc;
   if (std::strcmp(kind, "onewire") == 0) return Driver::kOneWire;
   if (std::strcmp(kind, "ble") == 0) return Driver::kBle;
+  if (std::strcmp(kind, "microphone") == 0) return Driver::kMicrophone;
   return Driver::kNone;
 }
 
@@ -395,6 +480,9 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
     } else if (planned.driver == Driver::kBle) {
       known = kBleOptions;
       how_many = sizeof(kBleOptions) / sizeof(kBleOptions[0]);
+    } else if (planned.driver == Driver::kMicrophone) {
+      known = kMicrophoneOptions;
+      how_many = sizeof(kMicrophoneOptions) / sizeof(kMicrophoneOptions[0]);
     }
     for (size_t at = 0; at < source.option_count; ++at) {
       if (std::strcmp(source.options[at].name, "enabled") == 0) continue;
@@ -426,6 +514,114 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
         }
       }
       if (!interval_of(source, source.id, planned.board.interval_ms, why, detail, capacity)) {
+        clear();
+        return false;
+      }
+      ++count_;
+      continue;
+    }
+
+    // microphone, which is three pins and a promise about what leaves the board.
+    if (planned.driver == Driver::kMicrophone) {
+      // One microphone. There is one state machine clocking I²S on this board and one
+      // block of samples behind it; a second source would quietly share the first one's
+      // clock and read the first one's pin, and report a room it is not listening to.
+      for (size_t before = 0; planned.enabled && before < index; ++before) {
+        if (planned_[before].driver != Driver::kMicrophone || !planned_[before].enabled) {
+          continue;
+        }
+        why = Unplanned::kTooMany;
+        say(detail, capacity, "%s: this board listens to one microphone, and %s is already it",
+            source.id, planned_[before].source_id);
+        clear();
+        return false;
+      }
+      copy_into(planned.microphone.event_kind, sizeof(planned.microphone.event_kind),
+                "audio.activity");
+      struct Wire {
+        const char* name;
+        int* into;
+      };
+      const Wire wires[] = {{"pin", &planned.microphone.pin},
+                            {"clock_pin", &planned.microphone.clock_pin}};
+      for (const Wire& wire : wires) {
+        const Option* named = option_named(source, wire.name);
+        if (named == nullptr) {
+          why = Unplanned::kMissingOption;
+          say(detail, capacity, "%s: a microphone source is %s, and this one names none",
+              source.id, wire.name);
+          clear();
+          return false;
+        }
+        int64_t number = 0;
+        if (!whole_number(*named, number)) {
+          why = Unplanned::kWrongType;
+          say(detail, capacity, "%s: %s is a GPIO number", source.id, wire.name);
+          clear();
+          return false;
+        }
+        *wire.into = static_cast<int>(number);
+      }
+      // The word select is the pin above the clock, which is what PIO's side-set can drive
+      // in one write. Said here rather than left to the pin map, which would refuse the
+      // number without saying where it came from.
+      if (planned.microphone.clock_pin + 1 > kMaxGpio) {
+        why = Unplanned::kOutOfRange;
+        say(detail, capacity, "%s: the word select is GPIO %d, which is not a pin", source.id,
+            planned.microphone.clock_pin + 1);
+        clear();
+        return false;
+      }
+
+      const Option* channel = option_named(source, "channel");
+      if (channel != nullptr) {
+        if (channel->type != Option::Type::kString) {
+          why = Unplanned::kWrongType;
+          say(detail, capacity, "%s: channel is left or right", source.id);
+          clear();
+          return false;
+        }
+        if (std::strcmp(channel->text, "right") == 0) {
+          planned.microphone.left = false;
+        } else if (std::strcmp(channel->text, "left") != 0) {
+          why = Unplanned::kOutOfRange;
+          say(detail, capacity, "%s: channel is left or right, not %s", source.id,
+              channel->text);
+          clear();
+          return false;
+        }
+      }
+
+      if (!loudness_of(source, source.id, planned.microphone.how, why, detail, capacity) ||
+          !event_kind_of(source, source.id, planned.microphone.event_kind,
+                         sizeof(planned.microphone.event_kind), why, detail, capacity)) {
+        clear();
+        return false;
+      }
+
+      const int held[] = {planned.microphone.pin, planned.microphone.clock_pin,
+                          planned.microphone.clock_pin + 1};
+      for (const int wire : held) {
+        PinRefusal refusal = PinRefusal::kNone;
+        if (planned.enabled ? pins_.claim(wire, planned.source_id, refusal)
+                            : pins_.allows(wire, refusal)) {
+          continue;
+        }
+        why = Unplanned::kPinRefused;
+        switch (refusal) {
+          case PinRefusal::kOutOfRange:
+            say(detail, capacity, "%s: GPIO %d is not a pin on this board", source.id, wire);
+            break;
+          case PinRefusal::kReserved:
+            say(detail, capacity, "%s: GPIO %d belongs to the board itself", source.id, wire);
+            break;
+          case PinRefusal::kTaken:
+            say(detail, capacity, "%s and %s both use GPIO %d", source.id, pins_.holder(wire),
+                wire);
+            break;
+          case PinRefusal::kNone:
+            break;
+        }
         clear();
         return false;
       }

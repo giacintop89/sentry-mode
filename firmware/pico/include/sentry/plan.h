@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "sentry/acoustic.h"
 #include "sentry/command.h"
 #include "sentry/input.h"
 #include "sentry/pins.h"
@@ -31,7 +32,7 @@ namespace sentry {
 
 // Every driver this firmware has. A configuration naming anything else — a camera, a
 // microphone, a bus this build has no code for — is refused rather than ignored.
-enum class Driver { kNone, kBoard, kGpio, kAdc, kOneWire, kBle };
+enum class Driver { kNone, kBoard, kGpio, kAdc, kOneWire, kBle, kMicrophone };
 
 // What holds a pin when nothing else is driving it. A contact wired to ground needs a pull
 // up or it reads whatever the air says; a PIR drives its own line and needs neither.
@@ -101,6 +102,21 @@ struct BleSource {
   char event_kind[kMaxKindText] = {};
 };
 
+// A microphone on the I²S pins, and what it is allowed to conclude. This board has no
+// place to put sound and no permission to send it: the only thing a microphone produces
+// here is `audio.activity`, which says something was loud and never what it was.
+//
+// The word select is the pin above the clock rather than an option of its own. PIO sets
+// both from one side-set, which takes consecutive pins; making it configurable would be
+// offering a choice the hardware does not have.
+struct MicrophoneSource {
+  int pin = -1;        // the microphone's data line
+  int clock_pin = -1;  // the bit clock; the word select is the next pin up
+  bool left = true;    // which half of the frame this microphone drives
+  Loudness how;
+  char event_kind[kMaxKindText] = {};
+};
+
 struct Planned {
   char source_id[kMaxNameText] = {};
   Driver driver = Driver::kNone;
@@ -110,6 +126,7 @@ struct Planned {
   AdcSource adc;
   OneWireSource onewire;
   BleSource ble;
+  MicrophoneSource microphone;
 };
 
 // Why a configuration was not taken up. Every one of these is said out loud with the name

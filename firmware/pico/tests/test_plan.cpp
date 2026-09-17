@@ -664,4 +664,148 @@ TEST(a_word_a_ble_source_does_not_know_is_refused_like_any_other) {
   CHECK(attempt.why == Unplanned::kNoSuchOption);
 }
 
+TEST(a_microphone_is_three_pins_and_a_default_for_everything_else) {
+  Source source = a_source("mic-1", "microphone");
+  with_integer(source, "pin", 6);
+  with_integer(source, "clock_pin", 7);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(plan, &source, 1));
+  CHECK(plan.at(0).driver == Driver::kMicrophone);
+  CHECK(plan.at(0).microphone.pin == 6);
+  CHECK(plan.at(0).microphone.clock_pin == 7);
+  CHECK(plan.at(0).microphone.left);
+  // The word select is the pin above the clock, and it is held even though nothing named it.
+  CHECK(std::strcmp(plan.holder(6), "mic-1") == 0);
+  CHECK(std::strcmp(plan.holder(7), "mic-1") == 0);
+  CHECK(std::strcmp(plan.holder(8), "mic-1") == 0);
+  // The agent's defaults, so the same sound means the same thing on either kind of node.
+  CHECK(plan.at(0).microphone.how.threshold_dbfs == -35.0);
+  CHECK(plan.at(0).microphone.how.min_seconds == 0.3);
+  CHECK(plan.at(0).microphone.how.hold_seconds == 3.0);
+  CHECK(std::strcmp(plan.at(0).microphone.event_kind, "audio.activity") == 0);
+}
+
+TEST(a_microphone_that_names_no_wire_is_refused_by_the_wire_it_did_not_name) {
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+
+  Source dataless = a_source("mic-1", "microphone");
+  with_integer(dataless, "clock_pin", 7);
+  CHECK(!attempt.of(plan, &dataless, 1));
+  CHECK(attempt.why == Unplanned::kMissingOption);
+  CHECK(attempt.said("a microphone source is pin"));
+
+  Source clockless = a_source("mic-1", "microphone");
+  with_integer(clockless, "pin", 6);
+  CHECK(!attempt.of(plan, &clockless, 1));
+  CHECK(attempt.why == Unplanned::kMissingOption);
+  CHECK(attempt.said("a microphone source is clock_pin"));
+}
+
+TEST(the_word_select_is_a_pin_that_has_to_exist) {
+  Source source = a_source("mic-1", "microphone");
+  with_integer(source, "pin", 6);
+  with_integer(source, "clock_pin", 29);  // the last GPIO: there is nothing above it
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &source, 1));
+  CHECK(attempt.why == Unplanned::kOutOfRange);
+  CHECK(attempt.said("the word select is GPIO 30"));
+}
+
+TEST(a_board_with_one_state_machine_for_it_listens_to_one_microphone) {
+  Source sources[2];
+  sources[0] = a_source("mic-1", "microphone");
+  with_integer(sources[0], "pin", 6);
+  with_integer(sources[0], "clock_pin", 7);
+  sources[1] = a_source("mic-2", "microphone");
+  with_integer(sources[1], "pin", 10);
+  with_integer(sources[1], "clock_pin", 11);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, sources, 2));
+  CHECK(attempt.why == Unplanned::kTooMany);
+  CHECK(attempt.said("this board listens to one microphone, and mic-1 is already it"));
+
+  // A second one that is not read is a line in a file and nothing else: it starts no
+  // clock, so there is nothing for it to take from the first.
+  with_boolean(sources[1], "enabled", false);
+  CHECK(attempt.of(plan, sources, 2));
+  CHECK(plan.at(1).driver == Driver::kMicrophone);
+  CHECK(!plan.at(1).enabled);
+}
+
+TEST(a_microphone_cannot_quietly_take_a_pin_something_else_has) {
+  Source sources[2];
+  sources[0] = a_source("door-1", "gpio");
+  with_integer(sources[0], "pin", 8);
+  sources[1] = a_source("mic-1", "microphone");
+  with_integer(sources[1], "pin", 6);
+  with_integer(sources[1], "clock_pin", 7);  // whose word select is GPIO 8
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, sources, 2));
+  CHECK(attempt.why == Unplanned::kPinRefused);
+  CHECK(attempt.said("both use GPIO 8"));
+}
+
+TEST(how_loud_and_for_how_long_has_limits) {
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+
+  Source listening = a_source("mic-1", "microphone");
+  with_integer(listening, "pin", 6);
+  with_integer(listening, "clock_pin", 7);
+  with_number(listening, "activity_threshold_dbfs", -50.0);
+  with_number(listening, "activity_min_seconds", 1.5);
+  with_number(listening, "activity_hold_seconds", 10.0);
+  with_text(listening, "channel", "right");
+  CHECK(attempt.of(plan, &listening, 1));
+  CHECK(plan.at(0).microphone.how.threshold_dbfs == -50.0);
+  CHECK(plan.at(0).microphone.how.min_seconds == 1.5);
+  CHECK(plan.at(0).microphone.how.hold_seconds == 10.0);
+  CHECK(!plan.at(0).microphone.left);
+
+  Source impossible = a_source("mic-1", "microphone");
+  with_integer(impossible, "pin", 6);
+  with_integer(impossible, "clock_pin", 7);
+  with_number(impossible, "activity_threshold_dbfs", 6.0);  // louder than full scale
+  CHECK(!attempt.of(plan, &impossible, 1));
+  CHECK(attempt.why == Unplanned::kOutOfRange);
+  CHECK(attempt.said("activity_threshold_dbfs is between"));
+
+  Source instant = a_source("mic-1", "microphone");
+  with_integer(instant, "pin", 6);
+  with_integer(instant, "clock_pin", 7);
+  with_number(instant, "activity_min_seconds", 0.0);
+  CHECK(!attempt.of(plan, &instant, 1));
+  CHECK(attempt.why == Unplanned::kOutOfRange);
+
+  Source worded = a_source("mic-1", "microphone");
+  with_integer(worded, "pin", 6);
+  with_integer(worded, "clock_pin", 7);
+  with_text(worded, "channel", "middle");
+  CHECK(!attempt.of(plan, &worded, 1));
+  CHECK(attempt.why == Unplanned::kOutOfRange);
+  CHECK(attempt.said("channel is left or right, not middle"));
+}
+
+TEST(a_microphone_has_no_place_for_a_device_or_an_interval) {
+  Source source = a_source("mic-1", "microphone");
+  with_integer(source, "pin", 6);
+  with_integer(source, "clock_pin", 7);
+  with_boolean(source, "activity", true);  // the agent's word; here there is nothing else
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &source, 1));
+  CHECK(attempt.why == Unplanned::kNoSuchOption);
+  CHECK(attempt.said("a microphone source has no activity"));
+}
+
 int main() { return harness::run_all("plan"); }
