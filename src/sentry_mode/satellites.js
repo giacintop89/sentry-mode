@@ -29,6 +29,18 @@
   const RESET = {power: 'came back on power', brownout: 'came back after a brown-out',
     button: 'came back on the reset button', watchdog: 'came back on the watchdog',
     software: 'came back on a software reboot', debugger: 'came back on a debugger'};
+  // Where a source reads from, in the options it was configured with. A pin is the one
+  // thing about a microcontroller source that decides whether it is wired to anything, and
+  // it was only visible by opening the editor and reading the JSON.
+  function where(source) {
+    const options = source.options || {};
+    const bits = [];
+    if (typeof options.pin === 'number') bits.push('GPIO ' + options.pin);
+    if (options.device) bits.push(String(options.device));
+    if (options.measure) bits.push(String(options.measure));
+    if (typeof options.interval_seconds === 'number') bits.push('every ' + span(options.interval_seconds));
+    return bits.join(' · ') || '—';
+  }
   function reading(source) {
     const last = source.last;
     if (!last) return source.error ? 'Unavailable' : '—';
@@ -87,7 +99,8 @@
       const row = document.createElement('tr');
       const state = !source.declared ? 'no longer declared' : !source.enabled ? 'disabled'
         : !source.supported ? 'no driver yet' : source.error ? 'error' : source.state;
-      const cells = [source.name, source.kind || source.role, state, reading(source), ago(source.last_reading_age_seconds)];
+      const cells = [source.name, source.kind || source.role, where(source), state,
+        reading(source), ago(source.last_reading_age_seconds)];
       for (const text of cells) { const cell = document.createElement('td'); cell.textContent = text; row.append(cell); }
       row.children[0].setAttribute('scope', 'row');
       if (source.error) row.title = source.error;

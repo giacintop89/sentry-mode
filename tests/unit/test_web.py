@@ -1266,6 +1266,16 @@ def test_the_views_fold_into_two_rows_on_a_phone_when_there_are_six():
     assert "/api/satellites" in script and "data-satellites-link" in script
 
 
+def test_the_satellites_page_says_where_each_source_reads_from():
+    # A pin is the one thing about a source on a microcontroller that decides whether it is
+    # wired to anything, and it used to be visible only by opening the editor.
+    here = Path(__file__).resolve().parents[2] / "src/sentry_mode"
+    markup = (here / "satellites.html").read_text()
+    assert markup.count('<th scope="col">') == 6 and ">Where</th>" in markup
+    script = (here / "satellites.js").read_text()
+    assert "'GPIO ' + options.pin" in script and "where(source)" in script
+
+
 def test_every_script_this_hub_ships_can_be_parsed():
     """A page whose script does not parse shows nothing, and says nothing about why.
 
