@@ -1127,6 +1127,23 @@ delivered when the hub subscribed. Restarting the bridge — or the node — is 
 the last line. A node approved for the first time does not have this problem, because it
 connects after it is approved.
 
+### Thirty-five minutes of nothing happening
+
+The other half of `PICO-11` is the part with no findings in it. The wired board was left
+running as `pico-cablato` while the rest of this was written, and asked what it had been
+doing every so often:
+
+    22:37:32  frames sent=207 unsent=0 read=43 discarded=0 missed=0 refused=0
+              heap_free=401kB uptime=1647s queued=0 coalesced=0 dropped=0
+    22:45:24  frames sent=283 unsent=0 read=57 discarded=0 missed=0 refused=0
+              heap_free=401kB uptime=2119s queued=0 coalesced=0 dropped=0
+
+Nothing moved that should not have: the heap is the same number half an hour apart, the
+queue is empty because everything was delivered, and of 66,164 blocks of audio the only one
+missed was missed at boot. The lease was renewed five times in that window without the node
+noticing. Thirty-five minutes is not a week, and this is the longest this firmware has been
+watched rather than the longest it has run.
+
 ### What goes out with an image
 
 A `.uf2` on somebody's desk says nothing about itself, so a build can write down what it is:
@@ -1146,6 +1163,14 @@ would offer Bluetooth to, a hub that would send more sources than this firmware 
 configuration larger than one vault slot holds. It also runs the host suites and the
 cross-checks, so a manifest that says they passed is a manifest that watched them; with
 `--no-checks` it says nothing about them rather than saying they passed.
+
+One of them, in full:
+
+    build/pico2_w/manifest.json: pico2_w as pico-2w-sensor, run on hardware
+      1240064 bytes, sha256 addcc045092d08f8e84331c4973fb73ff07101a3e2717e4f084c53133f8db044
+      from 8778c56e8fad
+      sdk 2.2.0, rp2350-arm-s
+      23 suites passed, 0 failed, cross-checks: all passed
 
 What cannot be measured — how far each board and each capability has really been taken, and
 what this firmware does not do — is in `release.json`, which is the one file to read before
@@ -1260,6 +1285,11 @@ fails here, in a second, rather than at link time on a target with neither.
   honest word for what it is worth. That rule has never been watched happening. A board up
   for a day, the drift between two answers, and a network that goes away mid-interval are
   all still unexamined, and `T16`'s UTC jump is **not executed**.
+- What the radio build leaves on an RP2040. The same image takes 168,832 bytes of static
+  RAM on a Pico W and 168,448 on a Pico 2 W — near enough the same firmware — but the first
+  part has 270,336 bytes and the second has 532,480. That is 99 kB for the heap, the TLS
+  handshake and the stack on one, and 355 kB on the other, which is the measured reason
+  `pico-w-sensor` stays **built only** rather than a profile anybody is invited to run.
 - The largest thing this firmware holds at once, which is a command. The wire grammar
   takes 32 sources with 8 options each because that is what the hub may send any node; this
   board plans at most 8, and refuses the rest by name. The structure is 56,808 bytes as the

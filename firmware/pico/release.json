@@ -11,7 +11,7 @@
     "pico_w": {
       "platform": "pico-w-sensor",
       "state": "built only",
-      "note": "The same firmware for the RP2040. It builds for this board and has never been run on one."
+      "note": "The same firmware for the RP2040. It builds for this board and has never been run on one, and the figure to look at before anybody does is what it leaves: 168,832 bytes of static RAM on a part with 270,336, against 168,448 on one with 532,480."
     },
     "pico2": {
       "platform": "pico-2-wired",
