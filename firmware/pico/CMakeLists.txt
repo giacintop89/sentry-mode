@@ -45,6 +45,9 @@ add_library(sentry_protocol
   src/core/timebase.cpp
   src/core/spool.cpp
   src/core/session.cpp
+  src/core/input.cpp
+  src/core/sensors.cpp
+  src/core/pins.cpp
 )
 target_include_directories(sentry_protocol PUBLIC include)
 target_compile_options(sentry_protocol PRIVATE
@@ -56,7 +59,7 @@ target_compile_options(sentry_protocol PRIVATE
 
 enable_testing()
 
-foreach(suite json command control event lease topics session store identity timebase spool)
+foreach(suite json command control event lease topics session store identity timebase spool input sensors pins)
   add_executable(test_${suite} tests/test_${suite}.cpp)
   target_link_libraries(test_${suite} PRIVATE sentry_protocol)
   target_include_directories(test_${suite} PRIVATE tests)

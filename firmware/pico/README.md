@@ -26,8 +26,9 @@ cmake --build build/pico-host
 ctest --test-dir build/pico-host --output-on-failure
 ```
 
-Eleven suites: `json`, `command`, `control`, `event`, `lease`, `topics`, `session`,
-`store`, `identity`, `timebase`, `spool`. The `command` suite reads the fixtures in
+Fourteen suites: `json`, `command`, `control`, `event`, `lease`, `topics`, `session`,
+`store`, `identity`, `timebase`, `spool`, `input`, `sensors`, `pins`. The `command` suite
+reads the fixtures in
 `contracts/satellite/v1/control/fixtures/`, the same files `tests/unit/test_satellite_control.py`
 and `satellite/tests/unit/test_control_contracts.py` read, so a fixture the hub accepts and
 this firmware refuses is a failure here rather than a surprise on a board.
@@ -76,7 +77,10 @@ bytes never made it, which must leave the previous configuration in charge.
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
 | `tools/emit.cpp`, `tools/unpack.cpp` | Write events, and read configuration slots, for the two cross-checks above. |
 | `include/sentry/spool.h`, `src/core/spool.cpp` | The queue for an outage: which readings collapse into a newer one, which are never dropped for them, and what is counted when something is given up. |
-| `tests/` | The eight suites, and a tiny harness rather than a test framework. |
+| `include/sentry/input.h`, `src/core/input.cpp` | What a wire may mean: the baseline that is not an intrusion, the settling window a PIR needs, the debounce, and the polarity software cannot guess. |
+| `include/sentry/sensors.h`, `src/core/sensors.cpp` | Turning what a sensor returned into a reading or into an admission there is none: the 1-Wire CRC, the 85 °C a DS18B20 holds after a reset, and an ADC count nothing could have produced. |
+| `include/sentry/pins.h`, `src/core/pins.cpp` | Which pins a configuration may use and who already has them, refused whole rather than in part. |
+| `tests/` | The fourteen suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful
@@ -100,4 +104,8 @@ fails here, in a second, rather than at link time on a target with neither.
   registers the will, the QoS 1 flow. `Session` says what order things happen in and
   `control.cpp` writes the messages; nothing here has yet had a connection, so the
   compatibility run against the live broker that PICO-03 asks for has **not** been done.
-- Any sensor driver at all.
+- Any sensor driver at all. What is here is the part of one that has no hardware in it:
+  `input.cpp` decides what a level means, `sensors.cpp` decides what a scratchpad or an
+  ADC count means, and `pins.cpp` decides whether a configuration may start. Nothing has
+  read a pin, waited on a 1-Wire bus or started a conversion. BME280, with its
+  identification and its calibration coefficients, is not here at all.
