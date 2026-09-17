@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "sentry/names.h"
+#include "sentry/sensors.h"
 
 namespace sentry {
 namespace {
@@ -68,6 +69,19 @@ const char* kBoardOptions[] = {"measure", "interval_seconds"};
 const char* kGpioOptions[] = {"pin",          "active_high",    "bias",
                               "debounce_ms",  "settle_seconds", "event_kind"};
 const char* kAdcOptions[] = {"pin", "output", "event_kind", "interval_seconds"};
+const char* kOneWireOptions[] = {"pin", "device", "event_kind", "interval_seconds"};
+
+bool hex_digit(char letter, uint8_t& value) {
+  if (letter >= '0' && letter <= '9') {
+    value = static_cast<uint8_t>(letter - '0');
+    return true;
+  }
+  if (letter >= 'a' && letter <= 'f') {
+    value = static_cast<uint8_t>(letter - 'a' + 10);
+    return true;
+  }
+  return false;
+}
 
 bool known_option(const char* name, const char* const* known, size_t count) {
   for (size_t index = 0; index < count; ++index) {
@@ -124,6 +138,7 @@ bool event_kind_of(const Source& source, const char* id, char* out, size_t capac
 int pin_of(const Planned& planned) {
   if (planned.driver == Driver::kGpio) return planned.gpio.pin;
   if (planned.driver == Driver::kAdc) return planned.adc.pin;
+  if (planned.driver == Driver::kOneWire) return planned.onewire.pin;
   return -1;
 }
 
@@ -137,6 +152,8 @@ const char* name_of(Driver driver) {
       return "gpio";
     case Driver::kAdc:
       return "adc";
+    case Driver::kOneWire:
+      return "onewire";
     case Driver::kNone:
       break;
   }
@@ -153,6 +170,26 @@ const char* name_of(Bias bias) {
       break;
   }
   return "disabled";
+}
+
+bool rom_code_of(const char* device, uint8_t rom[8]) {
+  if (device == nullptr || std::strlen(device) != 15) return false;
+  if (device[0] != '2' || device[1] != '8' || device[2] != '-') return false;
+  uint8_t serial[6] = {};
+  for (size_t index = 0; index < 6; ++index) {
+    uint8_t high = 0;
+    uint8_t low = 0;
+    if (!hex_digit(device[3 + index * 2], high) || !hex_digit(device[4 + index * 2], low)) {
+      return false;
+    }
+    serial[index] = static_cast<uint8_t>((high << 4) | low);
+  }
+  // The kernel prints the serial most significant byte first; the bus sends it the other
+  // way round, and a MATCH ROM with the bytes in the printed order addresses nobody.
+  rom[0] = 0x28;
+  for (size_t index = 0; index < 6; ++index) rom[1 + index] = serial[5 - index];
+  rom[7] = onewire_crc(rom, 7);
+  return true;
 }
 
 Plan& Plan::operator=(const Plan& other) {
@@ -205,6 +242,7 @@ Driver driver_of(const char* kind) {
   if (std::strcmp(kind, "board") == 0) return Driver::kBoard;
   if (std::strcmp(kind, "gpio") == 0) return Driver::kGpio;
   if (std::strcmp(kind, "adc") == 0) return Driver::kAdc;
+  if (std::strcmp(kind, "onewire") == 0) return Driver::kOneWire;
   return Driver::kNone;
 }
 
@@ -267,6 +305,9 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
     } else if (planned.driver == Driver::kAdc) {
       known = kAdcOptions;
       how_many = sizeof(kAdcOptions) / sizeof(kAdcOptions[0]);
+    } else if (planned.driver == Driver::kOneWire) {
+      known = kOneWireOptions;
+      how_many = sizeof(kOneWireOptions) / sizeof(kOneWireOptions[0]);
     }
     for (size_t at = 0; at < source.option_count; ++at) {
       if (!known_option(source.options[at].name, known, how_many)) {
@@ -368,6 +409,79 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
         } else {
           say(detail, capacity, "%s: GPIO %d belongs to the board itself", source.id,
               planned.adc.pin);
+        }
+        clear();
+        return false;
+      }
+      ++count_;
+      continue;
+    }
+
+    // onewire, which is a probe on a pin and possibly one of several on it.
+    if (planned.driver == Driver::kOneWire) {
+      copy_into(planned.onewire.event_kind, sizeof(planned.onewire.event_kind),
+                "climate.temperature");
+      const Option* pin = option_named(source, "pin");
+      if (pin == nullptr) {
+        why = Unplanned::kMissingOption;
+        say(detail, capacity, "%s: a onewire source is a pin, and this one names none",
+            source.id);
+        clear();
+        return false;
+      }
+      int64_t number = 0;
+      if (!whole_number(*pin, number)) {
+        why = Unplanned::kWrongType;
+        say(detail, capacity, "%s: pin is a GPIO number", source.id);
+        clear();
+        return false;
+      }
+      planned.onewire.pin = static_cast<int>(number);
+
+      const Option* device = option_named(source, "device");
+      if (device != nullptr) {
+        if (device->type != Option::Type::kString) {
+          why = Unplanned::kWrongType;
+          say(detail, capacity, "%s: device is a probe id like 28-0123456789ab", source.id);
+          clear();
+          return false;
+        }
+        if (!rom_code_of(device->text, planned.onewire.rom)) {
+          why = Unplanned::kOutOfRange;
+          say(detail, capacity, "%s: %s is not a DS18B20 id (28-0123456789ab)", source.id,
+              device->text);
+          clear();
+          return false;
+        }
+        planned.onewire.has_rom = true;
+        copy_into(planned.onewire.device, sizeof(planned.onewire.device), device->text);
+      }
+
+      if (!interval_of(source, source.id, planned.onewire.interval_ms, why, detail, capacity) ||
+          !event_kind_of(source, source.id, planned.onewire.event_kind,
+                         sizeof(planned.onewire.event_kind), why, detail, capacity)) {
+        clear();
+        return false;
+      }
+
+      PinRefusal refusal = PinRefusal::kNone;
+      if (!pins_.claim(planned.onewire.pin, planned.source_id, refusal)) {
+        why = Unplanned::kPinRefused;
+        switch (refusal) {
+          case PinRefusal::kOutOfRange:
+            say(detail, capacity, "%s: GPIO %d is not a pin on this board", source.id,
+                planned.onewire.pin);
+            break;
+          case PinRefusal::kReserved:
+            say(detail, capacity, "%s: GPIO %d belongs to the board itself", source.id,
+                planned.onewire.pin);
+            break;
+          case PinRefusal::kTaken:
+            say(detail, capacity, "%s and %s both use GPIO %d", source.id,
+                pins_.holder(planned.onewire.pin), planned.onewire.pin);
+            break;
+          case PinRefusal::kNone:
+            break;
         }
         clear();
         return false;

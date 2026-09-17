@@ -86,7 +86,7 @@ target_compile_options(sentry_protocol PRIVATE
 if(SENTRY_PICO_TARGET STREQUAL "device")
   # One program, and the same library the host tests are run against. What it proves is
   # that these modules behave on the chip as they do on a computer; it is not a satellite.
-  add_executable(sentry_firmware src/device/main.cpp src/device/net.cpp)
+  add_executable(sentry_firmware src/device/main.cpp src/device/net.cpp src/device/onewire.cpp)
   # lwipopts.h lives beside them, because what of lwIP this firmware compiles in is part of
   # the firmware and not of whoever builds it.
   target_include_directories(sentry_firmware PRIVATE src/device)

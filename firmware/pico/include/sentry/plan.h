@@ -30,7 +30,7 @@ namespace sentry {
 
 // Every driver this firmware has. A configuration naming anything else — a camera, a
 // microphone, a bus this build has no code for — is refused rather than ignored.
-enum class Driver { kNone, kBoard, kGpio, kAdc };
+enum class Driver { kNone, kBoard, kGpio, kAdc, kOneWire };
 
 // What holds a pin when nothing else is driving it. A contact wired to ground needs a pull
 // up or it reads whatever the air says; a PIR drives its own line and needs neither.
@@ -69,6 +69,21 @@ struct AdcSource {
   char event_kind[kMaxKindText] = {};
 };
 
+// A DS18B20 on a pin. The probe may be named — the same `28-0123456789ab` the Linux agent
+// takes, which is the kernel's spelling of its ROM code — or left out, which means the one
+// probe on the bus. A name is what makes a bus with two probes on it readable: without one
+// the parts answer at once and the bus reads as nonsense.
+inline constexpr size_t kOneWireIdText = 16;  // "28-" and twelve hex digits
+
+struct OneWireSource {
+  int pin = -1;
+  bool has_rom = false;
+  uint8_t rom[8] = {};  // family, six bytes of serial, CRC — the order the bus wants
+  char device[kOneWireIdText] = {};
+  uint32_t interval_ms = kDefaultBoardSeconds * 1000;
+  char event_kind[kMaxKindText] = {};
+};
+
 struct GpioSource {
   int pin = -1;
   Bias bias = Bias::kNone;
@@ -83,6 +98,7 @@ struct Planned {
   BoardSource board;
   GpioSource gpio;
   AdcSource adc;
+  OneWireSource onewire;
 };
 
 // Why a configuration was not taken up. Every one of these is said out loud with the name
@@ -135,6 +151,11 @@ class Plan {
 
 const char* name_of(Driver driver);
 const char* name_of(Bias bias);
+
+// The ROM code behind `28-0123456789ab`, in the order the bus expects it: the family, the
+// six serial bytes least significant first, and the CRC of those seven. False if that is
+// not what the text is.
+bool rom_code_of(const char* device, uint8_t rom[8]);
 const char* name_of(Unplanned why);
 
 // The kinds this firmware answers to in a configuration: `board`, `gpio`. Anything else is

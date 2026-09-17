@@ -10,6 +10,7 @@
 
 #include "harness.h"
 #include "sentry/plan.h"
+#include "sentry/sensors.h"
 
 using sentry::Bias;
 using sentry::Board;
@@ -165,14 +166,59 @@ TEST(a_pin_the_radio_is_on_is_not_a_pin_this_configuration_may_have) {
 }
 
 TEST(a_driver_this_firmware_does_not_have_is_said_so_by_name) {
-  Source source = a_source("thermometer-1", "onewire");
-  with_integer(source, "pin", 2);
+  Source source = a_source("weather-1", "bme280");
+  with_integer(source, "bus", 1);
 
   Plan plan(Board::kPico2W);
   Attempt attempt;
   CHECK(!attempt.of(plan, &source, 1));
   CHECK(attempt.why == Unplanned::kNoSuchDriver);
-  CHECK(attempt.said("onewire"));
+  CHECK(attempt.said("bme280"));
+}
+
+TEST(a_probe_named_the_way_the_other_satellite_names_it_is_the_same_probe) {
+  // The kernel calls it 28-0123456789ab and prints the serial the other way round from the
+  // order the bus wants it in. A MATCH ROM built from the printed order addresses nobody.
+  Source source = a_source("thermometer-1", "onewire");
+  with_integer(source, "pin", 2);
+  with_text(source, "device", "28-0123456789ab");
+  with_integer(source, "interval_seconds", 60);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(plan, &source, 1));
+  const sentry::Planned& probe = plan.at(0);
+  CHECK(probe.driver == Driver::kOneWire);
+  CHECK(probe.onewire.pin == 2);
+  CHECK(probe.onewire.has_rom);
+  CHECK(probe.onewire.rom[0] == 0x28);
+  CHECK(probe.onewire.rom[1] == 0xab);
+  CHECK(probe.onewire.rom[6] == 0x01);
+  CHECK(probe.onewire.rom[7] == sentry::onewire_crc(probe.onewire.rom, 7));
+  CHECK(probe.onewire.interval_ms == 60000);
+  CHECK(std::strcmp(probe.onewire.event_kind, "climate.temperature") == 0);
+  CHECK(std::strcmp(plan.holder(2), "thermometer-1") == 0);
+}
+
+TEST(a_bus_with_one_probe_on_it_does_not_have_to_name_it) {
+  Source source = a_source("thermometer-1", "onewire");
+  with_integer(source, "pin", 2);
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(plan, &source, 1));
+  CHECK(!plan.at(0).onewire.has_rom);
+}
+
+TEST(a_probe_id_that_is_not_one_is_refused_with_what_one_looks_like) {
+  Source source = a_source("thermometer-1", "onewire");
+  with_integer(source, "pin", 2);
+  with_text(source, "device", "10-0123456789ab");  // a DS18S20, which this does not read
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &source, 1));
+  CHECK(attempt.why == Unplanned::kOutOfRange);
+  CHECK(attempt.said("28-0123456789ab"));
 }
 
 TEST(an_option_no_driver_here_has_is_refused_rather_than_ignored) {

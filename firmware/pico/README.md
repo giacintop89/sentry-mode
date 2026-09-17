@@ -448,6 +448,36 @@ The first of those came back to the hub as the `detail` of a `failed` ack while 
 went on running the three sources it already had, which is the whole-or-nothing rule seen
 from the other end.
 
+The fourth is a bus rather than a pin. A `onewire` source is a DS18B20 on a GPIO, named
+the way the Linux agent names one — `28-0123456789ab`, which is the kernel's spelling of
+its ROM code — or left unnamed, which means the one probe on the bus. The name is worth
+having: the bus prints the serial in the opposite order from the one it wants it in, so a
+MATCH ROM built from the printed order addresses nobody, and the reversal is done once, in
+`plan.cpp`, where a host test can watch it.
+
+A conversion takes three quarters of a second, which is longer than this loop is willing to
+stand still for: the probe is asked, and the answer is collected on a later turn of the
+same loop that is keeping the connection alive. The bus work itself is in
+`src/device/onewire.cpp` and is the one piece of this firmware that cannot be tested off a
+board — the timing is microseconds, and interrupts are off for the slots that are measured
+in them, because lwIP servicing the radio in the middle of one would turn a one into a
+zero.
+
+With nothing wired to GPIO 2, which is what this board has:
+
+```
+#   thermometer-1 onewire pin=2 device=the one on the bus every=10s readings=3
+```
+```
+thermometer-1 climate.temperature null °C unavailable initial
+thermometer-1 climate.temperature null °C unavailable live
+```
+
+Nothing answered the reset pulse, and the node says so every interval rather than saying
+nothing: a probe that has fallen off its wire and a probe nobody asked about look identical
+from the hub otherwise. What has **not** been seen is a probe that answers — there is no
+DS18B20 on this desk, so the timing has only ever been watched failing to find one.
+
 One thing that run found was not the firmware's. The hub acknowledges the messages it
 receives by hand, and only the events path was acknowledging them: state, health and acks
 were read, acted on, and left unsettled. The broker holds an unacknowledged QoS 1 message
@@ -478,6 +508,7 @@ sent again — and `test_satellite_service.py` now holds a test that would have 
 | `include/sentry/credentials.h`, `src/core/credentials.cpp` | The authority, the certificate and the key: what each one has to be, taken whole or not at all, and a `forget()` that overwrites the key. |
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
 | `tools/emit.cpp`, `tools/unpack.cpp`, `tools/mqtt_emit.cpp`, `tools/client_run.cpp` | Write events, packets, a whole connection and configuration slots for the cross-checks above. |
+| `src/device/onewire.h`, `src/device/onewire.cpp` | The 1-Wire bus, bit-banged on one pin: the reset, the slots, and interrupts off for the microseconds that decide what a bit was. The only part of this firmware that cannot be tested off a board. |
 | `src/device/main.cpp` | The one program that runs on a board: USB serial, the LED, the die temperature, and the same event writer as everything else. |
 | `include/sentry/spool.h`, `src/core/spool.cpp` | The queue for an outage: which readings collapse into a newer one, which are never dropped for them, and what is counted when something is given up. |
 | `include/sentry/input.h`, `src/core/input.cpp` | What a wire may mean: the baseline that is not an intrusion, the settling window a PIR needs, the debounce, and the polarity software cannot guess. |
@@ -506,9 +537,9 @@ fails here, in a second, rather than at link time on a target with neither.
   two answers is, what happens when the network goes away mid-interval, and whether a node
   that has lost its clock should go back to `unsynced` rather than keep stamping readings
   from a counter nobody has checked.
-- Every driver but three. `board`, `gpio` and `adc` are real and run on a board;
-  `onewire` is named in the hub's catalogue for this platform and is not here, so a
-  configuration asking for it is refused by name. Camera and microphone commands are
+- Every driver in the hub's catalogue for this platform is now here: `board`, `gpio`,
+  `adc` and `onewire`. A configuration naming anything else — a BME280, a camera, a
+  microphone — is refused by name. Camera and microphone commands are
   refused the same way, and will stay refused: this board has neither.
 - How long a reading waited. Every event goes out with `queued_ms: 0`, because the queue
   does not record when something was put in it. A reading that waited forty seconds says
@@ -524,10 +555,14 @@ fails here, in a second, rather than at link time on a target with neither.
   has been exercised on the hardware — but by the board driving its own pad, not by a PIR
   or a reed switch. What a real sensor does that a driven pin does not — the settling after
   power, the pulse a PIR holds, the bounce of a contact — has not been watched yet.
-- 1-Wire and I²C. `sensors.cpp` decides what a scratchpad and the 85 °C a DS18B20 holds
-  after a reset mean, and neither has a bus under it: nothing here has waited on a 1-Wire
-  line or started a conversion. BME280, with its identification and its calibration
-  coefficients, is not here at all.
+- A DS18B20 that answers. The bus is written, the conversion is timed, the scratchpad is
+  read and the CRC is checked, but no probe has ever answered the reset on this board: the
+  only 1-Wire transcript here is an empty bus. The pull-up is the chip's own, which is
+  around fifty times weaker than the 4.7 kΩ the part asks for — enough for an empty bus to
+  read as empty, not enough for a probe on a long wire.
+- I²C, and BME280 with it. Neither the bus nor the part's identification and calibration
+  coefficients are here at all, and the hub's catalogue for this platform does not offer
+  them.
 - Anything that says a converter has something on it. A floating ADC pin reads noise that
   looks exactly like a measurement, and `sensors.cpp` only refuses a count the converter
   could not have produced. The readings above are that noise, honestly labelled and

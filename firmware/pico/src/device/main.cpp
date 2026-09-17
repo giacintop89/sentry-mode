@@ -53,6 +53,7 @@
 #include "sentry/identity.h"
 #include "sentry/sensors.h"
 #include "sentry/lease.h"
+#include "onewire.h"
 #include "sentry/plan.h"
 #include "sentry/spool.h"
 #include "sentry/timebase.h"
@@ -155,8 +156,13 @@ int64_t config_revision = -1;  // below zero: this node is not saying, because n
 struct Live {
   sentry::DigitalInput input;
   uint32_t due_ms = 0;
-  bool level = false;      // the last level read, for `status` to show
+  bool level = false;  // the last level read, for `status` to show
   int64_t readings = 0;
+  // A 1-Wire probe takes three quarters of a second to measure anything. The loop starts
+  // the conversion and comes back for it, rather than standing at the pin waiting.
+  bool converting = false;
+  uint32_t ready_ms = 0;
+  bool owes_a_baseline = false;
 };
 Live live[sentry::kMaxPlanned];
 
@@ -352,6 +358,64 @@ void take_an_adc_reading(const sentry::Planned& source, Live& state, bool initia
                     initial ? sentry::Kept::kTransition : sentry::Kept::kPeriodic);
 }
 
+// One reading from a probe on a 1-Wire bus. The bus work is in `onewire.cpp` and what the
+// nine bytes mean is in `sensors.cpp`; what is here is neither, and deliberately.
+void take_a_onewire_reading(const sentry::Planned& source, Live& state,
+                            const sentry::Measured& measured, bool initial) {
+  uint64_t moment = 0;
+  char stamped[32] = {};
+  char event_id[sentry::kUuidText] = {};
+  if (!moment_of(moment, stamped, sizeof(stamped), event_id)) return;
+
+  sentry::Reading reading;
+  reading.event_id = event_id;
+  reading.node_id = node_id;
+  reading.source_id = source.source_id;
+  reading.boot_id = boot_id;
+  reading.sequence = sequence++;
+  reading.kind = source.onewire.event_kind;
+  reading.occurred_at = stamped;
+  reading.clock = clock_.status_at(moment);
+  reading.quality = measured.quality;
+  reading.unit = "\xc2\xb0" "C";
+  if (measured.has_value) reading.value = sentry::Value::of(measured.value, 2);
+  ++state.readings;
+
+  offer_the_reading(reading, initial,
+                    initial ? sentry::Kept::kTransition : sentry::Kept::kPeriodic);
+}
+
+// The probe's half of the loop: start a conversion, come back for it when it is done.
+// Nothing here waits three quarters of a second, because the connection would be waiting
+// with it.
+void serve_a_onewire_probe(const sentry::Planned& source, Live& state, uint64_t now_ms) {
+  const uint pin = static_cast<uint>(source.onewire.pin);
+  const uint8_t* rom = source.onewire.has_rom ? source.onewire.rom : nullptr;
+  if (state.converting) {
+    if (static_cast<int32_t>(static_cast<uint32_t>(now_ms) - state.ready_ms) < 0) return;
+    state.converting = false;
+    uint8_t scratchpad[9] = {};
+    onewire::read_the_scratchpad(pin, rom, scratchpad);
+    take_a_onewire_reading(source, state, sentry::ds18b20_temperature(scratchpad),
+                           state.owes_a_baseline);
+    state.owes_a_baseline = false;
+    return;
+  }
+  if (static_cast<int32_t>(static_cast<uint32_t>(now_ms) - state.due_ms) < 0) return;
+  // Counted from the start of the conversion rather than from the reading, or every
+  // interval would quietly be three quarters of a second longer than it says.
+  state.due_ms = static_cast<uint32_t>(now_ms) + source.onewire.interval_ms;
+  if (!onewire::start_a_conversion(pin, rom)) {
+    // Nothing answered the reset. Said out loud, because a probe that has fallen off its
+    // wire and a probe nobody asked about look identical from the hub.
+    take_a_onewire_reading(source, state, sentry::Measured{}, state.owes_a_baseline);
+    state.owes_a_baseline = false;
+    return;
+  }
+  state.converting = true;
+  state.ready_ms = static_cast<uint32_t>(now_ms) + onewire::kConversionMs;
+}
+
 // What a wire came to mean. The level is read here and judged in `input.cpp`, which is
 // where the settling, the debounce and the polarity live — and which has never seen a pin.
 void take_a_gpio_reading(const sentry::Planned& source, Live& state, sentry::Report report,
@@ -405,6 +469,10 @@ void read_the_sources() {
       if (static_cast<int32_t>(static_cast<uint32_t>(now_ms) - state.due_ms) < 0) continue;
       state.due_ms = static_cast<uint32_t>(now_ms) + source.adc.interval_ms;
       take_an_adc_reading(source, state, false);
+      continue;
+    }
+    if (source.driver == sentry::Driver::kOneWire) {
+      serve_a_onewire_probe(source, state, now_ms);
     }
   }
 }
@@ -422,6 +490,12 @@ void take_every_baseline() {
     } else if (source.driver == sentry::Driver::kAdc) {
       take_an_adc_reading(source, state, true);
       state.due_ms = static_cast<uint32_t>(now_ms) + source.adc.interval_ms;
+    } else if (source.driver == sentry::Driver::kOneWire) {
+      // Asked for rather than taken: the conversion is three quarters of a second away,
+      // and the reading that comes back from it is the baseline.
+      state.converting = false;
+      state.owes_a_baseline = true;
+      state.due_ms = static_cast<uint32_t>(now_ms);
     } else if (source.driver == sentry::Driver::kGpio) {
       // Rearmed rather than read: the next sample is the baseline, and a PIR that has not
       // settled yet will say so instead of pretending the room is empty.
@@ -450,6 +524,9 @@ void start_the_plan() {
       // The pad is given to the converter: no pulls, no digital input, nothing driving it.
       adc_gpio_init(static_cast<uint>(source.adc.pin));
       state.due_ms = static_cast<uint32_t>(now_ms);
+    } else if (source.driver == sentry::Driver::kOneWire) {
+      onewire::take(static_cast<uint>(source.onewire.pin));
+      state.due_ms = static_cast<uint32_t>(now_ms);
     } else if (source.driver == sentry::Driver::kBoard) {
       state.due_ms = static_cast<uint32_t>(now_ms);
     }
@@ -465,6 +542,8 @@ void stop_the_plan() {
       gpio_deinit(pin);
     } else if (source.driver == sentry::Driver::kAdc) {
       gpio_deinit(static_cast<uint>(source.adc.pin));
+    } else if (source.driver == sentry::Driver::kOneWire) {
+      onewire::give_back(static_cast<uint>(source.onewire.pin));
     }
   }
 }
@@ -567,6 +646,16 @@ bool write_announcement() {
           "interval_seconds",
           sentry::Value::of(static_cast<double>(source.adc.interval_ms) / 1000.0, 1)};
       options[index][at++] = {"event_kind", sentry::Value::of(source.adc.event_kind)};
+    } else if (source.driver == sentry::Driver::kOneWire) {
+      options[index][at++] = {"pin",
+                              sentry::Value::of(static_cast<int64_t>(source.onewire.pin))};
+      if (source.onewire.has_rom) {
+        options[index][at++] = {"device", sentry::Value::of(source.onewire.device)};
+      }
+      options[index][at++] = {
+          "interval_seconds",
+          sentry::Value::of(static_cast<double>(source.onewire.interval_ms) / 1000.0, 1)};
+      options[index][at++] = {"event_kind", sentry::Value::of(source.onewire.event_kind)};
     } else if (source.driver == sentry::Driver::kGpio) {
       options[index][at++] = {"pin", sentry::Value::of(static_cast<int64_t>(source.gpio.pin))};
       options[index][at++] = {"active_high", sentry::Value::of(source.gpio.input.active_high)};
@@ -1070,6 +1159,13 @@ void say_the_plan() {
       std::printf("#   %s gpio pin=%d level=%s state=%s readings=%lld\n", source.source_id,
                   source.gpio.pin, live[index].level ? "high" : "low",
                   live[index].input.state() ? "on" : "off",
+                  static_cast<long long>(live[index].readings));
+    } else if (source.driver == sentry::Driver::kOneWire) {
+      std::printf("#   %s onewire pin=%d device=%s every=%lus %sreadings=%lld\n",
+                  source.source_id, source.onewire.pin,
+                  source.onewire.has_rom ? source.onewire.device : "the one on the bus",
+                  static_cast<unsigned long>(source.onewire.interval_ms / 1000),
+                  live[index].converting ? "converting " : "",
                   static_cast<long long>(live[index].readings));
     } else if (source.driver == sentry::Driver::kAdc) {
       std::printf("#   %s adc pin=%d output=%s every=%lus readings=%lld\n", source.source_id,
