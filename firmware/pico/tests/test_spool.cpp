@@ -28,10 +28,15 @@ Reading a_reading(const char* source, const char* kind, int64_t sequence,
   return reading;
 }
 
+// The clock these tests queue against. Most of them do not care what it says — the wait a
+// reading reports is one test of its own, below — so they all take things in at the same
+// moment and read nothing into the number.
+constexpr uint64_t kAtOnce = 1000;
+
 void fill_with_transitions(Spool& spool, size_t how_many) {
   for (size_t index = 0; index < how_many; ++index) {
     spool.offer(a_reading("door-1", "sensor.contact", static_cast<int64_t>(index)),
-                Kept::kTransition);
+                Kept::kTransition, kAtOnce);
   }
 }
 
@@ -41,7 +46,7 @@ TEST(a_reading_waits_until_the_broker_says_it_arrived) {
   // A successful publish is not an acknowledgement, and an event dropped on the way out
   // would be a reading nobody ever knows was taken.
   Spool spool;
-  CHECK(spool.offer(a_reading("pir-1", "sensor.motion", 1), Kept::kTransition));
+  CHECK(spool.offer(a_reading("pir-1", "sensor.motion", 1), Kept::kTransition, kAtOnce));
   Reading front;
   bool replayed = true;
   CHECK(spool.front(front, replayed));
@@ -56,7 +61,7 @@ TEST(a_reading_waits_until_the_broker_says_it_arrived) {
 
 TEST(a_retry_is_the_same_event_and_not_a_second_one) {
   Spool spool;
-  spool.offer(a_reading("pir-1", "sensor.motion", 1), Kept::kTransition);
+  spool.offer(a_reading("pir-1", "sensor.motion", 1), Kept::kTransition, kAtOnce);
   Reading first;
   Reading again;
   bool replayed = false;
@@ -72,7 +77,7 @@ TEST(periodic_readings_from_one_source_collapse_into_the_newest) {
   fill_with_transitions(spool, 0);
   for (int64_t index = 0; index < static_cast<int64_t>(sentry::kSpoolCapacity) + 4; ++index) {
     CHECK(spool.offer(a_reading("board-temperature", "board.temperature", index),
-                      Kept::kPeriodic));
+                      Kept::kPeriodic, kAtOnce));
   }
   CHECK(spool.size() == sentry::kSpoolCapacity);
   CHECK(spool.losses().coalesced == 4);
@@ -85,9 +90,9 @@ TEST(periodic_readings_from_one_source_collapse_into_the_newest) {
 
 TEST(a_temperature_never_pushes_out_a_door_opening) {
   Spool spool;
-  CHECK(spool.offer(a_reading("door-1", "sensor.contact", 1), Kept::kTransition));
+  CHECK(spool.offer(a_reading("door-1", "sensor.contact", 1), Kept::kTransition, kAtOnce));
   for (int64_t index = 0; index < static_cast<int64_t>(sentry::kSpoolCapacity) * 2; ++index) {
-    spool.offer(a_reading("board-temperature", "board.temperature", index), Kept::kPeriodic);
+    spool.offer(a_reading("board-temperature", "board.temperature", index), Kept::kPeriodic, kAtOnce);
   }
   Reading front;
   bool replayed = false;
@@ -100,7 +105,7 @@ TEST(when_only_transitions_are_left_a_periodic_reading_is_refused_rather_than_ke
   Spool spool;
   fill_with_transitions(spool, sentry::kSpoolCapacity);
   CHECK(spool.size() == sentry::kSpoolCapacity);
-  CHECK(!spool.offer(a_reading("board-temperature", "board.temperature", 99), Kept::kPeriodic));
+  CHECK(!spool.offer(a_reading("board-temperature", "board.temperature", 99), Kept::kPeriodic, kAtOnce));
   CHECK(spool.losses().refused == 1);
   CHECK(spool.losses().dropped_transitions == 0);
 }
@@ -119,7 +124,7 @@ TEST(a_transition_that_is_lost_is_counted_and_never_told_later) {
 TEST(an_event_held_across_a_disconnection_arrives_late_rather_than_fresh) {
   Spool spool;
   spool.offer(a_reading("door-1", "sensor.contact", 1, "2026-09-16T20:00:00.000Z"),
-              Kept::kTransition);
+              Kept::kTransition, kAtOnce);
   spool.link_lost();
   Reading front;
   bool replayed = false;
@@ -129,7 +134,7 @@ TEST(an_event_held_across_a_disconnection_arrives_late_rather_than_fresh) {
 
   // What is taken after the link is back is not historic, and is not marked as if it were.
   spool.accepted();
-  spool.offer(a_reading("door-1", "sensor.contact", 2), Kept::kTransition);
+  spool.offer(a_reading("door-1", "sensor.contact", 2), Kept::kTransition, kAtOnce);
   CHECK(spool.front(front, replayed));
   CHECK(!replayed);
 }
@@ -139,12 +144,12 @@ TEST(a_reading_keeps_its_own_value_and_not_the_next_ones) {
   Reading beacon = a_reading("ble-1", "presence.beacon", 1);
   beacon.value = Value::of("away");
   beacon.unit = nullptr;
-  CHECK(spool.offer(beacon, Kept::kTransition));
+  CHECK(spool.offer(beacon, Kept::kTransition, kAtOnce));
   Reading measured = a_reading("board-temperature", "board.temperature", 2);
   measured.value = Value::of(42.25, 1);
   measured.unit = "\xc2\xb0"
                   "C";
-  CHECK(spool.offer(measured, Kept::kPeriodic));
+  CHECK(spool.offer(measured, Kept::kPeriodic, kAtOnce));
 
   Reading front;
   bool replayed = false;
@@ -164,8 +169,8 @@ TEST(a_baseline_travels_marked_and_is_not_replaced_by_the_next_reading) {
   // baseline, or a contact found closed becomes a contact that just closed; and a
   // periodic reading taken a moment later must not quietly take its place.
   Spool spool;
-  CHECK(spool.offer(a_reading("door-1", "sensor.contact", 1), Kept::kTransition, true));
-  CHECK(spool.offer(a_reading("door-1", "sensor.contact", 2), Kept::kPeriodic));
+  CHECK(spool.offer(a_reading("door-1", "sensor.contact", 1), Kept::kTransition, kAtOnce, true));
+  CHECK(spool.offer(a_reading("door-1", "sensor.contact", 2), Kept::kPeriodic, kAtOnce));
   CHECK(spool.size() == 2);
 
   Reading front;
@@ -185,9 +190,64 @@ TEST(a_baseline_travels_marked_and_is_not_replaced_by_the_next_reading) {
 TEST(a_field_too_long_for_the_queue_is_refused_and_not_cut_down) {
   Spool spool;
   std::string long_name(sentry::kMaxSourceText + 4, 'a');
-  CHECK(!spool.offer(a_reading(long_name.c_str(), "sensor.motion", 1), Kept::kTransition));
+  CHECK(!spool.offer(a_reading(long_name.c_str(), "sensor.motion", 1), Kept::kTransition, kAtOnce));
   CHECK(spool.losses().refused == 1);
   CHECK(spool.empty());
 }
 
 int main() { return harness::run_all("spool"); }
+
+TEST(a_reading_says_how_long_it_waited_here) {
+  // The one number in an event that is about this node rather than about the world. The
+  // queue is the only thing that knows it: by the time the envelope is written, the moment
+  // the reading was taken is a timestamp and the moment it was queued is gone unless it
+  // was kept.
+  Spool spool;
+  CHECK(spool.offer(a_reading("pir-1", "sensor.motion", 1), Kept::kTransition, 4000));
+  Reading front;
+  bool replayed = false;
+  uint64_t queued_at = 0;
+  CHECK(spool.front(front, replayed, nullptr, &queued_at));
+  CHECK(queued_at == 4000);
+  // And a caller that does not ask still gets the reading, because most of them do not.
+  CHECK(spool.front(front, replayed));
+}
+
+TEST(a_reading_that_replaced_another_waited_from_when_it_arrived) {
+  // Coalescing is one reading standing in for a series, not one reading inheriting
+  // another's history: what is waiting is the newest temperature, and it has been waiting
+  // since it was taken. Saying otherwise would report an outage that the reading being
+  // sent was never in.
+  Spool spool;
+  for (size_t index = 0; index < 15; ++index) {
+    CHECK(spool.offer(a_reading("door-1", "sensor.contact", static_cast<int64_t>(index)),
+                      Kept::kTransition, 1000));
+  }
+  CHECK(spool.offer(a_reading("board-temperature", "board.temperature", 1), Kept::kPeriodic, 2000));
+  CHECK(spool.offer(a_reading("board-temperature", "board.temperature", 2), Kept::kPeriodic, 9000));
+  CHECK(spool.losses().coalesced == 1);
+
+  // Drain the transitions; what is left is the temperature that replaced the other one.
+  for (size_t index = 0; index < 15; ++index) spool.accepted();
+  Reading front;
+  bool replayed = false;
+  uint64_t queued_at = 0;
+  CHECK(spool.front(front, replayed, nullptr, &queued_at));
+  CHECK(front.sequence == 2);
+  CHECK(queued_at == 9000);
+}
+
+TEST(a_link_that_dropped_does_not_change_how_long_anything_has_waited) {
+  // A reading held through an outage is the same reading, and the wait it reports is the
+  // whole of it — from when it was taken in, not from when the link came back. That is the
+  // number that tells a hub how far behind a node was.
+  Spool spool;
+  CHECK(spool.offer(a_reading("door-1", "sensor.contact", 1), Kept::kTransition, 500));
+  spool.link_lost();
+  Reading front;
+  bool replayed = false;
+  uint64_t queued_at = 0;
+  CHECK(spool.front(front, replayed, nullptr, &queued_at));
+  CHECK(replayed);
+  CHECK(queued_at == 500);
+}

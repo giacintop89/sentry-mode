@@ -116,8 +116,8 @@ that should not be in it. Four boards are built by the workflow and were built b
 |---|---|---|---|
 | `pico2_w` | RP2350 | yes | 1.24 MB |
 | `pico_w` | RP2040 | yes | 1.30 MB |
-| `pico2` | RP2350 | no | 332 kB |
-| `pico` | RP2040 | no | 352 kB |
+| `pico2` | RP2350 | no | 333 kB |
+| `pico` | RP2040 | no | 354 kB |
 
 The wired ones are a quarter of the size because they compile a different network module —
 `net_wired.cpp`, which answers "no radio" and nothing else — and with it no lwIP, no
@@ -586,6 +586,31 @@ keeping
 
 Names and write counts, never values. The authority would be harmless to print and is not
 printed either, because a rule with an exception in it is a rule somebody edits later.
+
+**A board given a new name.** The configuration in flash is addressed to a node, and the
+parser that reads it back at boot is the one the hub's commands go through: a configuration
+written for `pico-ingresso` is refused on a board that is now `pico-cablato`, with
+`not_for_this_node`. That refusal was correct and useless — the board came back with no
+plan, every boot, and said so in a line nobody was there to read. Two things follow from
+it now. Provisioning a board under a different name gives back the pins, sets the revision
+to "nobody has told me", and empties the configuration slot, because the plan running on it
+belongs to the node this board has just stopped being:
+
+```
+provision {"node_id":"pico-prova","mqtt_host":"…","mqtt_port":8883}
+# this board has a new name: what the last one was running is not kept
+# provisioned as pico-prova, broker …, network none
+status
+# plan=0 revision=-1
+```
+
+And a board that already has such a configuration in flash — from a firmware that kept it,
+or a name changed some other way — forgets it at the boot that refuses it, rather than
+refusing it again every morning. Only when the board knows its own name: an identity slot
+that did not come back makes every stored configuration look like somebody else's, and
+that one is kept. Watched on the hardware on 2026-09-17: the stale slot was dropped at
+boot, the hub sent a configuration for the name the board actually has, and the reset after
+that came back with `# running what it was left with: revision 1, 2 sources`.
 
 **A reset it was not asked for.** `PICO-01` wants a watchdog that has been seen to fire, so
 there is a verb that stops feeding it:
@@ -1088,6 +1113,28 @@ Three things were tried on purpose:
   and delivered it when the bridge came back on a new connection id. Nothing was dropped and
   the configuration survived.
 
+**The first words, which used to be lost.** A board with a serial monitor prints its boot
+lines to whoever is watching; a bridged board has nobody on the cable until the bridge
+opens the port, which is a second or two after the board has already said everything
+interesting about how it came back. Those lines were dropped on the floor, and the one time
+it mattered — a board coming back with no plan — the explanation had already scrolled past
+before anything could read it. `bridge.cpp` now holds the first kilobyte of what the board
+says until the port is opened, and sends it first when somebody is there:
+
+```
+2026-09-17 23:18:17,465 INFO pico-cablato: /dev/ttyACM0 is open
+2026-09-17 23:18:19,000 INFO pico-cablato | # provisioned as pico-cablato, broker …, network none
+2026-09-17 23:18:19,000 INFO pico-cablato | # credentials: read back from flash, all three
+2026-09-17 23:18:19,000 INFO pico-cablato | # the configuration in flash was left
+                                          by another node: forgetting it
+2026-09-17 23:18:19,000 INFO pico-cablato | # ready pico2 node=pico-cablato … reset=power
+```
+
+A kilobyte, and then it stops holding: what the board says after that is a board that has
+been running for a while, and a buffer that grew to fit it would be a buffer that eats the
+heap on a board nobody ever plugs into. Lines that did not fit are counted as unsent, the
+same as any other line the cable would not take.
+
 **What the hub is told, and by whom.** The board's retained state carries
 `reached_by: bridge`, and `/api/satellites` shows it. The node says it because the node is
 the only one that knows; the bridge forwards what it is handed and writes nothing into it.
@@ -1311,10 +1358,13 @@ fails here, in a second, rather than at link time on a target with neither.
   `adc`, `onewire`, `ble` and `microphone`. A configuration naming anything else — a
   BME280, a camera — is refused by name. So is `video.start`, and it will stay refused:
   there is no camera on this board and no encoder to put a frame through.
-- How long a reading waited. Every event goes out with `queued_ms: 0`, because the queue
-  does not record when something was put in it. A reading that waited forty seconds says
-  so only through its own `occurred_at`, which is the honest field but not the one the
-  hub uses to notice a node that is falling behind.
+- How long a reading waited is measured now — the spool stamps each reading with the
+  millisecond it arrived, and `queued_ms` is the difference when the frame is written, so
+  the journal shows 5 ms on a quiet board and 13–19 ms in the moment after a
+  reconfiguration, when the baselines are taken and several readings queue at once. A
+  coalesced reading reports its own wait, not the one it replaced. What is missing is at
+  the other end: the hub records the number and nothing reads it, so a node falling behind
+  is still noticed by something else or not at all.
 - A revoked certificate, as opposed to a revoked node. Four certificates have now been
   offered to this broker and refused or allowed on purpose — another authority, an expired
   one, a genuine one for a name nobody registered, and one node's certificate publishing

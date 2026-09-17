@@ -52,6 +52,6 @@
     "Keeping the time, as opposed to getting it once. A board up for a day and the drift between two answers are unexamined.",
     "A certificate listed as revoked is not refused: there is no CRL in this configuration, and revocation is the registry and the access list. Four other bad certificates have been offered to the broker and refused; none of them from the board itself.",
     "Four of the six reset reasons are read from bits nothing here has set, and an RP2040 cannot tell a brown-out from a power-on at all.",
-    "Every event goes out with queued_ms 0: the queue does not record when a reading was put in it."
+    "How long a reading waited is measured by the board now; nothing on the hub reads the number it records, so a node falling behind is still noticed by something else or not at all."
   ]
 }

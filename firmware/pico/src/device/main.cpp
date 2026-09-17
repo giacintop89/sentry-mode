@@ -344,8 +344,8 @@ bool moment_of(uint64_t& moment, char* stamped, size_t capacity, char* event_id)
 }
 
 // One reading, put in the queue for the broker — and, on a board whose cable carries text,
-// written out for a person to see as well. Whether the hub may have it is the lease's business and is decided elsewhere:
-// what is taken is taken, and what is queued waits.
+// written out for a person to see as well. Whether the hub may have it is the lease's
+// business and is decided elsewhere: what is taken is taken, and what is queued waits.
 void offer_the_reading(Live& state, const sentry::Reading& reading, bool initial,
                       sentry::Kept kept) {
   // Kept before it is queued, because it is kept whether or not the hub ever sees it: a
@@ -384,7 +384,7 @@ void offer_the_reading(Live& state, const sentry::Reading& reading, bool initial
   (void)size;
 #endif
 
-  if (provisioned && !spool.offer(reading, kept, initial)) {
+  if (provisioned && !spool.offer(reading, kept, now_us() / 1000, initial)) {
     std::printf("# the queue is full: %lu given up so far\n",
                 static_cast<unsigned long>(spool.losses().refused));
   }
@@ -1234,11 +1234,19 @@ bool write_the_front_of_the_queue() {
   sentry::Reading reading;
   bool replayed = false;
   bool initial = false;
-  if (!spool.front(reading, replayed, &initial)) return false;
+  uint64_t queued_at_ms = 0;
+  if (!spool.front(reading, replayed, &initial, &queued_at_ms)) return false;
   sentry::Delivery delivery;
   delivery.connection_id = connection_id;
   delivery.hub_epoch = lease.hub_epoch();
   delivery.grant_id = lease.grant_id();
+  // How long this reading waited here, on this node's own monotonic clock. It is the one
+  // number in the envelope about the node rather than about the world, and it is the only
+  // way the hub can tell a node that is falling behind from one with nothing to say. A
+  // reading published as soon as it was taken says a few milliseconds; one that sat
+  // through an outage says how long the outage was.
+  const uint64_t now_ms = now_us() / 1000;
+  delivery.queued_ms = static_cast<int64_t>(now_ms > queued_at_ms ? now_ms - queued_at_ms : 0);
   delivery.replayed = replayed;
   delivery.initial_state = initial;
   outgoing_size = sentry::write_event(reading, delivery, outgoing, sizeof(outgoing));
@@ -2066,6 +2074,25 @@ void drive_a_pin(const char* rest) {
   std::printf("# pin %d (%s) driven %s\n", pin, holder, level != 0 ? "high" : "low");
 }
 
+// A board that has just been told it is a different node is not the node the plan it is
+// running was written for, and the configuration in flash is addressed to a name this
+// board no longer answers to. Both go: the pins are given back, the revision goes back to
+// "nobody has told me", and the slot is emptied rather than left to be refused at every
+// boot from here on. The new name starts with nothing, and is told what to run by the hub
+// that now owns it.
+void stop_being_the_node_that_was_configured() {
+  stop_the_plan();
+  running.clear();
+  candidate.clear();
+  config_revision = -1;
+  uint32_t writes = 0;
+  if (vault::holds(sentry::Held::kConfiguration, writes)) {
+    vault::forget(sentry::Held::kConfiguration);
+  }
+  owes_a_declaration = true;
+  std::printf("# this board has a new name: what the last one was running is not kept\n");
+}
+
 void take_provisioning(const char* document, bool keep) {
   sentry::Provisioning found;
   const size_t size = std::strlen(document);
@@ -2073,8 +2100,10 @@ void take_provisioning(const char* document, bool keep) {
     std::printf("# that is not a provisioning record this firmware can use\n");
     return;
   }
+  const bool renamed = provisioned && std::strcmp(provisioning.node_id, found.node_id) != 0;
   provisioning = found;
   provisioned = true;
+  if (renamed) stop_being_the_node_that_was_configured();
   if (keep && !vault::save(sentry::Held::kIdentity, document, size)) {
     // Worth saying out loud: this node is provisioned now and will not be after a reset,
     // which is exactly the sort of thing a board does quietly and nobody finds out about
@@ -2208,6 +2237,14 @@ void take_back_what_was_kept() {
   sentry::Command command;
   sentry::Refusal why = sentry::Refusal::kNone;
   if (!sentry::parse_command(kept, size, node_id, command, why)) {
+    if (why == sentry::Refusal::kNotForThisNode && provisioned) {
+      // Addressed to a node this board is not. No boot from here on will read it any
+      // differently, so it is dropped rather than refused again every morning; a board
+      // whose identity slot did not come back is a different matter, and keeps it.
+      std::printf("# the configuration in flash was left by another node: forgetting it\n");
+      vault::forget(sentry::Held::kConfiguration);
+      return;
+    }
     std::printf("# the configuration in flash is not one this node can read: %s\n",
                 sentry::name_of(why));
     return;

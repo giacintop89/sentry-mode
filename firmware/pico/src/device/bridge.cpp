@@ -33,6 +33,15 @@ char typed[6144];
 size_t typed_head = 0;  // where the next byte is read from
 size_t typed_size = 0;  // how many are waiting
 
+// What this board said before anybody was listening. On a bridged board the first lines
+// are the interesting ones — what it took back out of flash, what it refused and why — and
+// they are printed in the second or so between the power coming up and the machine at the
+// other end opening the port. Counting them as lost was honest and useless: they are held
+// here instead, and go out as soon as there is somebody to go to. What does not fit is
+// still counted as unsaid, because a boot that says more than this has other problems.
+char first_words[1024];
+size_t first_words_size = 0;
+
 uint32_t counter = 0;  // frames this side has written, ever
 Counts counted;
 
@@ -63,12 +72,28 @@ bool write_frame_out(sentry::Carries what, const uint8_t* payload, size_t size) 
 // Whatever has been printed, as one frame. Called when a line ends and once a turn, so
 // that a prompt with no newline after it still reaches the person waiting for it.
 void flush_pending() {
+  // Whatever was said before the cable was open goes first, so that the lines arrive in
+  // the order they were printed rather than after the ones that followed them.
+  if (first_words_size > 0 && stdio_usb_connected()) {
+    const size_t held = first_words_size;
+    first_words_size = 0;
+    if (!write_frame_out(sentry::Carries::kSaid, reinterpret_cast<const uint8_t*>(first_words),
+                         held)) {
+      ++counted.unsaid;
+    }
+  }
   if (pending_size == 0) return;
   const size_t size = pending_size;
   pending_size = 0;  // before the write, so that a print from inside it cannot loop
-  if (!write_frame_out(sentry::Carries::kSaid, reinterpret_cast<const uint8_t*>(pending), size)) {
-    ++counted.unsaid;
+  if (write_frame_out(sentry::Carries::kSaid, reinterpret_cast<const uint8_t*>(pending), size)) {
+    return;
   }
+  if (first_words_size + size <= sizeof(first_words)) {
+    std::memcpy(first_words + first_words_size, pending, size);
+    first_words_size += size;
+    return;
+  }
+  ++counted.unsaid;
 }
 
 // The stdio driver. Everything this program prints arrives here, and nothing else does.

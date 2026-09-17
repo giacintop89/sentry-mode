@@ -56,7 +56,7 @@ bool Spool::make_room(const Reading& reading, Kept kept) {
   return true;
 }
 
-bool Spool::offer(const Reading& reading, Kept kept, bool initial) {
+bool Spool::offer(const Reading& reading, Kept kept, uint64_t at_ms, bool initial) {
   if (reading.source_id == nullptr || reading.kind == nullptr) {
     ++losses_.refused;
     return false;
@@ -89,6 +89,10 @@ bool Spool::offer(const Reading& reading, Kept kept, bool initial) {
     return false;
   }
   entry.sequence = reading.sequence;
+  // When this reading arrived, not when the one it replaced did. A temperature that
+  // coalesced into a newer one is the newer one: it is the new reading that is waiting,
+  // and the wait the hub is told about is that reading's own.
+  entry.queued_at_ms = at_ms;
   entry.clock = reading.clock;
   entry.quality = reading.quality;
   entry.kept = kept;
@@ -101,7 +105,7 @@ bool Spool::offer(const Reading& reading, Kept kept, bool initial) {
   return true;
 }
 
-bool Spool::front(Reading& out, bool& replayed, bool* initial) const {
+bool Spool::front(Reading& out, bool& replayed, bool* initial, uint64_t* queued_at_ms) const {
   if (count_ == 0) return false;
   const Entry& held = at(0);
   out = Reading{};
@@ -119,6 +123,7 @@ bool Spool::front(Reading& out, bool& replayed, bool* initial) const {
   out.quality = held.quality;
   replayed = held.replayed;
   if (initial != nullptr) *initial = held.initial;
+  if (queued_at_ms != nullptr) *queued_at_ms = held.queued_at_ms;
   return true;
 }
 

@@ -53,12 +53,24 @@ class Spool {
   // and needs to know before it can tell news from the way things already were. It is kept
   // like a transition, and it travels marked, so that a door found open is not published
   // as a door that just opened.
-  bool offer(const Reading& reading, Kept kept, bool initial = false);
+  //
+  // `at_ms` is this node's own clock, monotonic and in milliseconds — the one in
+  // `timebase.h` that never goes backwards, not the wall clock, which may not be known
+  // yet and may move when it is. It is what the reading's wait is measured from, and it
+  // is asked for rather than defaulted: a queue that timed things from zero would say
+  // every reading waited since the board booted.
+  bool offer(const Reading& reading, Kept kept, uint64_t at_ms, bool initial = false);
 
   // The oldest reading still waiting, pointing into the spool's own storage. It stays
   // there until `accepted()`: a publish that was never acknowledged is retried with the
   // same event id rather than becoming a second event.
-  bool front(Reading& out, bool& replayed, bool* initial = nullptr) const;
+  //
+  // `queued_at_ms` is when it was taken in, on the same clock `offer` was given. The
+  // difference between that and now is what the hub reads as `queued_ms`, and it is the
+  // only way it has of noticing a node that is falling behind rather than one that is
+  // quiet.
+  bool front(Reading& out, bool& replayed, bool* initial = nullptr,
+             uint64_t* queued_at_ms = nullptr) const;
 
   // The broker acknowledged the front. Only now is it gone.
   void accepted();
@@ -86,6 +98,7 @@ class Spool {
     char text[kMaxValueText] = {};
     bool has_unit = false;
     int64_t sequence = 0;
+    uint64_t queued_at_ms = 0;
     Value value;
     Clock clock = Clock::kUnknown;
     Quality quality = Quality::kValid;
