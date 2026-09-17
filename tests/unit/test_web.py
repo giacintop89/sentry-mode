@@ -708,6 +708,10 @@ def test_captures_are_listed_served_in_ranges_and_deleted(web, tmp_path):
     # Photos and videos name their camera, and a video names its microphone or none.
     assert b'data-f="video-mic"' in page and b'data-f="video-audio"' not in page
     assert page.count(b'data-f="camera"') == 2 and page.count(b'data-f="missing"') == 2
+    # A rule can wait for a camera to confirm a sensor, and the fault policy is visible.
+    assert b'<option value="sequence">' in page and b'id="rule-camera"' in page
+    assert b'id="rule-within"' in page and b'id="rule-same-zone"' in page
+    assert b'id="fault-policy"' in page
 
 
 def upload(base, data, name="Door Bell.wav", content_type="application/octet-stream"):
@@ -1162,6 +1166,49 @@ def test_a_rule_can_be_simulated_without_running_anything(web):
     assert request(base, "/api/events/simulate", "POST", body={"rule": PIR_RULE})[0] == 400
     bad = {"rule": {**PIR_RULE, "id": "Not An Id"}, "samples": []}
     assert request(base, "/api/events/simulate", "POST", body=bad)[0] == 400
+
+
+SEQUENCE_RULE = {
+    "id": "entrance-confirmed",
+    "name": "Entrance confirmed",
+    "trigger": {
+        "type": "sequence",
+        "within_seconds": 5,
+        "steps": [
+            {"type": "sensor_event", "source_id": "zero-entrance.pir", "kind": "motion.pir"},
+            {"type": "vision", "object": "person", "consecutive_detections": 1},
+        ],
+    },
+    "actions": [{"type": "photo", "source_id": "trigger_source"}],
+}
+
+
+def test_the_second_version_status_says_how_each_rule_stands(web):
+    controls, base = web
+    code, status, _ = request(base, "/api/sentry/v2/status")
+    assert code == 200
+    assert status["state"] == "disarmed" and status["fault_policy"] == "global"
+    assert status["rules"][0] == {
+        "id": "person-at-entrance",
+        "name": "Person at entrance",
+        "enabled": True,
+        "trigger": "vision",
+        "state": "off",
+        "reason": None,
+        "waiting_seconds_left": None,
+    }
+    body = {
+        "rule": SEQUENCE_RULE,
+        "samples": [
+            {"at": 0, "detections": [{"label": "person", "confidence": 0.9, "box": [0, 0, 1, 1]}]},
+            {"at": 1, "value": True},
+            {"at": 2, "detections": [{"label": "person", "confidence": 0.9, "box": [0, 0, 1, 1]}]},
+        ],
+    }
+    code, result, _ = request(base, "/api/events/simulate", "POST", body=body)
+    assert code == 200, result
+    assert [step["fired"] for step in result["steps"]] == [False, False, True]
+    assert result["steps"][1]["notes"][0]["kind"] == "waiting"
 
 
 def test_a_second_version_rule_test_refuses_satellite_sources_while_they_are_off(web):

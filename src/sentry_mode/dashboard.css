@@ -243,6 +243,8 @@ label{font-size:17.667px}button,.download{font-size:17.667px;min-height:44px}inp
 .sentry-control .sentry-settings label{margin:0;font-size:15.667px;white-space:nowrap}
 .sentry-control .sentry-fps{display:flex;align-items:center;gap:8px}
 .sentry-control .sentry-fps input{width:74px!important;min-height:38px;padding:6px 8px}
+.sentry-control .sentry-fps select{width:auto;min-height:38px;padding:6px 24px 6px 8px}
+.badge.armed.degraded{color:var(--amber);background:#ffa65b0c;border-color:#ffa65b55}
 .sentry-control .sentry-arm{grid-area:arm;margin:0;flex-wrap:nowrap}
 .sentry-control .sentry-arm button{padding:10px 16px;white-space:nowrap}
 /* The notice line is reserved and never wraps: a message that appears out of nothing, or

@@ -137,8 +137,10 @@ reaches a rule. Everything else is kept with its reason:
 Heartbeats are not written down. The latest one from each node replaces the one before
 and is shown with the node's status.
 
-The events that do count are handed to Sentry, where `sensor_event` and `threshold`
-rules can act on them; see [rules, second version](rules-v2.md).
+The events that do count are handed to Sentry, where `sensor_event`, `threshold` and
+`sequence` rules can act on them; see [rules, second version](rules-v2.md). While a node
+is offline, the rules that listen to it are paused or stop Sentry, as the rules' fault
+policy says.
 
 If the disk is full or the file is damaged, the hub keeps running its own cameras and
 rules, reports the journal as unavailable, and stops admitting satellite events it

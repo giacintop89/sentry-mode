@@ -24,7 +24,7 @@ and where its limits are.
 ## Reference
 
 - [Rule reference](rule-reference.md) — every condition and action field, with its limits.
-- [Rules, second version](rules-v2.md) — triggers from sensors, planning, migration and the V2 API.
+- [Rules, second version](rules-v2.md) — triggers from sensors, a sensor confirmed by a camera, fault policy, planning, migration and the V2 API.
 - [HTTP API](http-api.md) — every endpoint, with the headers they require.
 - [Configuration](configuration.md) — YAML, environment variables, state files, services.
 - [Security model](security.md) — what is exposed, what is stored, what is refused.

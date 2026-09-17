@@ -40,7 +40,7 @@
     for (const button of $('rules').querySelectorAll('button')) button.disabled = busy || armed;
     $('save-help').textContent = armed ? 'Disarm before changing saved rules or actions.'
       : blocking.length ? 'Unsaved changes: '+blocking.join(', ')+'. Save them before starting Sentry.'
-      : dirty.has('settings') ? 'Detections/sec is saved when Sentry starts.' : '';
+      : dirty.has('settings') ? 'Detections/sec and the fault policy are saved when Sentry starts.' : '';
   }
   for (const [id, section] of [['settings','settings'],['rule-editor','rule'],['ssh-editor','command'],['telegram-editor','Telegram']]) {
     $(id).addEventListener('input', event => { if (event.target.id==='command-select'||event.target.id==='test-mode'||event.target.dataset.f==='sound-file') return; dirty.add(section); locks(); });
@@ -77,17 +77,19 @@
     if(t.type==='vision')return t.object;
     if(t.type==='sensor_event')return sourceName(t.source_id)+' '+({rising:'active',falling:'idle',any:'changes'})[t.edge||'rising'];
     if(t.type==='threshold')return sourceName(t.source_id)+(t.above!=null?' > '+t.above:' < '+t.below);
+    if(t.type==='sequence')return sourceName(t.steps[0].source_id)+' → '+t.steps[1].object+' on '+sourceName(t.steps[1].source_id)+' within '+t.within_seconds+' s';
     return t.type.replace('_',' ');
   }
   // Only the fields of the chosen trigger take part in the form: the others are disabled,
   // so a hidden required field can never block saving.
   function showTrigger() {
-    const type=$('rule-trigger').value,sensor=type==='sensor_event'||type==='threshold';
-    $('trigger-vision').hidden=$('trigger-vision').disabled=type!=='vision';
+    const type=$('rule-trigger').value,sequence=type==='sequence',sensor=type==='sensor_event'||type==='threshold'||sequence;
+    $('trigger-vision').hidden=$('trigger-vision').disabled=type!=='vision'&&!sequence;
     $('trigger-sensor').hidden=$('trigger-sensor').disabled=!sensor;
+    $('trigger-sequence').hidden=$('trigger-sequence').disabled=!sequence;
     $('trigger-kept').hidden=type!=='kept';
     for(const box of $('trigger-sensor').querySelectorAll('[data-trigger]')){
-      box.hidden=box.dataset.trigger!==type;
+      box.hidden=!box.dataset.trigger.split(' ').includes(type);
       for(const control of box.querySelectorAll('input,select'))control.disabled=box.hidden;
     }
     if(sensor&&!$('rule-kind').value)$('rule-kind').value=type==='threshold'?'climate.temperature':'sensor.motion';
@@ -111,6 +113,11 @@
     const entries=[['','No sound'],...sources.filter(s=>s.kind==='microphone').map(s=>[s.source_id,sourceLabel(s)])];
     if(chosen&&!entries.some(([id])=>id===chosen))entries.push([chosen,'Missing microphone: '+chosen]);
     options(f(step,'video-mic'),entries,chosen);
+  }
+  function fillTriggerCamera(selected) {
+    const entries=sources.filter(s=>s.kind==='camera').map(s=>[s.source_id,sourceLabel(s)]);
+    if(selected&&!entries.some(([id])=>id===selected))entries.unshift([selected,'Missing camera: '+selected]);
+    options($('rule-camera'),entries,selected||PRIMARY_CAMERA);
   }
   function fillSources(selected) {
     const entries=sensors().map(s=>[s.source_id,s.display_name+(s.zone?' · '+s.zone:'')+(s.state!=='ready'?' · '+s.state:'')]);
@@ -314,18 +321,19 @@
   }
   function loadRule(index) {
     editing=index;const r=config.rules[index]||{id:'',name:'',enabled:true,trigger:{type:'vision',object:'person'},cooldown_seconds:60,actions:[{type:'tts',text:'Hello. Please wait here.',voice:'en',rate:175,effects:{preset:'natural',pitch:0,volume:60}}]};
-    const t=r.trigger,v=t.type==='vision'?t:{},sensor=t.type==='sensor_event'||t.type==='threshold'?t:{};
+    const t=r.trigger,seq=t.type==='sequence'?t:null,v=t.type==='vision'?t:seq?seq.steps[1]:{},sensor=t.type==='sensor_event'||t.type==='threshold'?t:seq?seq.steps[0]:{};
     // The rule library already highlights the rule being edited, so the heading only
     // appears for a new rule, which is highlighted nowhere.
     $('rule-heading').textContent=index<0?'New rule':'Edit rule · '+r.name;$('rule-heading').hidden=index>=0;
     for(const [id,value] of Object.entries({'rule-name':r.name,'rule-object':v.object??'person','rule-confidence':(v.min_confidence??.7)*100,'rule-count':v.min_count??1,'rule-hits':v.consecutive_detections??3,'rule-absence':v.rearm_after_absence_seconds??10,'rule-cooldown':r.cooldown_seconds??60,
       'rule-kind':sensor.kind??'','rule-edge':sensor.edge??'rising','rule-limit':sensor.below!=null?'below':'above','rule-value':sensor.above??sensor.below??'','rule-hysteresis':sensor.hysteresis??0,'rule-for':sensor.for_seconds??0}))$(id).value=value;
+    $('rule-within').value=seq?.within_seconds??5;$('rule-same-zone').checked=!!seq?.same_zone;
     $('rule-enabled').checked=r.enabled;$('use-region').checked=!!v.region;
     ['left','top','right','bottom'].forEach((side,i)=>$('region-'+side).value=(v.region||[0,0,1,1])[i]*100);
-    const editable=['vision','sensor_event','threshold'].includes(t.type);
+    const editable=['vision','sensor_event','threshold','sequence'].includes(t.type);
     $('rule-trigger').querySelector('[value=kept]').hidden=editable;
     $('rule-trigger').value=editable?t.type:'kept';
-    fillSources(sensor.source_id);showTrigger();
+    fillSources(sensor.source_id);fillTriggerCamera(seq?v.source_id:'');showTrigger();
     setSteps(r.actions);
     ruleMessage('');dirty.delete('rule');showRegion();renderRules();
   }
@@ -429,8 +437,11 @@
   function collectTrigger() {
     const type=$('rule-trigger').value,saved=config.rules[editing]?.trigger;
     if(type==='kept')return saved;
-    if(type==='vision')return {type,source_id:saved?.type==='vision'?saved.source_id:'legacy-primary',object:$('rule-object').value.trim().toLowerCase(),min_confidence:num('rule-confidence')/100,min_count:num('rule-count'),consecutive_detections:num('rule-hits'),rearm_after_absence_seconds:num('rule-absence'),region:$('use-region').checked?['left','top','right','bottom'].map(s=>num('region-'+s)/100):null};
+    const vision=source_id=>({type:'vision',source_id,object:$('rule-object').value.trim().toLowerCase(),min_confidence:num('rule-confidence')/100,min_count:num('rule-count'),consecutive_detections:num('rule-hits'),rearm_after_absence_seconds:num('rule-absence'),region:$('use-region').checked?['left','top','right','bottom'].map(s=>num('region-'+s)/100):null});
+    if(type==='vision')return vision(saved?.type==='vision'?saved.source_id:PRIMARY_CAMERA);
     const common={type,source_id:$('rule-source').value,kind:$('rule-kind').value.trim()};
+    if(type==='sequence')return {type,within_seconds:num('rule-within'),time_basis:saved?.type==='sequence'?saved.time_basis:'hub_observation',same_zone:$('rule-same-zone').checked,
+      steps:[{...common,type:'sensor_event',edge:$('rule-edge').value},vision($('rule-camera').value)]};
     if(type==='sensor_event')return {...common,edge:$('rule-edge').value};
     const limit={above:null,below:null};limit[$('rule-limit').value]=num('rule-value');
     return {...common,...limit,hysteresis:num('rule-hysteresis'),for_seconds:num('rule-for')};
@@ -446,7 +457,7 @@
   }
   async function save(next, section, clearTelegramToken = false) {
     if(busy)return false;busy=true;locks();message('Saving…');
-    next.test_mode=$('test-mode').checked;next.detection_fps=num('detection-fps');
+    next.test_mode=$('test-mode').checked;next.detection_fps=num('detection-fps');next.fault_policy=$('fault-policy').value;
     try {
       const data=await api('sentry/v2/config',{config:next,revision,clear_telegram_token:clearTelegramToken},true);config=data.config;revision=data.revision;sources=data.sources;
       if(section==='Telegram')loadTelegram(data.telegram_token_configured);
@@ -515,9 +526,12 @@
   $('disarm').addEventListener('click',()=>action('sentry/stop'));
   async function poll() {
     try {
-      [status,video]=await Promise.all([api('sentry/status'),api('video/status')]);
-      $('armed-state').textContent=status.armed?(status.test_mode?'Armed · test mode':'Armed · actions enabled'):status.error?'Fault / disarmed':'Disarmed';
-      $('armed-state').className='badge'+(status.armed?' armed':'');
+      let v2;[status,video,v2]=await Promise.all([api('sentry/status'),api('video/status'),api('sentry/v2/status')]);
+      // Armed with some rules paused is not the same as protected, so the badge says so.
+      const paused=v2.rules.filter(r=>r.state==='paused');
+      $('armed-state').textContent=status.armed?(status.test_mode?'Armed · test mode':'Armed · actions enabled')+(paused.length?' · degraded, '+paused.length+' paused':''):status.error?'Fault / disarmed':'Disarmed';
+      $('armed-state').className='badge'+(status.armed?' armed':'')+(v2.state==='degraded'?' degraded':'');
+      $('armed-state').title=paused.map(r=>r.name+': '+r.reason).join('\n');
       $('monitor-info').textContent=(video.capture_running?'Camera active':'Camera idle')+' · '+(video.running?'Preview enabled':'Preview hidden')+' · '+(status.active_action||status.pending_actions+' queued actions')+(status.error?' · '+status.error:'');
       const latest=status.events[0]?.id||0;
       if(latest!==eventId){if(status.events.some(e=>e.id>eventId&&/^(Photo|Video|Audio|Message) saved/.test(e.message)))loadCaptures();eventId=latest;$('events').replaceChildren();for(const e of status.events){const row=document.createElement('div');row.className='event';row.dataset.kind=e.kind;const meta=document.createElement('small');meta.textContent=new Date(e.time).toLocaleTimeString()+' · '+e.kind+(e.rule?' · '+e.rule:'');const body=document.createElement('div');body.textContent=e.message;row.append(meta,body);$('events').append(row);}if(!status.events.length)$('events').textContent='No events yet.';}
@@ -555,7 +569,7 @@
   }
   document.querySelector('.app-views a[href="/sentry#captures"]').addEventListener('click',loadCaptures);
   async function init(){try{const data=await api('sentry/v2/config');config=data.config;revision=data.revision;sources=data.sources;
-    $('test-mode').checked=config.test_mode;$('detection-fps').value=config.detection_fps;
+    $('test-mode').checked=config.test_mode;$('detection-fps').value=config.detection_fps;$('fault-policy').value=config.fault_policy;
     loadTelegram(data.telegram_token_configured);
     objects=data.objects;options($('rule-objects'),objects.map(x=>[x,x]));refreshCommands();renderRules();loadRule(config.rules.length?0:-1);loadCommand('');await Promise.all([loadVoices(),loadSoundboard(),loadSounds(),loadCaptures(),poll()]);message(data.error||'',data.error?'error':'');
   }catch(error){message(error.message,'error');}finally{locks();}}

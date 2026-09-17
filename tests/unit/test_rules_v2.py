@@ -367,7 +367,7 @@ def test_disarming_moves_the_epoch_on(engine):
                 trigger=VisionTrigger(source_id="zero-entrance.camera", object="person"),
                 actions=[TTSAction(text="x")],
             ),
-            "satellite camera is not available yet",
+            "zero-entrance.camera is not a camera this hub can watch",
         ),
         (
             RuleV2(

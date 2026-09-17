@@ -205,8 +205,10 @@ class NodeControls:
             inference=self.inference,
             detection=self.config.detection,
         )
+        assert service is not None
+        # A rule that listens to a node pauses while the node is offline.
+        self.sentry.freshness = lambda node_id: service.sessions.freshness(node_id).value
         try:
-            assert service is not None
             service.start()
         except Exception as exc:
             self.satellites_error = str(exc)
@@ -283,6 +285,8 @@ class NodeControls:
             return self.sentry.configuration()
         if path == "/api/sentry/v2/config":
             return self.sentry.configuration_v2()
+        if path == "/api/sentry/v2/status":
+            return self.sentry.status_v2()
         if path == "/api/satellites":
             return self.satellites_overview()
         if path == "/api/talk/config":

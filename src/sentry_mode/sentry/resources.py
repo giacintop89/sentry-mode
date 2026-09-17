@@ -26,9 +26,12 @@ from sentry_mode.sentry.config import (
     PhotoAction,
     RuleV2,
     SensorEventTrigger,
+    SequenceTrigger,
     ThresholdTrigger,
     VideoAction,
     VisionTrigger,
+    trigger_camera,
+    trigger_parts,
 )
 from sentry_mode.sources.models import (
     PRIMARY_CAMERA,
@@ -45,15 +48,16 @@ A = TypeVar("A")
 def resolve(rule: RuleV2, action: A) -> A:
     """The action with `trigger_source` replaced by the camera that set the rule off.
 
-    Only a camera trigger names a camera. For any other trigger the action is returned as
-    it is, and the planner refuses it.
+    Only a camera trigger, or a sequence confirmed by a camera, names a camera. For any
+    other trigger the action is returned as it is, and the planner refuses it.
     """
+    camera = trigger_camera(rule.trigger)
     if (
         isinstance(action, (PhotoAction, VideoAction))
         and action.source_id == TRIGGER_SOURCE
-        and isinstance(rule.trigger, VisionTrigger)
+        and camera is not None
     ):
-        return action.model_copy(update={"source_id": rule.trigger.source_id})  # type: ignore[return-value]
+        return action.model_copy(update={"source_id": camera})  # type: ignore[return-value]
     return action
 
 
@@ -85,7 +89,8 @@ class Plan:
     watched: frozenset[str] = frozenset()
     """Satellite sources a trigger listens to."""
     needs: dict[str, frozenset[str]] = field(default_factory=dict)
-    """Every source each rule depends on, by rule ID, for isolating a fault to its rules."""
+    """Every source each rule depends on, by rule ID, for isolating a fault to its rules.
+    A rule that looks for objects also needs `DETECTOR`, the model every camera shares."""
     problems: tuple[Problem, ...] = ()
     notes: tuple[str, ...] = ()
 
@@ -110,6 +115,10 @@ class Plan:
             "notes": list(self.notes),
         }
 
+
+DETECTOR = "detector"
+"""What a fault in the shared object detector is filed under. It is not a source name,
+which always has a hyphen or a dot."""
 
 EXPECTED = {
     "vision": SourceKind.CAMERA,
@@ -147,26 +156,29 @@ class ResourcePlanner:
                 problems.append(Problem(rule.id, rule.name, message))
 
             used: set[str] = set()
-            trigger = rule.trigger
-            if trigger.type not in ARMABLE_TRIGGERS:
-                fail(f"{trigger.type.replace('_', ' ')} triggers are not available yet")
-            if isinstance(trigger, HealthEventTrigger):
-                pass  # raised by the hub about a node, so it never depends on that node
-            else:
+            if rule.trigger.type not in ARMABLE_TRIGGERS:
+                fail(f"{rule.trigger.type.replace('_', ' ')} triggers are not available yet")
+            if isinstance(rule.trigger, SequenceTrigger):
+                self._sequence(rule.trigger, fail)
+            for trigger in trigger_parts(rule.trigger):
+                if isinstance(trigger, HealthEventTrigger):
+                    continue  # raised by the hub about a node, so it never depends on that node
                 used.add(trigger.source_id)
-                self._check(trigger.source_id, EXPECTED.get(trigger.type), fail)
-            if isinstance(trigger, VisionTrigger):
-                if trigger.source_id == PRIMARY_CAMERA:
-                    detector = True
-                    confidences.append(trigger.min_confidence)
-                elif trigger.source_id in self.cameras:
-                    vision[trigger.source_id] = min(
-                        trigger.min_confidence, vision.get(trigger.source_id, 1.0)
-                    )
-                else:
-                    fail("watching a satellite camera is not available yet")
-            elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger)):
-                watched.add(trigger.source_id)
+                if not self._check(trigger.source_id, EXPECTED.get(trigger.type), fail):
+                    continue
+                if isinstance(trigger, VisionTrigger):
+                    used.add(DETECTOR)
+                    if trigger.source_id == PRIMARY_CAMERA:
+                        detector = True
+                        confidences.append(trigger.min_confidence)
+                    elif trigger.source_id in self.cameras:
+                        vision[trigger.source_id] = min(
+                            trigger.min_confidence, vision.get(trigger.source_id, 1.0)
+                        )
+                    else:
+                        fail(f"{trigger.source_id} is not a camera this hub can watch")
+                elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger)):
+                    watched.add(trigger.source_id)
 
             if self._actions(rule, used, fail, ready, notes):
                 camera_for_actions = True
@@ -188,6 +200,30 @@ class ResourcePlanner:
             problems=tuple(problems),
             notes=tuple(notes),
         )
+
+    def _sequence(self, trigger: SequenceTrigger, fail) -> None:
+        """What a sequence needs besides its two sources: a clock it can keep its word on."""
+        if trigger.time_basis == "capture":
+            fail(
+                "timing by capture time is not available: cameras report when a frame "
+                "reaches the hub, not when it was taken. Use hub_observation"
+            )
+        if not trigger.same_zone:
+            return
+        sensor = self.sources.get(trigger.sensor.source_id)
+        camera = self.sources.get(trigger.vision.source_id)
+        if sensor is None or camera is None:
+            return  # reported as unknown by the checks on each step
+        if sensor.zone is None or camera.zone is None:
+            fail(
+                f"the same zone is required, but "
+                f"{sensor.id if sensor.zone is None else camera.id} has no zone"
+            )
+        elif sensor.zone != camera.zone:
+            fail(
+                f"the same zone is required, but {sensor.id} is in {sensor.zone} "
+                f"and {camera.id} is in {camera.zone}"
+            )
 
     def plan_actions(self, rule: RuleV2) -> list[Problem]:
         """What stands in the way of running a rule's actions now, as a test does."""
@@ -266,4 +302,4 @@ class ResourcePlanner:
         return True
 
 
-__all__ = ["Plan", "Problem", "ResourcePlanner", "resolve", "resolved"]
+__all__ = ["DETECTOR", "Plan", "Problem", "ResourcePlanner", "resolve", "resolved"]

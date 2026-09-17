@@ -455,17 +455,83 @@ class HealthEventTrigger(Model):
     state: Literal["stale", "offline", "online"] = "offline"
 
 
+TimeBasis = Literal["hub_observation", "capture"]
+
+
+class SequenceTrigger(Model):
+    """A sensor event, then a camera confirming it, within a finite window.
+
+    This is the only correlation there is: two fixed steps, not a language. The window
+    opens when the hub receives the sensor event and closes `within_seconds` later. Only
+    camera samples the hub received after the event count towards the confirmation.
+
+    `time_basis` says which clock that is. `hub_observation` is when the hub received the
+    event and the frame, which is all it can vouch for. `capture` would be when they
+    happened; no camera can prove that yet, so it saves but does not arm.
+    """
+
+    type: Literal["sequence"] = "sequence"
+    within_seconds: float = Field(default=5, ge=1, le=60)
+    time_basis: TimeBasis = "hub_observation"
+    same_zone: StrictBool = False
+    steps: tuple[SensorEventTrigger, VisionTrigger]
+
+    @model_validator(mode="before")
+    @classmethod
+    def sensor_then_camera(cls, data):
+        if isinstance(data, dict):
+            steps = data.get("steps")
+            types = (
+                [
+                    step.get("type") if isinstance(step, dict) else getattr(step, "type", None)
+                    for step in steps
+                ]
+                if isinstance(steps, (list, tuple))
+                else None
+            )
+            if types != ["sensor_event", "vision"]:
+                raise ValueError(
+                    "A sequence is exactly two steps: a sensor event, then a camera detection."
+                )
+        return data
+
+    @property
+    def sensor(self) -> SensorEventTrigger:
+        return self.steps[0]
+
+    @property
+    def vision(self) -> VisionTrigger:
+        return self.steps[1]
+
+
 Trigger = Annotated[
     VisionTrigger
     | SensorEventTrigger
     | ThresholdTrigger
+    | SequenceTrigger
     | AudioEventTrigger
     | PresenceStateTrigger
     | HealthEventTrigger,
     Field(discriminator="type"),
 ]
 
-ARMABLE_TRIGGERS = frozenset({"vision", "sensor_event", "threshold"})
+ARMABLE_TRIGGERS = frozenset({"vision", "sensor_event", "threshold", "sequence"})
+
+
+def trigger_camera(trigger) -> str | None:
+    """The camera whose picture sets the rule off, if any: what `trigger_source` means."""
+    if isinstance(trigger, VisionTrigger):
+        return trigger.source_id
+    if isinstance(trigger, SequenceTrigger):
+        return trigger.vision.source_id
+    return None
+
+
+def trigger_parts(trigger) -> list:
+    """The simple triggers a trigger is made of: its steps, or itself."""
+    return list(trigger.steps) if isinstance(trigger, SequenceTrigger) else [trigger]
+
+
 """Triggers the engine can watch today. The others validate, save, and refuse to arm."""
 
 

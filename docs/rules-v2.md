@@ -26,8 +26,8 @@ fit the first version.
 - `id` is permanent. It is lowercase letters, digits and hyphens, at most 64
   characters. Renaming a rule changes `name` and leaves `id` alone. The engine's state,
   the event log and the context of every queued action are keyed by `id`.
-- `trigger` is one of the types below. Only `vision`, `sensor_event` and `threshold` can
-  be armed today. The others can be saved, so an editor can prepare them, but arming
+- `trigger` is one of the types below. Only `vision`, `sensor_event`, `threshold` and
+  `sequence` can be armed today. The others can be saved, so an editor can prepare them, but arming
   refuses them and says why.
 - `photo` and `video` actions take `source_id`, the camera to use (`legacy-primary` by
   default). See [where the evidence comes from](#where-the-evidence-comes-from).
@@ -41,6 +41,7 @@ fit the first version.
 | `vision` | an object is confirmed on consecutive frames | the first version's fields: `object`, `min_confidence`, `min_count`, `consecutive_detections`, `rearm_after_absence_seconds`, `region`, plus `source_id` |
 | `sensor_event` | a sensor reports a change in the given direction | `source_id`, `kind` (e.g. `motion.pir`), `edge` = `rising`, `falling` or `any` |
 | `threshold` | a measurement stays past a limit for `for_seconds` | `source_id`, `kind`, exactly one of `above` / `below`, `hysteresis`, `for_seconds` |
+| `sequence` | a sensor event, then a camera confirming it within the window | `steps` (a `sensor_event`, then a `vision`), `within_seconds` (1–60, default 5), `time_basis`, `same_zone` |
 | `audio_event` | not armable yet | `source_id`, `kind`, `min_level` |
 | `presence_state` | not armable yet | `source_id`, `state` |
 | `health_event` | not armable yet | `node_id`, `state` |
@@ -102,11 +103,74 @@ rule asks for it. The editor shows the choice as a **Sound** list, with *No soun
 Every capture has a sidecar that records its source, the rule and trigger, and how old
 the picture was ([captures](captures.md#where-a-capture-came-from)).
 
+## A sensor confirmed by a camera
+
+A `sequence` is the one correlation there is: a sensor event, then a camera detection.
+It is two fixed steps, not a language.
+
+```json
+{
+  "id": "entrance-confirmed",
+  "name": "Entrance confirmed",
+  "trigger": {
+    "type": "sequence", "within_seconds": 5, "time_basis": "hub_observation",
+    "same_zone": true,
+    "steps": [
+      {"type": "sensor_event", "source_id": "zero-entrance.pir", "kind": "motion.pir"},
+      {"type": "vision", "source_id": "zero-entrance.camera-1", "object": "person",
+       "min_confidence": 0.7, "consecutive_detections": 2}
+    ]
+  },
+  "cooldown_seconds": 60,
+  "actions": [
+    {"type": "photo", "source_id": "trigger_source"},
+    {"type": "telegram", "text": "Movement confirmed by a person at the entrance."}
+  ]
+}
+```
+
+- **The window.** A valid sensor event in the step's direction opens a wait of
+  `within_seconds`, from the moment the hub received the event. The log says
+  *waiting*. If the camera does not confirm in time, the log says *No person on … within
+  5 s of …; nothing was done.*
+- **One wait at a time.** Each rule has at most one wait. The sensor firing again while
+  a wait is open does not move its deadline; otherwise a PIR that keeps firing would
+  keep the window open for as long as somebody walks past. Once the wait has run out,
+  the next event opens a new one. An event the hub received before the latest wait
+  opened arrived late, and is ignored.
+- **What confirms.** The camera step works like a `vision` trigger, but only samples the
+  hub received after the event count, and they have to reach
+  `consecutive_detections` before the window closes. A person already in view counts
+  only through frames taken after the event.
+- **Used once.** Confirming closes the wait and fires the rule, subject to its cooldown.
+  A confirmation during the cooldown still closes the wait, and the log says so. The
+  camera step then stays latched until the object has really been out of sight for
+  `rearm_after_absence_seconds`; a sensor event meanwhile is logged as *skipped*.
+- **What drops a wait.** A sensor reading of doubtful quality, a gap in the camera's
+  samples, or the rule being paused by a fault. Frames that never arrived are not an
+  absence, so a gap never releases the latch either. A wait that has been dropped or
+  has run out is never confirmed later, and nothing is carried over when Sentry is
+  armed again.
+- **Zones.** With `same_zone`, arming requires the sensor and the camera to have the same
+  zone in the registry, and says which zones they have if not.
+- **Time.** `time_basis: hub_observation` means the times are when the hub received the
+  event and the frames. That is what the hub can vouch for, not a promise that the
+  camera saw the person within five seconds of the motion. `time_basis: capture` would
+  compare the moments things happened; no camera can prove when a frame was taken yet,
+  so a rule asking for it is saved but does not arm. Readings from a node whose clock is
+  uncertain never reach a rule in the first place.
+- **Actions.** `trigger_source` in a photo or video is the confirming camera. The
+  actions' context records both the sensor event and the camera, and the zone of the
+  event. A Telegram step sends its text; it does not attach the photo.
+
+The editor offers this as *Sensor, then camera*.
+
 ## What arming starts
 
 Before anything is started, the planner works out what the enabled rules need:
 
-- the detector, only if a `vision` rule watches this node's camera;
+- the detector, only if a `vision` trigger or a sequence's camera step watches this
+  node's camera;
 - the camera, for the detector or because a `photo` or `video` action will need it. If
   only actions need it, the camera runs without the detector, so a photo after a PIR
   starts at once and the model is never loaded;
@@ -130,8 +194,31 @@ before anyone presses Start.
 - `global`: any failure disarms everything. This is what the first version always did,
   and it is the policy a converted first-version file gets.
 - `isolated` (the default for new documents): only the rules that depend on the failed
-  source are paused, and the log says so. Sentry disarms only when no rule is left.
-  If the camera fails and the remaining rules do not need it, it is released.
+  source are paused, and the log says *Rule paused: …*. Sentry disarms only when no rule
+  is left, and the log then says *Every armed rule depends on something that failed.*
+
+What depends on what:
+
+| What failed | Rules paused | What happens to the cameras |
+|---|---|---|
+| a camera stops sending | every rule that watches it or takes a photo or video from it | it is released |
+| the object detector, shared by every camera | every `vision` rule and every `sequence`; sensor rules keep running, including ones that take photos | cameras still used by the remaining rules keep streaming without detection. This node's camera restarts without the detector, briefly |
+| a satellite sensor is disabled, or its node is offline | every rule that listens to it | — |
+
+A paused rule stays paused until Sentry is stopped and started again. Its state is
+not recovered: a pending wait is dropped, and a sensor that comes back starts from a
+fresh reading.
+
+While some rules are paused, Sentry is armed but **degraded**. The Sentry page shows
+*degraded* and the number of paused rules on its badge, with the reasons on hover. The
+editor's *If a source fails* setting chooses the policy; it is saved when Sentry starts
+or a rule is saved. A document converted from the first version keeps `global`; the
+policy is never changed for you.
+
+A node is offline once it has said goodbye, or has been silent for
+`satellites.health.offline_after_seconds`. A node that is only *stale* pauses nothing,
+and neither does the hub losing the broker; in both cases no event arrives, so no rule
+fires on old news, and nothing counts the silence as the sensor being idle.
 
 ## Actions carry their context
 
@@ -150,12 +237,39 @@ skipped*.
 | GET | `/api/sentry/v2/config` | — | `schema_version`, `stored_schema_version`, `config` (token blanked), `revision`, `plan`, `sources` |
 | POST | `/api/sentry/v2/config` | `{"config", "revision", "clear_telegram_token"}` | as GET |
 | POST | `/api/sentry/v2/rules/test` | a rule | runs its actions now, like the first-version test |
+| GET | `/api/sentry/v2/status` | — | see below |
 | POST | `/api/events/simulate` | `{"rule", "samples": [...]}` (up to 500) | per sample: `fired`, the notes, the threshold phase, and what `would_run` |
 
 The POSTs need the same `X-Sentry-Mode-Control: 1` header and same-origin request as the
 other controls. A simulation runs on a state of its own and executes nothing. A sample
 is `{"at", "detections": [{"label", "confidence", "box"}]}` for a vision rule, and
-`{"at", "value", "quality"}` for a sensor rule.
+`{"at", "value", "quality"}` for a sensor rule. A sequence takes both: a sample with
+`detections` is the camera, any other is the sensor, which may also give `zone` and
+`camera_zone`.
+
+`GET /api/sentry/v2/status` says how things stand in words the first-version status has
+no room for:
+
+```json
+{
+  "schema_version": 2, "armed": true, "state": "degraded", "fault_policy": "isolated",
+  "test_mode": false, "error": null, "revision": 12,
+  "plan": {"detector": true, "camera": true, "vision": [], "ready": [], "watched": ["zero-entrance.pir"], "problems": [], "notes": []},
+  "rules": [
+    {"id": "entrance-confirmed", "name": "Entrance confirmed", "enabled": true,
+     "trigger": "sequence", "state": "waiting", "reason": null, "waiting_seconds_left": 3.2},
+    {"id": "person", "name": "Person", "enabled": true, "trigger": "vision",
+     "state": "paused", "reason": "Object detection stopped.", "waiting_seconds_left": null}
+  ]
+}
+```
+
+- `state` is `disarmed`, `protected` (armed, every rule running), `degraded` (armed, some
+  rules paused) or `fault` (stopped by a failure).
+- Each rule's `state` is `off` (not armed), `watching`, `waiting` (a sequence waiting for
+  its camera), `latched` (fired, and waiting for the object to leave or the value to
+  come back), or `paused`, with the `reason`.
+- `plan` is what the current arming runs, after any faults; `null` while disarmed.
 
 The first-version endpoints keep their shapes. A photo or video that names another
 camera, chooses `skip` or `stop`, or records sound from another microphone counts as

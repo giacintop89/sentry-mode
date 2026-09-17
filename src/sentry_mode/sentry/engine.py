@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import partial
@@ -36,6 +37,7 @@ from sentry_mode.sentry.config import (
     SensorEventTrigger,
     SentryConfig,
     SentryConfigV2,
+    SequenceTrigger,
     SoundAction,
     SSHAction,
     SSHCommand,
@@ -48,6 +50,7 @@ from sentry_mode.sentry.config import (
     WaitAction,
 )
 from sentry_mode.sentry.context import ActionContext
+from sentry_mode.sentry.correlation import drop, expire, sequence_event, sequence_sample
 from sentry_mode.sentry.migration import (
     LEGACY_SCHEMA,
     SchemaUpgradeRequired,
@@ -60,7 +63,7 @@ from sentry_mode.sentry.migration import (
     to_v2,
     write_document,
 )
-from sentry_mode.sentry.resources import Plan, ResourcePlanner, resolved
+from sentry_mode.sentry.resources import DETECTOR, Plan, ResourcePlanner, resolved
 from sentry_mode.sentry.triggers import (
     RuleState,
     cooled,
@@ -157,6 +160,8 @@ class Sentry:
             satellites_enabled=settings.satellites.enabled,
             cameras=_Others(self.cameras),
         )
+        self.freshness: Callable[[str], str] | None = None
+        """How recently a satellite node proved it was there, when satellites are on."""
         self.watching: dict[str, Lease] = {}
         """Leases on other cameras: watched for objects, or kept ready for photos."""
         self.halted: deque[str] = deque(maxlen=64)
@@ -190,6 +195,10 @@ class Sentry:
     def fault(self, message: str):
         with self.guard:
             if not self.armed:
+                return
+            if self.config.fault_policy == "isolated" and self.plan is not None:
+                # The worker's next health check pauses only the rules that need it.
+                logger.warning("Sentry source failed: %s", message)
                 return
             self.error = message
             self.armed = False
@@ -454,6 +463,58 @@ class Sentry:
                 "revision": self.revision,
             }
 
+    def status_v2(self) -> dict:
+        """Where Sentry stands, rule by rule, including what the first version cannot say.
+
+        `state` is `disarmed`, `protected` (armed, every rule running), `degraded` (armed,
+        some rules paused by a fault) or `fault` (stopped by one).
+        """
+        now = time.monotonic()
+        with self.guard:
+            if self.armed:
+                state = "degraded" if self.suspended else "protected"
+            else:
+                state = "fault" if self.error else "disarmed"
+            rules = []
+            for rule in self.config.rules:
+                armed = self.armed and rule.id in self.states
+                rule_state = self.states.get(rule.id, RuleState())
+                candidate = rule_state.candidate if armed else None
+                if not armed:
+                    phase = "off"
+                elif rule.id in self.suspended:
+                    phase = "paused"
+                elif candidate is not None:
+                    phase = "waiting"
+                elif rule_state.latched or rule_state.phase == "active":
+                    phase = "latched"
+                else:
+                    phase = "watching"
+                rules.append(
+                    {
+                        "id": rule.id,
+                        "name": rule.name,
+                        "enabled": rule.enabled,
+                        "trigger": rule.trigger.type,
+                        "state": phase,
+                        "reason": self.suspended.get(rule.id) if armed else None,
+                        "waiting_seconds_left": round(max(0.0, candidate.deadline - now), 1)
+                        if candidate is not None
+                        else None,
+                    }
+                )
+            return {
+                "schema_version": 2,
+                "armed": self.armed,
+                "state": state,
+                "fault_policy": self.config.fault_policy,
+                "test_mode": self.config.test_mode,
+                "error": self.error or self.config_error,
+                "rules": rules,
+                "plan": self.plan.as_dict() if self.armed and self.plan else None,
+                "revision": self.revision,
+            }
+
     def arm(self) -> dict:
         with self.lifecycle:
             with self.guard:
@@ -668,19 +729,31 @@ class Sentry:
                 return
             rules = [
                 rule
-                for rule in self._watching(VisionTrigger)
-                if isinstance(rule.trigger, VisionTrigger) and rule.trigger.source_id == source_id
+                for rule in self._watching(VisionTrigger, SequenceTrigger)
+                if _looks_at(rule, source_id)
             ]
             if last and captured - last > max_gap:
                 for rule in rules:
                     state = self.states[rule.id]
                     state.hits, state.absent_since = 0, None
+                    for kind, message in drop(state, f"{source_id} missed frames"):
+                        self._event(kind, message, rule.name)
             self.samples[source_id] = captured
             for rule in rules:
                 trigger = rule.trigger
+                state = self.states[rule.id]
+                if isinstance(trigger, SequenceTrigger):
+                    candidate = state.candidate
+                    count = sum(1 for d in detections if detection_matches(trigger.vision, d))
+                    notes = sequence_sample(trigger, state, count, captured, rule.cooldown_seconds)
+                    for kind, message in notes:
+                        self._event(kind, message, rule.name)
+                        if kind == "triggered" and candidate is not None:
+                            origin = (candidate.event_id, f"vision:{source_id}")
+                            self._fire(rule, captured, origin, candidate.zone)
+                    continue
                 assert isinstance(trigger, VisionTrigger)
                 count = sum(1 for d in detections if detection_matches(trigger, d))
-                state = self.states[rule.id]
                 for kind, message in confirm(rule, state, count, captured):
                     self._event(kind, message, rule.name)
                     if kind == "triggered":
@@ -704,9 +777,15 @@ class Sentry:
                 return
             if event.kind in MOTION_KINDS and event.value is True and event.quality == "valid":
                 self._boost()
-            for rule in self._watching(SensorEventTrigger, ThresholdTrigger):
+            for rule in self._watching(SensorEventTrigger, ThresholdTrigger, SequenceTrigger):
                 trigger = rule.trigger
                 state = self.states[rule.id]
+                if isinstance(trigger, SequenceTrigger):
+                    camera = self.sources.get(trigger.vision.source_id)
+                    zone = camera.zone if camera is not None else None
+                    for kind, message in sequence_event(trigger, state, event, zone):
+                        self._event(kind, message, rule.name)
+                    continue
                 if isinstance(trigger, SensorEventTrigger):
                     fired = sensor_fires(trigger, event)
                 else:
@@ -828,12 +907,26 @@ class Sentry:
             fired = False
             notes: list[tuple[str, str]] = []
             if isinstance(trigger, VisionTrigger):
-                detections = [
-                    Detection(d["label"], float(d["confidence"]), tuple(d["box"]))
-                    for d in sample.get("detections", [])
-                ]
-                count = sum(1 for d in detections if detection_matches(trigger, d))
+                count = _matching(trigger, sample)
                 notes = confirm(rule, state, count, at)
+                fired = any(kind == "triggered" for kind, _ in notes)
+            elif isinstance(trigger, SequenceTrigger):
+                # A sample with detections is the camera; anything else is the sensor.
+                if "detections" in sample:
+                    count = _matching(trigger.vision, sample)
+                    notes = sequence_sample(trigger, state, count, at, rule.cooldown_seconds)
+                else:
+                    sensor = trigger.sensor
+                    observed = Simulated(
+                        ref=SourceRef.parse(sample.get("source_id", sensor.source_id)),
+                        kind=sample.get("kind", sensor.kind),
+                        value=sample.get("value"),
+                        quality=sample.get("quality", "valid"),
+                        received_monotonic=at,
+                        zone=sample.get("zone"),
+                        event_id=f"simulated-{index}",
+                    )
+                    notes = sequence_event(trigger, state, observed, sample.get("camera_zone"))
                 fired = any(kind == "triggered" for kind, _ in notes)
             elif isinstance(trigger, (SensorEventTrigger, ThresholdTrigger)):
                 observed = Simulated(
@@ -878,29 +971,29 @@ class Sentry:
         if plan is None or plan.camera:
             state = self.video.status()
             detection = state["detection"]
-            needs_detector = plan is None or plan.detector
-            if not state["capture_running"] or (
-                needs_detector and (not detection["enabled"] or detection["error"])
+            if not state["capture_running"]:
+                failures[PRIMARY_CAMERA] = state["error"] or "Camera stopped."
+            elif (plan is None or plan.detector) and (
+                not detection["enabled"] or detection["error"]
             ):
-                failures[PRIMARY_CAMERA] = (
-                    state["error"] or detection["error"] or "Camera or detector stopped."
-                )
+                failures[DETECTOR] = detection["error"] or "Object detection stopped."
         for source_id in plan.vision if plan else ():
             camera = self.cameras.camera(source_id)
             seen = camera.status() if camera is not None else None
-            if (
-                seen is None
-                or not seen["capture_running"]
-                or not seen["detection"]["enabled"]
-                or seen["detection"]["error"]
-            ):
-                failures[source_id] = (
-                    seen and (seen["error"] or seen["detection"]["error"])
-                ) or f"{source_id} stopped."
+            if seen is None or not seen["capture_running"]:
+                failures[source_id] = (seen and seen["error"]) or f"{source_id} stopped."
+            elif not seen["detection"]["enabled"] or seen["detection"]["error"]:
+                failures.setdefault(
+                    DETECTOR, seen["detection"]["error"] or "Object detection stopped."
+                )
         for source_id in plan.watched if plan else ():
             record = self.sources.get(source_id)
             if record is None or record.state in (SourceState.DISABLED, SourceState.FAILED):
                 failures[source_id] = f"{source_id} is no longer available."
+            elif record.ref.node and self.freshness is not None:
+                # Silence from a node is not a quiet sensor: its readings are unknown.
+                if self.freshness(record.ref.node) == "offline":
+                    failures[source_id] = f"{record.ref.node} is offline."
         if not failures:
             return True
         if self.config.fault_policy == "isolated" and plan is not None:
@@ -915,21 +1008,40 @@ class Sentry:
         return False
 
     def _isolate(self, plan: Plan, failures: dict[str, str]) -> bool:
+        """Pause the rules that need what failed; keep the rest armed if any are left.
+
+        A camera that fails pauses the rules that use it. The detector is shared, so when
+        it fails every rule that looks for objects pauses, and the cameras stay on only
+        for the photos and videos the remaining rules take.
+        """
         with self.guard:
             for source_id, message in failures.items():
                 for rule_id in plan.rules_needing(source_id) - set(self.suspended):
                     self.suspended[rule_id] = message
                     rule = next(r for r in self.config.rules if r.id == rule_id)
                     self._event("fault", f"Rule paused: {message}", rule.name)
+                    drop(self.states[rule_id], "the rule was paused")
             left = set(self.states) - set(self.suspended)
             if left:
-                lost = {s: c for s, c in plan.vision.items() if s not in failures}
-                self.plan = replace(plan, vision=lost)
-                if PRIMARY_CAMERA in failures and plan.camera:
-                    # Nothing left needs the camera; let it go rather than retry it.
+                needed = set().union(*(plan.needs.get(rule_id, ()) for rule_id in left))
+                if DETECTOR in failures:
+                    lost = {}
+                    kept = {s for s in plan.vision if s in needed and s not in failures}
+                else:
+                    lost = {s: c for s, c in plan.vision.items() if s not in failures}
+                    kept = set()
+                self.plan = replace(plan, vision=lost, ready=plan.ready | kept)
+                primary = PRIMARY_CAMERA in needed and PRIMARY_CAMERA not in failures
+                if plan.camera and PRIMARY_CAMERA in failures:
+                    # Nothing left may use the camera; let it go rather than retry it.
                     self.plan = replace(self.plan, detector=False, camera=False)
                     self.video.set_sentry(False)
-                self._unwatch(set(failures) & set(plan.vision))
+                elif plan.detector and DETECTOR in failures:
+                    self.plan = replace(self.plan, detector=False, camera=primary)
+                    self.video.set_sentry(False)
+                    if primary:
+                        self._keep_camera()
+                self._unwatch((set(failures) | set(plan.vision)) - set(lost) - kept)
                 return True
             self.error = "; ".join(failures.values())
             self.armed = False
@@ -939,10 +1051,27 @@ class Sentry:
         self._stop_cameras()
         return False
 
+    def _keep_camera(self) -> None:
+        """This node's camera again, without the detector, for the rules still armed."""
+        try:
+            self.video.set_sentry(True, self.config.detection_fps, detect=False)
+        except Exception as exc:  # noqa: BLE001 - the next health check pauses what needs it
+            logger.warning("The camera could not restart without the detector: %s", exc)
+
+    def _expire(self) -> None:
+        """Close the sequence windows that ran out with nothing arriving to notice."""
+        now = time.monotonic()
+        with self.guard:
+            for rule in self._watching(SequenceTrigger):
+                assert isinstance(rule.trigger, SequenceTrigger)
+                for kind, message in expire(rule.trigger, self.states[rule.id], now):
+                    self._event(kind, message, rule.name)
+
     def _worker(self):
         while not self.cancelled.is_set():
             if not self._healthy():
                 break
+            self._expire()
             try:
                 job = self.jobs.get(timeout=0.1)
             except queue.Empty:
@@ -1433,6 +1562,13 @@ class Sentry:
                         process.wait()
 
 
+def _looks_at(rule: RuleV2, source_id: str) -> bool:
+    trigger = rule.trigger
+    if isinstance(trigger, SequenceTrigger):
+        return trigger.vision.source_id == source_id
+    return isinstance(trigger, VisionTrigger) and trigger.source_id == source_id
+
+
 def _wall(seconds: float) -> str:
     return datetime.fromtimestamp(seconds, timezone.utc).isoformat(timespec="milliseconds")
 
@@ -1467,6 +1603,14 @@ def confirm(rule: RuleV2, state: RuleState, count: int, captured: float) -> list
     return notes
 
 
+def _matching(trigger: VisionTrigger, sample: dict) -> int:
+    detections = [
+        Detection(d["label"], float(d["confidence"]), tuple(d["box"]))
+        for d in sample.get("detections", [])
+    ]
+    return sum(1 for d in detections if detection_matches(trigger, d))
+
+
 @dataclass(frozen=True)
 class Simulated:
     """An observation made up for a simulation, shaped like a normalized event."""
@@ -1476,3 +1620,5 @@ class Simulated:
     value: object
     quality: str
     received_monotonic: float
+    zone: str | None = None
+    event_id: str = "simulated"

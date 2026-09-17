@@ -9,11 +9,14 @@ simulation and nothing is executed.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from sentry_mode.sentry.config import SensorEventTrigger, ThresholdTrigger, VisionTrigger
 from sentry_mode.sources.models import SourceRef
 from sentry_mode.vision.detection import Detection
+
+if TYPE_CHECKING:
+    from sentry_mode.sentry.correlation import Candidate
 
 
 class Observed(Protocol):
@@ -44,6 +47,10 @@ class RuleState:
     (past the limit, waiting out `for_seconds`) or `active` (fired, or already past the
     limit when watching began)."""
     pending_since: float | None = None
+    candidate: Candidate | None = None
+    """For sequences: the sensor event waiting for the camera, if any."""
+    opened_until: float = float("-inf")
+    """For sequences: when the newest window opened. An event older than that is late."""
 
 
 def cooled(state: RuleState, cooldown: float, now: float) -> bool:
