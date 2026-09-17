@@ -1315,9 +1315,15 @@ fails here, in a second, rather than at link time on a target with neither.
   does not record when something was put in it. A reading that waited forty seconds says
   so only through its own `occurred_at`, which is the honest field but not the one the
   hub uses to notice a node that is falling behind.
-- The rest of the failure cases of the handshake. A wrong authority has been watched, and
-  refused; a certificate issued for another name, an expired one and a revoked one have
-  not, so the rest of `T06` and all of `T07` are **not executed**.
+- A revoked certificate, as opposed to a revoked node. Four certificates have now been
+  offered to this broker and refused or allowed on purpose — another authority, an expired
+  one, a genuine one for a name nobody registered, and one node's certificate publishing
+  under another node's name — which is the rest of `T06` and most of `T07`; they are in
+  [the hub's own document](../../docs/satellites.md#what-it-refuses-watched-rather-than-assumed),
+  because it was the broker answering, not the board. What is left is a certificate listed
+  as revoked: there is no CRL in this configuration, and revocation here is the registry
+  and the access list. Offering any of these *from the board* is also still undone — the
+  board has only ever been given credentials that work.
 - A sensor with wires on it. A pin is read, debounced, settled and reported, and that path
   has been exercised on the hardware — but by the board driving its own pad, not by a PIR
   or a reed switch. What a real sensor does that a driven pin does not — the settling after

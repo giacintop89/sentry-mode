@@ -213,6 +213,33 @@ Do not replace a broker configuration that is already there; the file above adds
 of its own. `deploy/satellites/firewall-policy.md` describes what the satellites should be
 able to reach, which is one port on one machine and nothing else.
 
+### What it refuses, watched rather than assumed
+
+Four certificates were offered to this broker on 2026-09-17, on the machine this system
+actually runs on, and what came back is what is written down here:
+
+| What was offered | What the broker did |
+|---|---|
+| A certificate from another authority, for the right name | `tlsv1 alert unknown ca`, and the connection dropped |
+| A genuine certificate that expired in February | `tlsv1 alert certificate expired`, and the connection dropped |
+| A genuine certificate for a name that is registered nowhere | The handshake succeeded and **every** publish was refused: `Not authorized`, its own topic included |
+| A node's genuine certificate, publishing under another node's name | The handshake succeeded, its own topic took the message and the other node's was refused |
+
+The first two are the authority doing its work, and the second two are the access list
+doing its work — which is why both exist. A name with no line in the access list can hold a
+certificate this authority signed and still have nothing it may say, and that is exactly the
+state a revoked node is left in once `acl` has been regenerated.
+
+One thing that follows from this, and is worth saying plainly rather than leaving to be
+discovered: on the broker's path the hub does not check which certificate a node presented.
+It cannot — the broker terminates the TLS and hands the hub a name, not a certificate. The
+fingerprint pinned at approval is checked where the hub terminates TLS itself, which today
+is the media gateway. So a second certificate for the same name, signed by the same
+authority, is accepted on this path: minting one needs the authority's own key, which is the
+thing that has to be kept, and `ca.key` is `0600` for that reason. A revoked certificate is
+not refused either — there is no CRL in this configuration, and revocation here is the
+registry and the access list rather than a list of serial numbers.
+
 ## Taking a node away
 
     python scripts/satellite_admin.py revoke --node zero-entrance --reason "sold"
