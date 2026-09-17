@@ -12,10 +12,11 @@ It has now also run on a board. A Raspberry Pi Pico 2 W (RP2350) was flashed on
 2026-09-17 with the device build below, and the events it published from its own die
 temperature were accepted by the hub's models and by the published schema — the same
 serializer, the same bytes, on a chip where `long` is 32 bits and unaligned access is not
-free. That is the first hardware gate of `PICO-01` and no more than that: there is still no
-Wi-Fi, no MQTT, no flash and no sensor driver on the board. The rest of the hardware gates
-in the [implementation plan](../../docs/sentry-mode-pico-implementation-plan.md) stay
-marked **not executed**.
+free. The same board has since joined a network and taken its time from it. That is the
+first hardware gate of `PICO-01` and no more than that: there is still no MQTT, no flash
+and no sensor driver on the board. The rest of the hardware gates in the
+[implementation plan](../../docs/sentry-mode-pico-implementation-plan.md) stay marked
+**not executed**.
 
 ## Building and running the tests
 
@@ -144,11 +145,21 @@ ok  board-temperature seq=1 33.13 °C valid clock=synced at 2026-09-17 11:56:26.
 The binary is 327 kB of text and 6.9 kB of static RAM, most of it the wireless firmware and
 TinyUSB; `arm-none-eabi-size build/pico2w/sentry_firmware.elf` says so on any change.
 
-**The joining and the time are built but not yet proven on a board.** The temperature run
-above is; the Wi-Fi and SNTP path compiles and has not been watched to work, because the
-board's USB link failed during the attempt — `device descriptor read/64, error -110`, which
-is a cable or a port and not this firmware. Until somebody has seen `# joined` and a time
-from the network, that is where this stands.
+The joining and the time have been watched to work on the same board, on 2026-09-17:
+
+```
+# provisioned as pico-ingresso, broker 192.168.11.240:8883, network GL-SFT1200-fda
+# joining GL-SFT1200-fda
+# joined GL-SFT1200-fda as 192.168.11.156, -44 dBm
+# the network says it is 2026-09-17T13:04:19.812Z (answer 1)
+# node=pico-ingresso provisioned=yes link=up address=192.168.11.156 signal=-49 clock=synced answers=1
+```
+
+Association, DHCP, the DNS lookup and the SNTP answer all happen inside `net.cpp`; the
+answer is handed to `Timebase` on the main loop rather than in the callback, so nothing
+that publishes is running on lwIP's stack. Every event published after it carries
+`clock_status: synced`, and the timestamps it writes agree with this machine's clock to
+within 10 ms — which is the whole point of asking the network rather than a person.
 
 ## What is in here
 
@@ -189,9 +200,11 @@ fails here, in a second, rather than at link time on a target with neither.
 - The flash itself: the linker layout, the erase and program calls, USB recovery, and the
   certificates and private key a real provisioning tool writes. `store.cpp` says what a
   record looks like and `pack_provisioning.py` writes one; neither has touched a sector.
-- SNTP. `Timebase` is told the time by something; on the board today that something is a
-  person typing `time <unix_ms>` into a serial port, which is enough to check a serializer
-  and is not a clock.
+- Keeping the time, as opposed to getting it once. The board asks at boot and then every
+  hour, and a board that has been up for a day has not been watched: what the drift between
+  two answers is, what happens when the network goes away mid-interval, and whether a node
+  that has lost its clock should go back to `unsynced` rather than keep stamping readings
+  from a counter nobody has checked.
 - The MQTT client itself. `mqtt.cpp` writes and reads the packets and is checked against a
   second implementation, `session.cpp` says what order things happen in and `lease.cpp` says
   what permission is worth — but nothing yet holds a socket, retries, tracks what is in
