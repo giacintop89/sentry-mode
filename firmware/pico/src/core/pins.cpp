@@ -2,6 +2,8 @@
 
 namespace sentry {
 
+bool has_radio(Board board) { return board == Board::kPicoW || board == Board::kPico2W; }
+
 bool is_reserved(Board board, int gpio) {
   // On a board with radio these four belong to the wireless chip: its power, its data, its
   // chip select and its clock, which doubles as the VSYS divider. On a board without one
@@ -12,9 +14,9 @@ bool is_reserved(Board board, int gpio) {
   // the next board is where copying one onto the other stops being harmless.
   static const int kWireless[] = {23, 24, 25, 29};
   static const int kWired[] = {23, 24, 25, 29};
-  bool has_radio = board == Board::kPicoW || board == Board::kPico2W;
-  const int* reserved = has_radio ? kWireless : kWired;
-  size_t count = has_radio ? sizeof(kWireless) / sizeof(int) : sizeof(kWired) / sizeof(int);
+  const bool wireless = has_radio(board);
+  const int* reserved = wireless ? kWireless : kWired;
+  size_t count = wireless ? sizeof(kWireless) / sizeof(int) : sizeof(kWired) / sizeof(int);
   for (size_t index = 0; index < count; ++index) {
     if (reserved[index] == gpio) return true;
   }

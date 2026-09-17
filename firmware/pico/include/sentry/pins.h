@@ -23,6 +23,10 @@ enum class Board { kPico, kPicoW, kPico2, kPico2W };
 inline constexpr int kMaxGpio = 29;
 inline constexpr size_t kMaxClaims = 32;
 
+// Whether this board has the wireless chip on it. Two things turn on it: which pins are
+// the radio's, and whether a source can ask to listen for Bluetooth at all.
+bool has_radio(Board board);
+
 bool is_reserved(Board board, int gpio);
 
 // Why a pin could not be taken. The node says which, because "configuration refused" with

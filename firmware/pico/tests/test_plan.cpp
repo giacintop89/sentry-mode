@@ -486,4 +486,182 @@ TEST(enabled_is_true_or_false_and_not_the_word) {
   CHECK(attempt.said("enabled is true or false"));
 }
 
+TEST(a_watched_phone_is_an_address_and_nothing_else_is_needed) {
+  Source source = a_source("phone-mine", "ble");
+  with_text(source, "address", "AA:BB:CC:DD:EE:FF");
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(plan, &source, 1));
+  CHECK(plan.at(0).driver == Driver::kBle);
+  CHECK(plan.at(0).ble.watched.by_address);
+  CHECK(!plan.at(0).ble.watched.by_beacon);
+  CHECK(plan.at(0).ble.watched.address[0] == 0xaa);
+  CHECK(plan.at(0).ble.watched.address[5] == 0xff);
+  // The defaults are the ones the watch itself starts with, so a source that says only
+  // which device it wants behaves the same here as it does on the Linux agent.
+  CHECK(plan.at(0).ble.how.enter_sightings == 3);
+  CHECK(plan.at(0).ble.how.enter_window_ms == 10000);
+  CHECK(plan.at(0).ble.how.absent_after_ms == 120000);
+  CHECK(std::strcmp(plan.at(0).ble.event_kind, "presence.state") == 0);
+}
+
+TEST(a_watched_beacon_is_a_uuid_and_may_be_narrowed_to_one_of_them) {
+  Source source = a_source("tag-keys", "ble");
+  with_text(source, "ibeacon_uuid", "f7826da6-4fa2-4e98-8024-bc5b71e0893e");
+  with_integer(source, "ibeacon_major", 1);
+  with_integer(source, "ibeacon_minor", 42);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(plan, &source, 1));
+  CHECK(plan.at(0).ble.watched.by_beacon);
+  CHECK(plan.at(0).ble.watched.uuid[0] == 0xf7);
+  CHECK(plan.at(0).ble.watched.uuid[15] == 0x3e);
+  CHECK(plan.at(0).ble.watched.major == 1);
+  CHECK(plan.at(0).ble.watched.minor == 42);
+}
+
+TEST(a_device_is_watched_by_its_address_or_by_its_beacon_and_not_by_both) {
+  Source neither = a_source("ghost", "ble");
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &neither, 1));
+  CHECK(attempt.why == Unplanned::kMissingOption);
+  CHECK(attempt.said("by its address or by its iBeacon"));
+
+  Source both = a_source("ghost", "ble");
+  with_text(both, "address", "AA:BB:CC:DD:EE:FF");
+  with_text(both, "ibeacon_uuid", "f7826da6-4fa2-4e98-8024-bc5b71e0893e");
+  CHECK(!attempt.of(plan, &both, 1));
+  CHECK(attempt.why == Unplanned::kMissingOption);
+}
+
+TEST(a_major_on_an_address_is_two_claims_about_different_things) {
+  Source source = a_source("phone-mine", "ble");
+  with_text(source, "address", "AA:BB:CC:DD:EE:FF");
+  with_integer(source, "ibeacon_major", 1);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &source, 1));
+  CHECK(attempt.why == Unplanned::kNoSuchOption);
+  CHECK(attempt.said("part of an iBeacon"));
+}
+
+TEST(an_address_is_written_the_way_the_radio_says_it) {
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+
+  Source lower = a_source("phone-mine", "ble");
+  with_text(lower, "address", "aa:bb:cc:dd:ee:ff");
+  CHECK(!attempt.of(plan, &lower, 1));
+  CHECK(attempt.why == Unplanned::kWrongType);
+  CHECK(attempt.said("in capitals"));
+
+  Source short_one = a_source("phone-mine", "ble");
+  with_text(short_one, "address", "AA:BB:CC:DD:EE");
+  CHECK(!attempt.of(plan, &short_one, 1));
+  CHECK(attempt.why == Unplanned::kWrongType);
+
+  Source upper_uuid = a_source("tag-keys", "ble");
+  with_text(upper_uuid, "ibeacon_uuid", "F7826DA6-4FA2-4E98-8024-BC5B71E0893E");
+  CHECK(!attempt.of(plan, &upper_uuid, 1));
+  CHECK(attempt.why == Unplanned::kWrongType);
+  CHECK(attempt.said("lowercase uuid"));
+}
+
+TEST(how_patient_a_watch_is_has_limits_and_they_are_said_in_seconds) {
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+
+  Source patient = a_source("phone-mine", "ble");
+  with_text(patient, "address", "AA:BB:CC:DD:EE:FF");
+  with_integer(patient, "enter_sightings", 5);
+  with_integer(patient, "enter_window_seconds", 20);
+  with_integer(patient, "absent_after_seconds", 300);
+  with_integer(patient, "rssi_min", -80);
+  CHECK(attempt.of(plan, &patient, 1));
+  CHECK(plan.at(0).ble.how.enter_sightings == 5);
+  CHECK(plan.at(0).ble.how.enter_window_ms == 20000);
+  CHECK(plan.at(0).ble.how.absent_after_ms == 300000);
+  CHECK(plan.at(0).ble.how.rssi_min == -80);
+
+  Source impatient = a_source("phone-mine", "ble");
+  with_text(impatient, "address", "AA:BB:CC:DD:EE:FF");
+  with_integer(impatient, "absent_after_seconds", 2);
+  CHECK(!attempt.of(plan, &impatient, 1));
+  CHECK(attempt.why == Unplanned::kOutOfRange);
+  CHECK(attempt.said("absent_after_seconds is between 10 and 3600"));
+
+  Source crowded = a_source("phone-mine", "ble");
+  with_text(crowded, "address", "AA:BB:CC:DD:EE:FF");
+  with_integer(crowded, "enter_sightings", 50);
+  CHECK(!attempt.of(plan, &crowded, 1));
+  CHECK(attempt.why == Unplanned::kOutOfRange);
+  CHECK(attempt.said("enter_sightings is between 1 and 20"));
+
+  Source worded = a_source("phone-mine", "ble");
+  with_text(worded, "address", "AA:BB:CC:DD:EE:FF");
+  with_text(worded, "rssi_min", "weak");
+  CHECK(!attempt.of(plan, &worded, 1));
+  CHECK(attempt.why == Unplanned::kWrongType);
+  CHECK(attempt.said("rssi_min is a whole number"));
+}
+
+TEST(a_watch_that_cannot_see_its_own_sightings_in_its_own_window_is_refused) {
+  // Twenty sightings in one second is more than a device advertising as fast as this code
+  // will count it can produce: the gap between two counted sightings is a second.
+  Source source = a_source("phone-mine", "ble");
+  with_text(source, "address", "AA:BB:CC:DD:EE:FF");
+  with_integer(source, "enter_sightings", 20);
+  with_integer(source, "enter_window_seconds", 1);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &source, 1));
+  CHECK(attempt.why == Unplanned::kOutOfRange);
+  CHECK(attempt.said("do not go together"));
+}
+
+TEST(a_board_with_no_radio_has_nothing_to_listen_with) {
+  Source source = a_source("phone-mine", "ble");
+  with_text(source, "address", "AA:BB:CC:DD:EE:FF");
+
+  Plan plan(Board::kPico2);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &source, 1));
+  CHECK(attempt.why == Unplanned::kNoSuchDriver);
+  CHECK(attempt.said("has none"));
+}
+
+TEST(a_watched_device_holds_no_pin_and_can_be_switched_off_like_the_rest) {
+  Source sources[2];
+  sources[0] = a_source("phone-mine", "ble");
+  with_text(sources[0], "address", "AA:BB:CC:DD:EE:FF");
+  with_boolean(sources[0], "enabled", false);
+  sources[1] = a_source("tag-keys", "ble");
+  with_text(sources[1], "ibeacon_uuid", "f7826da6-4fa2-4e98-8024-bc5b71e0893e");
+  with_text(sources[1], "event_kind", "presence.state");
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(attempt.of(plan, sources, 2));
+  CHECK(plan.size() == 2);
+  CHECK(!plan.at(0).enabled);
+  CHECK(plan.at(1).enabled);
+  CHECK(plan.holder(15) == nullptr);
+}
+
+TEST(a_word_a_ble_source_does_not_know_is_refused_like_any_other) {
+  Source source = a_source("phone-mine", "ble");
+  with_text(source, "address", "AA:BB:CC:DD:EE:FF");
+  with_integer(source, "pin", 15);
+
+  Plan plan(Board::kPico2W);
+  Attempt attempt;
+  CHECK(!attempt.of(plan, &source, 1));
+  CHECK(attempt.why == Unplanned::kNoSuchOption);
+}
+
 int main() { return harness::run_all("plan"); }

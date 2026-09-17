@@ -70,6 +70,11 @@ const char* kGpioOptions[] = {"pin",          "active_high",    "bias",
                               "debounce_ms",  "settle_seconds", "event_kind"};
 const char* kAdcOptions[] = {"pin", "output", "event_kind", "interval_seconds"};
 const char* kOneWireOptions[] = {"pin", "device", "event_kind", "interval_seconds"};
+// The same words the Linux agent takes for the same source, minus the adapter: a board
+// with one radio has nothing to choose between.
+const char* kBleOptions[] = {"address",         "ibeacon_uuid",         "ibeacon_major",
+                             "ibeacon_minor",   "rssi_min",             "enter_sightings",
+                             "enter_window_seconds", "absent_after_seconds", "event_kind"};
 
 bool hex_digit(char letter, uint8_t& value) {
   if (letter >= '0' && letter <= '9') {
@@ -133,6 +138,64 @@ bool event_kind_of(const Source& source, const char* id, char* out, size_t capac
   return true;
 }
 
+// How patient this source is: how many sightings make an arrival, in how long a window,
+// how long a quiet is absence, and how weak a signal is still evidence. Every one of them
+// has a default that works, so a source that names a device and nothing else is a source.
+bool watchfulness_of(const Source& source, const char* id, Watchfulness& out, Unplanned& why,
+                     char* detail, size_t capacity) {
+  struct Number {
+    const char* name;
+    int64_t least;
+    int64_t most;
+    bool seconds;  // written in seconds, kept in milliseconds
+    int64_t* into;
+  };
+  int64_t sightings = out.enter_sightings;
+  int64_t window = out.enter_window_ms;
+  int64_t absent = out.absent_after_ms;
+  int64_t weakest = out.rssi_min;
+  const Number numbers[] = {
+      {"enter_sightings", 1, static_cast<int64_t>(kMaxEnterSightings), false, &sightings},
+      {"enter_window_seconds", kMinEnterWindowMs / 1000, kMaxEnterWindowMs / 1000, true,
+       &window},
+      {"absent_after_seconds", kMinAbsentAfterMs / 1000, kMaxAbsentAfterMs / 1000, true,
+       &absent},
+      {"rssi_min", -127, 0, false, &weakest},
+  };
+  for (const Number& number : numbers) {
+    const Option* option = option_named(source, number.name);
+    if (option == nullptr) continue;
+    int64_t value = 0;
+    if (!whole_number(*option, value)) {
+      why = Unplanned::kWrongType;
+      say(detail, capacity, "%s: %s is a whole number", id, number.name);
+      return false;
+    }
+    if (value < number.least || value > number.most) {
+      why = Unplanned::kOutOfRange;
+      say(detail, capacity, "%s: %s is between %lld and %lld", id, number.name,
+          static_cast<long long>(number.least), static_cast<long long>(number.most));
+      return false;
+    }
+    *number.into = number.seconds ? value * 1000 : value;
+  }
+  Watchfulness wanted;
+  wanted.enter_sightings = static_cast<uint32_t>(sightings);
+  wanted.enter_window_ms = static_cast<uint32_t>(window);
+  wanted.absent_after_ms = static_cast<uint32_t>(absent);
+  wanted.rssi_min = static_cast<int32_t>(weakest);
+  // The watch is the authority on what it can survive; this only refuses earlier, with the
+  // name of the source on it.
+  Watch measuring;
+  if (!measuring.configure(wanted)) {
+    why = Unplanned::kOutOfRange;
+    say(detail, capacity, "%s: those sightings and windows do not go together", id);
+    return false;
+  }
+  out = wanted;
+  return true;
+}
+
 // The one pin a source is on, or none. Two drivers here take a pin and the map does not
 // care which: what it is protecting is the wire.
 int pin_of(const Planned& planned) {
@@ -158,6 +221,8 @@ const char* name_of(Driver driver) {
       return "adc";
     case Driver::kOneWire:
       return "onewire";
+    case Driver::kBle:
+      return "ble";
     case Driver::kNone:
       break;
   }
@@ -247,6 +312,7 @@ Driver driver_of(const char* kind) {
   if (std::strcmp(kind, "gpio") == 0) return Driver::kGpio;
   if (std::strcmp(kind, "adc") == 0) return Driver::kAdc;
   if (std::strcmp(kind, "onewire") == 0) return Driver::kOneWire;
+  if (std::strcmp(kind, "ble") == 0) return Driver::kBle;
   return Driver::kNone;
 }
 
@@ -326,6 +392,9 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
     } else if (planned.driver == Driver::kOneWire) {
       known = kOneWireOptions;
       how_many = sizeof(kOneWireOptions) / sizeof(kOneWireOptions[0]);
+    } else if (planned.driver == Driver::kBle) {
+      known = kBleOptions;
+      how_many = sizeof(kBleOptions) / sizeof(kBleOptions[0]);
     }
     for (size_t at = 0; at < source.option_count; ++at) {
       if (std::strcmp(source.options[at].name, "enabled") == 0) continue;
@@ -357,6 +426,83 @@ bool Plan::take(const Source* sources, size_t count, Unplanned& why, char* detai
         }
       }
       if (!interval_of(source, source.id, planned.board.interval_ms, why, detail, capacity)) {
+        clear();
+        return false;
+      }
+      ++count_;
+      continue;
+    }
+
+    // ble, which is one named device and a long argument about what "here" means.
+    if (planned.driver == Driver::kBle) {
+      // The driver exists in this build; the antenna does not. Said as "no such driver"
+      // because on this board there is none, and the hub's catalogue says the same.
+      if (!has_radio(board_)) {
+        why = Unplanned::kNoSuchDriver;
+        say(detail, capacity, "%s: ble needs a board with a radio, and this one has none",
+            source.id);
+        clear();
+        return false;
+      }
+      copy_into(planned.ble.event_kind, sizeof(planned.ble.event_kind), "presence.state");
+      const Option* address = option_named(source, "address");
+      const Option* beacon = option_named(source, "ibeacon_uuid");
+      if ((address == nullptr) == (beacon == nullptr)) {
+        why = Unplanned::kMissingOption;
+        say(detail, capacity, "%s: a device is watched by its address or by its iBeacon",
+            source.id);
+        clear();
+        return false;
+      }
+      if (address != nullptr) {
+        if (address->type != Option::Type::kString ||
+            !read_address(address->text, planned.ble.watched.address)) {
+          why = Unplanned::kWrongType;
+          say(detail, capacity, "%s: address is AA:BB:CC:DD:EE:FF, in capitals", source.id);
+          clear();
+          return false;
+        }
+        planned.ble.watched.by_address = true;
+      } else {
+        if (beacon->type != Option::Type::kString ||
+            !read_uuid(beacon->text, planned.ble.watched.uuid)) {
+          why = Unplanned::kWrongType;
+          say(detail, capacity, "%s: ibeacon_uuid is a lowercase uuid with its hyphens",
+              source.id);
+          clear();
+          return false;
+        }
+        planned.ble.watched.by_beacon = true;
+      }
+      // A major or a minor is a part of a beacon. On a source watching an address they
+      // would be two claims about different things, and the second would be ignored.
+      static const char* kBeaconOnly[] = {"ibeacon_major", "ibeacon_minor"};
+      for (const char* only : kBeaconOnly) {
+        const Option* part = option_named(source, only);
+        if (part == nullptr) continue;
+        if (planned.ble.watched.by_address) {
+          why = Unplanned::kNoSuchOption;
+          say(detail, capacity, "%s: %s is part of an iBeacon, and this one watches an address",
+              source.id, only);
+          clear();
+          return false;
+        }
+        int64_t number = 0;
+        if (!whole_number(*part, number) || number < 0 || number > 65535) {
+          why = Unplanned::kOutOfRange;
+          say(detail, capacity, "%s: %s is between 0 and 65535", source.id, only);
+          clear();
+          return false;
+        }
+        if (std::strcmp(only, "ibeacon_major") == 0) {
+          planned.ble.watched.major = static_cast<int32_t>(number);
+        } else {
+          planned.ble.watched.minor = static_cast<int32_t>(number);
+        }
+      }
+      if (!watchfulness_of(source, source.id, planned.ble.how, why, detail, capacity) ||
+          !event_kind_of(source, source.id, planned.ble.event_kind,
+                         sizeof(planned.ble.event_kind), why, detail, capacity)) {
         clear();
         return false;
       }

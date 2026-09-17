@@ -24,13 +24,14 @@
 #include "sentry/command.h"
 #include "sentry/input.h"
 #include "sentry/pins.h"
+#include "sentry/presence.h"
 #include "sentry/spool.h"  // kMaxKindText: what an event kind may be, in one place
 
 namespace sentry {
 
 // Every driver this firmware has. A configuration naming anything else — a camera, a
 // microphone, a bus this build has no code for — is refused rather than ignored.
-enum class Driver { kNone, kBoard, kGpio, kAdc, kOneWire };
+enum class Driver { kNone, kBoard, kGpio, kAdc, kOneWire, kBle };
 
 // What holds a pin when nothing else is driving it. A contact wired to ground needs a pull
 // up or it reads whatever the air says; a PIR drives its own line and needs neither.
@@ -91,6 +92,15 @@ struct GpioSource {
   char event_kind[kMaxKindText] = {};
 };
 
+// One device the radio listens for, and how patient this node is about it. What is watched
+// is named — an address or an iBeacon — because "some device appeared" is not presence: a
+// stranger's phone going past the window would be somebody coming home.
+struct BleSource {
+  Watched watched;
+  Watchfulness how;
+  char event_kind[kMaxKindText] = {};
+};
+
 struct Planned {
   char source_id[kMaxNameText] = {};
   Driver driver = Driver::kNone;
@@ -99,6 +109,7 @@ struct Planned {
   GpioSource gpio;
   AdcSource adc;
   OneWireSource onewire;
+  BleSource ble;
 };
 
 // Why a configuration was not taken up. Every one of these is said out loud with the name
