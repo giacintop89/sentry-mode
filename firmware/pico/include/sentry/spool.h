@@ -78,6 +78,12 @@ class Spool {
   // The link dropped. Everything held from here is an event arriving late, and says so.
   void link_lost();
 
+  // The wall clock stepped under this node. Everything already in the queue was stamped
+  // against the offset that turned out to be wrong, by about as much as the clock moved.
+  // The stamps stay — they are what the node was told, and changing them would invent a
+  // moment nobody measured — and none of them is called `synced` any more.
+  void clock_stepped();
+
   size_t size() const { return count_; }
 
   // How much memory what is waiting is taking. The entries are fixed-size, so this is a

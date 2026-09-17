@@ -9,6 +9,12 @@
 // written for it is correct. What must never happen is that reading being called `synced`.
 // That is the difference between a timestamp and a claim about a timestamp, and the hub
 // decides what counts as live from the second one.
+//
+// The same distinction applies when the wall clock moves under a node that is already
+// sure of it. A correction moves it by milliseconds; a step moves it by an hour, and
+// everything this node stamped before the step is wrong by about that much. The stamps
+// cannot be taken back — they are already written, and some of them are already published
+// — but the claim can be, and `sync` says when one has to be.
 
 #ifndef SENTRY_TIMEBASE_H
 #define SENTRY_TIMEBASE_H
@@ -18,6 +24,11 @@
 #include "sentry/event.h"
 
 namespace sentry {
+
+// Further than this and the wall clock did not drift, it moved. Two seconds is far more
+// than a crystal loses between two answers and far less than the hour a timezone, a
+// daylight saving change or a source that was itself wrong moves it by.
+inline constexpr int64_t kClockStepUs = 2 * 1000000;
 
 // A counter that wraps, seen as one that does not. Callers read the hardware and hand the
 // raw value here; two reads more than 2^32 units apart cannot be told apart by anyone, so
@@ -41,7 +52,15 @@ class Ticks {
 class Timebase {
  public:
   // The wall time at a monotonic moment, from whatever told us: SNTP, or the bridge.
-  void sync(int64_t unix_ms, uint64_t monotonic_us);
+  //
+  // True when that moved the wall clock further than `kClockStepUs`, which a correction does
+  // not and a step does. The first sync of a boot is never a step: there was nothing to
+  // move from, and everything stamped before it was already `unsynced`.
+  bool sync(int64_t unix_ms, uint64_t monotonic_us);
+
+  // How far the last sync moved the wall clock. Zero on the first one, and signed: a node
+  // told the time by something that had itself been wrong moves backwards.
+  int64_t moved_by_us() const { return moved_by_us_; }
 
   // The source of time stopped answering. The offset is kept, because it is still the best
   // estimate this node has, but nothing it stamps from here on is called synced.
@@ -59,6 +78,7 @@ class Timebase {
   bool synced_ = false;
   bool lost_ = false;
   int64_t offset_us_ = 0;
+  int64_t moved_by_us_ = 0;
   uint64_t synced_at_us_ = 0;
 };
 

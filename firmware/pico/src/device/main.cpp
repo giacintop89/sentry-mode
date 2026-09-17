@@ -886,6 +886,17 @@ void run_the_default_plan() {
 
 uint32_t monotonic_ms() { return static_cast<uint32_t>(now_us() / 1000); }
 
+// The wall clock moved further than a correction moves it — a timezone, a daylight saving
+// change, or a source that had itself been wrong. What this node has stamped and not yet
+// published was written against the offset that has just been replaced, so it is out by
+// about as much. The timestamps stay as they were taken; what goes is the claim that they
+// are synced, which is the one of the two the hub decides anything from.
+void the_clock_stepped() {
+  spool.clock_stepped();
+  std::printf("# the time moved by %lld ms: what is still queued no longer claims to be synced\n",
+              static_cast<long long>(clock_.moved_by_us() / 1000));
+}
+
 // Whatever the network last said the time was, handed to the timebase here rather than in
 // the callback: what a reading may claim about itself is decided in one place, on this
 // loop, and not from lwIP's context.
@@ -903,7 +914,7 @@ void take_the_time_if_it_arrived() {
   // loop's own last reading of the counter, and handing an older value to `extend` would
   // look exactly like the counter going round.
   time_answered_at_us = ticks.just_before(static_cast<uint32_t>(answers.taken_at_us));
-  clock_.sync(answers.last_unix_ms, time_answered_at_us);
+  if (clock_.sync(answers.last_unix_ms, time_answered_at_us)) the_clock_stepped();
   if (come_back_on_its_own && !wanted) {
     // Not before now: a certificate has dates on it, and a board that does not know what
     // time it is cannot tell an expired one from a good one.
@@ -1759,7 +1770,7 @@ void the_time_arrived(const uint8_t* payload, size_t size) {
     return;
   }
   const bool first = !clock_.synced();
-  clock_.sync(unix_ms, now_us());
+  const bool stepped = clock_.sync(unix_ms, now_us());
   time_answered_at_us = now_us();
   ++answers_seen;
   if (first) {
@@ -1768,6 +1779,7 @@ void the_time_arrived(const uint8_t* payload, size_t size) {
       std::printf("# the bridge says it is %s\n", stamped);
     }
   }
+  if (stepped) the_clock_stepped();
 }
 
 // One frame out, carrying whatever is in the outgoing buffer. There is no acknowledgement
@@ -2363,8 +2375,9 @@ void obey(const char* line) {
       std::printf("# time <unix_ms>\n");
       return;
     }
-    clock_.sync(unix_ms, now_us());
+    const bool stepped = clock_.sync(unix_ms, now_us());
     std::printf("# time taken: %lld\n", static_cast<long long>(unix_ms));
+    if (stepped) the_clock_stepped();
     return;
   }
   if (std::strcmp(line, "sample") == 0) {

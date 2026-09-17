@@ -195,6 +195,41 @@ TEST(a_field_too_long_for_the_queue_is_refused_and_not_cut_down) {
   CHECK(spool.empty());
 }
 
+TEST(a_clock_that_stepped_takes_back_what_is_queued_says_about_itself) {
+  // Two readings taken while this node was sure of the time, then an hour appearing from
+  // nowhere. The moments they were taken at are still the moments they were taken at, and
+  // the strings say so; what cannot survive is either of them calling itself synced.
+  Spool spool;
+  Reading first = a_reading("door-1", "sensor.contact", 1, "2026-09-17T22:03:06.258Z");
+  first.clock = sentry::Clock::kSynced;
+  Reading second = a_reading("board-temperature", "board.temperature", 2,
+                             "2026-09-17T22:03:11.257Z");
+  second.clock = sentry::Clock::kSynced;
+  CHECK(spool.offer(first, Kept::kTransition, kAtOnce));
+  CHECK(spool.offer(second, Kept::kPeriodic, kAtOnce));
+
+  spool.clock_stepped();
+
+  Reading front;
+  bool replayed = false;
+  CHECK(spool.front(front, replayed));
+  CHECK(front.clock == sentry::Clock::kUnknown);
+  CHECK(std::strcmp(front.occurred_at, "2026-09-17T22:03:06.258Z") == 0);
+  spool.accepted();
+  CHECK(spool.front(front, replayed));
+  CHECK(front.clock == sentry::Clock::kUnknown);
+  CHECK(std::strcmp(front.occurred_at, "2026-09-17T22:03:11.257Z") == 0);
+
+  // And a reading taken after it is as good as the new offset is, which is what the node
+  // was just told.
+  Reading later = a_reading("door-1", "sensor.contact", 3, "2026-09-17T22:03:20.100Z");
+  later.clock = sentry::Clock::kSynced;
+  spool.accepted();
+  CHECK(spool.offer(later, Kept::kTransition, kAtOnce));
+  CHECK(spool.front(front, replayed));
+  CHECK(front.clock == sentry::Clock::kSynced);
+}
+
 int main() { return harness::run_all("spool"); }
 
 TEST(a_reading_says_how_long_it_waited_here) {

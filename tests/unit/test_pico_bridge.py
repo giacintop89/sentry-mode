@@ -106,3 +106,55 @@ def test_the_goodbye_is_about_the_connection_it_ends(bridge):
     # A hub that was sent this for a connection that has already been replaced must be able
     # to tell, which is the whole reason the connection is named in it.
     assert set(said) == {"schema_version", "node_id", "boot_id", "connection_id", "online"}
+
+
+def test_a_broker_that_came_back_is_told_again_who_is_here(bridge):
+    # A broker that restarted lost every retained message with it, and this node's presence
+    # is one of them. The board never noticed — its cable did not move — so it will not
+    # announce itself again, and a node nobody announced is one the hub calls offline while
+    # it goes on publishing into it. Watched happening on 2026-09-18, on the wired board.
+    published: list[tuple[str, bytes, bool]] = []
+    subscribed: list[str] = []
+
+    class Paho:
+        def subscribe(self, topic, qos=1):
+            subscribed.append(topic)
+
+        def publish(self, topic, payload, qos=1, retain=False):
+            published.append((topic, payload, retain))
+
+    carried = bridge.Carried(
+        who=bridge.Wired(
+            node_id="pico-cablato",
+            port="/dev/ttyACM0",
+            certificate="node.crt",
+            key="node.key",
+        ),
+        broker=bridge.Broker(host="hub.local"),
+    )
+    announcement = json.dumps(
+        {
+            "node_id": "pico-cablato",
+            "boot_id": "2c9a7f38-16d4-4b9e-9a0c-77f0b2d5e611",
+            "connection_id": "9b1d6e44-0f27-4a83-8c55-1d3e6a9b4c72",
+            "online": True,
+        }
+    ).encode()
+
+    # Nothing yet said, so there is nothing to say again: a bridge that connected before the
+    # board ever spoke must not invent a presence for it.
+    carried._connected(Paho(), None, {}, 0)
+    assert subscribed == ["sentry/v1/nodes/pico-cablato/commands"]
+    assert published == []
+
+    carried.state = json.loads(announcement)
+    carried.state_payload = announcement
+    carried._connected(Paho(), None, {}, 0)
+    assert published == [("sentry/v1/nodes/pico-cablato/state", announcement, True)]
+
+    # And a cable that went away takes it with it: what the hub is left holding then is the
+    # goodbye, not an announcement said over again by a bridge nobody is talking to.
+    carried.port = None
+    carried.client = None
+    carried.let_go("the cable is gone")
+    assert carried.state_payload is None

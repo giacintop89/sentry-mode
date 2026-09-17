@@ -137,4 +137,8 @@ void Spool::link_lost() {
   for (size_t index = 0; index < count_; ++index) at(index).replayed = true;
 }
 
+void Spool::clock_stepped() {
+  for (size_t index = 0; index < count_; ++index) at(index).clock = Clock::kUnknown;
+}
+
 }  // namespace sentry

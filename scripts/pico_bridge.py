@@ -189,6 +189,7 @@ class Carried:
     counter: int = 0
     commands: queue.Queue = field(default_factory=queue.Queue)
     state: dict | None = None  # the last announcement, which is what the will is made of
+    state_payload: bytes | None = None  # and the bytes of it, for saying it again
     waiting_to_connect: dict | None = None
     tried_to_connect_at: float = 0.0
     said_hello_at: float = 0.0
@@ -251,6 +252,7 @@ class Carried:
             # this bridge being killed, and a cable pulled out is not that.
             self.publish("state", goodbye_for(self.state), retain=True)
         self.state = None
+        self.state_payload = None
         self.waiting_to_connect = None
         self.disconnect()
 
@@ -307,6 +309,13 @@ class Carried:
             log.error("%s: the broker refused this node: %s", self.who.node_id, reason_code)
             return
         client.subscribe(self.topic("commands"), qos=1)
+        # And say again who is here. A reconnection is not always to a broker that remembers
+        # anything: one that restarted lost every retained message with it, and this node's
+        # presence is one of them. The board has nothing new to say — the cable never moved,
+        # so it never noticed — and a node nobody announced is a node the hub calls offline
+        # while it goes on publishing into it.
+        if self.state_payload is not None:
+            client.publish(self.topic("state"), self.state_payload, qos=1, retain=True)
         log.info("%s: connected to %s", self.who.node_id, self.broker.host)
 
     def _a_command_arrived(self, client, userdata, message) -> None:
@@ -392,6 +401,9 @@ class Carried:
             return
         new = self.state is None or state["connection_id"] != self.state["connection_id"]
         self.state = state
+        # Kept as it arrived, byte for byte, because it may have to be said again: see
+        # `_connected`. What the board wrote is what the hub reads.
+        self.state_payload = payload
         if new and state.get("online"):
             # A connection this bridge has no will for. It opens one that has it, so that
             # this process being killed reads on the hub as this node going away.
@@ -445,6 +457,7 @@ class Carried:
             log.warning("%s: nothing for %.0fs; asking again", self.who.node_id, QUIET_FOR)
             self.heard_at = now
             self.state = None
+            self.state_payload = None
         if self.state is None and now - self.said_hello_at > HELLO_AFTER:
             # A board already running when the cable was plugged in has nothing to announce
             # until it is asked, so it is asked until it answers.

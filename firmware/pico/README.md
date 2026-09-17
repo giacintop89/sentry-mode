@@ -114,10 +114,10 @@ that should not be in it. Four boards are built by the workflow and were built b
 
 | `PICO_BOARD` | Chip | Radio | UF2 |
 |---|---|---|---|
-| `pico2_w` | RP2350 | yes | 1.26 MB |
+| `pico2_w` | RP2350 | yes | 1.27 MB |
 | `pico_w` | RP2040 | yes | 1.32 MB |
-| `pico2` | RP2350 | no | 356 kB |
-| `pico` | RP2040 | no | 376 kB |
+| `pico2` | RP2350 | no | 357 kB |
+| `pico` | RP2040 | no | 377 kB |
 
 The wired ones are a quarter of the size because they compile a different network module —
 `net_wired.cpp`, which answers "no radio" and nothing else — and with it no lwIP, no
@@ -577,14 +577,14 @@ firmware's own sources, and `make pico-device` fails when the deepest of them is
 1,536 bytes — which is where the deepest one is not, by a margin:
 
 ```
-   1112  int main()                                                   (on an RP2040)
+   1120  int main()                                                   (on an RP2040)
     848  bool sentry::read_provisioning(const char*, size_t, Provisioning&)
     840  bool vault::tear(sentry::Held)
-deepest frame 1112 bytes of the 1536 one may have, over 267 functions
+deepest frame 1120 bytes of the 1536 one may have, over 268 functions
 ```
 
-`main` is the frame at the bottom of the stack, never nested under anything; it is 456
-bytes on an RP2350 and 1,112 on an RP2040, from the same source. The default plan used to
+`main` is the frame at the bottom of the stack, never nested under anything; it is 448
+bytes on an RP2350 and 1,120 on an RP2040, from the same source. The default plan used to
 be in this list at 1,920 bytes, because it builds a source to hand to `Plan::take`; that
 one is now a `static` in a function that runs once at boot.
 
@@ -928,6 +928,42 @@ and on the hub, without a cable, a few seconds after that:
 here presses the RUN pin, sags the supply or reboots itself, and they are written down as
 the chip's own bits rather than as something that has been seen.
 
+### The time moved under it
+
+`T16` asks what a node does when the wall clock jumps. It had never been asked on hardware,
+and asking it found something. A board reading its own temperature every five seconds was
+told, over the cable, that it was an hour later than it had thought. Nothing complained.
+Twelve readings went to the hub stamped an hour into the future, the hub wrote every one of
+them down as `synced`, and when the bridge's next time frame put the clock back where it
+belonged the thirteenth reading was stamped an hour *before* the twelfth — same node, same
+source, sequence numbers going up, timestamps going down, and every one of them claiming to
+be as good as a timestamp gets:
+
+```
+(26, 'board-temperature', 'synced', '2026-09-17T23:03:06.258000+00:00')
+(27, 'board-temperature', 'synced', '2026-09-17T22:03:11.257000+00:00')
+```
+
+The timestamps themselves are not the problem, and they are not something this node can fix:
+it wrote down what it was told, and an hour later it was told something else. What it can
+fix is the claim. `Timebase::sync` now compares the offset it is about to keep with the one
+it is replacing, and a move of more than two seconds — far more than a crystal loses between
+two answers, far less than a timezone — is a step rather than a correction. What is already
+in the queue was stamped against the offset that has just been thrown away, so it stops
+saying `synced`; the stamps stay, because changing them would invent a moment nobody
+measured. On the board, both ways in the same second and a half:
+
+```
+time 1789686457932
+# time taken: 1789686457932
+# the time moved by 3600003 ms: what is still queued no longer claims to be synced
+# the time moved by -3600003 ms: what is still queued no longer claims to be synced
+```
+
+The second line is the bridge's own fifteen-second time frame, putting it back. A node that
+is up to date has an empty queue, so on a healthy link the sweep finds nothing to do and the
+line is all that is seen; what it does to a queue that is not empty is `test_spool.cpp`,
+because a bridged node's queue never fills — see below.
 ### Whether somebody is here
 
 `PICO-06` asks for BLE presence on the same board that is already keeping a TLS connection
@@ -1250,6 +1286,28 @@ The two wired platforms are in the catalogue as `pico-wired` and `pico-2-wired`,
 `ble` driver and no stream: there is no Bluetooth on the chip, and the hub hears a
 microphone over a second TLS connection the board makes, which this board cannot make.
 
+**A broker that came back.** The bridge owns the MQTT connection, which means the board
+never learns anything about it: the cable did not move, so as far as the firmware is
+concerned nothing happened. The broker was killed and restarted underneath one on
+2026-09-18, and every retained message went with it — including the node's own presence,
+which is the retained `state` the hub reads `online` from. The bridge reconnected, resumed
+its subscription, went on forwarding readings, and the hub called the node offline and
+stopped writing them down. Fifty seconds of temperatures went nowhere and nothing said so.
+The board could not have told anyone: it was not there. So the bridge says it again — the
+last announcement it was handed, byte for byte, republished retained on every connect — and
+it says nothing at all when the board has never announced itself, because a bridge that
+invented a presence would be worse than one that lost it. The same run with the fix in:
+the broker went away at `00:11:11`, came back at `00:11:42`, and the journal's next row is
+`sequence 86` at `00:12:04` with nothing missing in between.
+
+**A queue that never fills.** One consequence of the bridge owning the connection is that
+the board's spool does not: a frame written to an open port *is* the delivery, so the
+reading leaves the spool as soon as it is handed over and the queue reads zero however long
+the broker has been away. Killing the broker for forty seconds left `queued=0` and
+`unsent=0` on the board and the readings piled up in the bridge instead. What a full spool
+does is tested on host and has been watched on a board with a radio, which is the one that
+has a queue of its own to fill.
+
 ### Taken away, and given back
 
 `PICO-11` asks for the revocations to be watched rather than assumed, and watching them
@@ -1398,7 +1456,7 @@ own:
 | `src/device/flash_vault.h`, `src/device/flash_vault.cpp` | The only file that writes to flash: erase, program, read back through the same path the boot takes, and a `tear` that stops halfway on purpose. |
 | `include/sentry/identity.h`, `src/core/identity.cpp` | The provisioning record — the node id and where the broker is — and the boot id that must differ every boot. |
 | `include/sentry/credentials.h`, `src/core/credentials.cpp` | The authority, the certificate and the key: what each one has to be, taken whole or not at all, and a `forget()` that overwrites the key. |
-| `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
+| `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, what a reading may claim about its own timestamp, and the difference between the wall clock being corrected and being stepped. |
 | `tools/emit.cpp`, `tools/unpack.cpp`, `tools/mqtt_emit.cpp`, `tools/client_run.cpp` | Write events, packets, a whole connection and configuration slots for the cross-checks above. |
 | `tools/stack_check.py` | How deep the deepest frame in this firmware is, read from what `-fstack-usage` leaves beside the objects. Part of every board build, because the stack is eight kilobytes and what is under it is the heap. |
 | `src/device/onewire.h`, `src/device/onewire.cpp` | The 1-Wire bus, bit-banged on one pin: the reset, the slots, and interrupts off for the microseconds that decide what a bit was. The only part of this firmware that cannot be tested off a board. |

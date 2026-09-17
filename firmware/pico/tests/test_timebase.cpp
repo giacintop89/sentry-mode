@@ -91,4 +91,34 @@ TEST(a_reading_from_before_the_counter_ever_went_round_is_itself) {
   CHECK(ticks.just_before(800) == 800);
 }
 
+TEST(the_first_time_this_node_is_told_the_time_is_not_a_step) {
+  sentry::Timebase clock;
+  // Nothing to move from, and everything stamped before it was unsynced anyway.
+  CHECK(!clock.sync(1'700'000'000'000, 1'000'000));
+  CHECK(clock.moved_by_us() == 0);
+}
+
+TEST(a_correction_is_not_a_step_and_a_step_is) {
+  sentry::Timebase clock;
+  CHECK(!clock.sync(1'700'000'000'000, 1'000'000));
+  // A second later by the counter, and 1,200 ms later by the world: the crystal is slow,
+  // which is what a correction corrects.
+  CHECK(!clock.sync(1'700'000'001'200, 2'000'000));
+  CHECK(clock.moved_by_us() == 200'000);
+  // An hour, which no crystal loses between two answers. A second of the counter has gone
+  // by as well, and the second answer was 1,200 ms after the first: the hour is what is
+  // left once both of those are accounted for, which is what an offset does.
+  CHECK(clock.sync(1'700'000'002'200 + 3'600'000, 3'000'000));
+  CHECK(clock.moved_by_us() == 3'600'000'000);
+  // And back, which is the same thing happening the other way.
+  CHECK(clock.sync(1'700'000'003'200, 4'000'000));
+  CHECK(clock.moved_by_us() == -3'600'000'000);
+  // What it says the time is, is whatever it was told last: the step is a warning about
+  // what came before it, not a reason to disbelieve what came with it.
+  int64_t now = 0;
+  CHECK(clock.unix_ms(4'000'000, now));
+  CHECK(now == 1'700'000'003'200);
+  CHECK(clock.status_at(4'000'000) == sentry::Clock::kSynced);
+}
+
 int main() { return harness::run_all("timebase"); }

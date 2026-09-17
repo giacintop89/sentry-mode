@@ -16,11 +16,17 @@ uint64_t Ticks::just_before(uint32_t raw) const {
   return (high_ - (UINT64_C(1) << 32)) | raw;
 }
 
-void Timebase::sync(int64_t unix_ms, uint64_t monotonic_us) {
-  offset_us_ = unix_ms * 1000 - static_cast<int64_t>(monotonic_us);
+bool Timebase::sync(int64_t unix_ms, uint64_t monotonic_us) {
+  const int64_t offset = unix_ms * 1000 - static_cast<int64_t>(monotonic_us);
+  // How far the world moved, not how far this node's counter did: the offset is what turns
+  // one into the other, so a change in it is the whole of what was wrong before.
+  moved_by_us_ = synced_ ? offset - offset_us_ : 0;
+  const bool stepped = moved_by_us_ > kClockStepUs || moved_by_us_ < -kClockStepUs;
+  offset_us_ = offset;
   synced_at_us_ = monotonic_us;
   synced_ = true;
   lost_ = false;
+  return stepped;
 }
 
 void Timebase::lost() { lost_ = true; }

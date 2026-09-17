@@ -602,7 +602,7 @@ La scadenza locale della lease resta la protezione durante un'interruzione di re
 
 Per ogni profilo da pubblicare eseguire una prova continuativa proposta di almeno 48 ore, oltre ai test di guasto. Questa è la durata del test richiesto, non una stima di consegna. Registrare scheda, build, alimentazione, periferiche, rete, RAM minima anche durante handshake, stack massimo, latenze, riconnessioni, drop, errori TLS e risultato della revoca. Non trasferire la qualifica di Pico 2 W al Pico W originale.
 
-### 12.2 Stato della matrice al 17 settembre 2026
+### 12.2 Stato della matrice al 18 settembre 2026
 
 Verdetti conservativi: dove il README del firmware non mostra una trascrizione di ciò che è
 accaduto, la riga resta *non eseguita* anche se il codice che la riguarda esiste ed è
@@ -624,9 +624,9 @@ radio, che è la stessa scheda con la radio mai accesa — contro l'hub in eserc
 | T11 | Hardware | Comando ripetuto, stesso ack, durata non estesa |
 | T12 | Parziale | Ogni evento porta epoca e grant sotto cui è stato pubblicato; la metà dell'hub — un vecchio will che non chiude una sessione nuova — è provata dall'hub, non dalla scheda |
 | T13 | Hardware | Nodo Zero in MQTT 5 e microcontrollore in 3.1.1 sullo stesso broker |
-| T14 | Parziale | Coda e PUBACK perso su host; la disconnessione su hardware, non ancora una coda riempita su scheda |
+| T14 | Parziale | Coda e PUBACK perso su host; la disconnessione su hardware. Una coda piena non si ottiene su una scheda cablata: è il bridge a possedere la connessione, e una lettura consegnata al cavo esce subito dalla coda — `queued=0` con il broker spento per quaranta secondi |
 | T15 | Parziale | Le letture trattenute arrivano dopo l'interruzione; la classificazione a journal è dell'hub e provata dai suoi test |
-| T16 | Parziale | Ora non sincronizzata: nessun evento live, e la regola che smette di dire `synced` esiste ma non è mai stata vista scattare; il salto UTC **non è stato eseguito** |
+| T16 | Parziale | Ora non sincronizzata: nessun evento live. Il salto UTC è stato eseguito il 18 settembre 2026 e ha trovato un difetto: un'ora in avanti e poi indietro, marche temporali non monotone, tutte dichiarate `synced`. Ora un passo oltre i due secondi è distinto da una correzione e ciò che è in coda smette di dichiararsi sincronizzato. Resta non vista scattare la regola delle tre ore senza risposte |
 | T17 | Hardware | Baseline al boot e finestra di assestamento: nessuna falsa transizione |
 | T18 | Parziale | Debounce e polarità provati con la scheda che pilota il proprio pad; nessun PIR e nessun contatto reale |
 | T19 | Parziale | CRC e 85 °C su host, bus vuoto su hardware, nessuna sonda che risponda; I²C non è implementato |
@@ -655,6 +655,12 @@ radio, che è la stessa scheda con la radio mai accesa — contro l'hub in eserc
 Le tre righe più pesanti che restano sono `T40` (la durata), `T18`/`T19` (un sensore vero
 sui morsetti) e l'interruzione di alimentazione vera, che non è una riga della matrice ma è
 il limite dichiarato in testa al README del firmware.
+
+Il 18 settembre 2026 la matrice è stata ripresa su hardware e ha prodotto due correzioni,
+che è il motivo per cui una riga non eseguita non si dichiara superata: il salto UTC di
+`T16`, e — fuori matrice — un broker riavviato che lasciava un nodo cablato invisibile
+all'hub mentre continuava a pubblicare. Entrambe sono nel README del firmware con la
+trascrizione di ciò che è stato visto.
 
 ## 13. Build, release e regole di consegna
 
