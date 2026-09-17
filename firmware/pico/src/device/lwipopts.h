@@ -18,7 +18,8 @@
 
 #define MEM_LIBC_MALLOC 0
 #define MEM_ALIGNMENT 4
-#define MEM_SIZE 4000
+// TLS records and their buffers come out of this, so it is larger than a plain client's.
+#define MEM_SIZE 16000
 #define MEMP_NUM_TCP_SEG 32
 #define MEMP_NUM_ARP_QUEUE 10
 #define PBUF_POOL_SIZE 24
@@ -42,6 +43,13 @@
 #define LWIP_NETIF_TX_SINGLE_PBUF 1
 #define DHCP_DOES_ARP_CHECK 0
 #define LWIP_DHCP_DOES_ACD_CHECK 0
+
+// The one connection this node makes is a TLS one, so the TCP underneath it is reached
+// through altcp. Nothing here can open a plain connection: there is no second path to the
+// broker for a handshake to fall back to.
+#define LWIP_ALTCP 1
+#define LWIP_ALTCP_TLS 1
+#define LWIP_ALTCP_TLS_MBEDTLS 1
 
 #define TCP_MSS 1460
 #define TCP_WND (8 * TCP_MSS)

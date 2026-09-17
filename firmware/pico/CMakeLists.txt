@@ -33,6 +33,10 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
   if(NOT DEFINED PICO_BOARD)
     set(PICO_BOARD pico2_w)
   endif()
+  # What of mbedTLS is compiled in, which is decided by this firmware and not by whoever
+  # builds it. It has to be set before the SDK is imported: that is when the libraries
+  # that carry the definition are declared.
+  set(PICO_MBEDTLS_CONFIG_FILE sentry_mbedtls_config.h)
   include(pico_sdk_import.cmake)
 endif()
 
@@ -62,6 +66,7 @@ add_library(sentry_protocol
   src/protocol/lease.cpp
   src/core/store.cpp
   src/core/identity.cpp
+  src/core/credentials.cpp
   src/core/timebase.cpp
   src/core/spool.cpp
   src/core/session.cpp
@@ -96,6 +101,10 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
     target_link_libraries(sentry_firmware PRIVATE
       pico_cyw43_arch_lwip_threadsafe_background
       pico_lwip_sntp
+      # TLS, and the only way this firmware has of reaching the broker. There is no plain
+      # TCP client here to fall back to.
+      pico_lwip_mbedtls
+      pico_mbedtls
     )
   endif()
   target_compile_options(sentry_firmware PRIVATE -Wall -Wextra -Wshadow -Werror)
@@ -109,7 +118,7 @@ endif()
 
 enable_testing()
 
-foreach(suite json command control event lease topics mqtt client session store identity timebase spool input sensors pins)
+foreach(suite json command control event lease topics mqtt client session store identity credentials timebase spool input sensors pins)
   add_executable(test_${suite} tests/test_${suite}.cpp)
   target_link_libraries(test_${suite} PRIVATE sentry_protocol)
   target_include_directories(test_${suite} PRIVATE tests)

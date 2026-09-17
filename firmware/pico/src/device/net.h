@@ -10,6 +10,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "sentry/credentials.h"
+
 namespace net {
 
 enum class Joined { kYes, kNoRadio, kRefused, kTimedOut };
@@ -47,7 +49,51 @@ TimeAnswers time_answers();
 // is still called every turn so that a change of context strategy stays a one-line change.
 void poll();
 
+// -- the one connection this node makes ----------------------------------------------
+//
+// TLS, to the broker, proving who this node is with its own certificate and checking the
+// broker's against the authority that issued it. There is no plain path to the same place:
+// a handshake that fails leaves a node that does not connect, and that is the point.
+
+enum class Dialled {
+  kOpening,          // the connection is on its way; watch `socket()`
+  kNotLinked,        // no network under it
+  kNoCredentials,    // the three things a connection is made of are not all here
+  kNoAddress,        // the broker's name did not resolve
+  kNoMemory,         // the TLS configuration or the connection would not allocate
+  kBusy,             // one is already open, and this node makes one at a time
+};
+
+enum class Socket {
+  kIdle,
+  kResolving,
+  kConnecting,  // TCP and the handshake, which from here are one wait
+  kOpen,
+  kClosed,      // it ended; `why_closed()` says how
+};
+
+// Start connecting. Returns as soon as it is under way: the handshake takes a second or so
+// on this chip and nothing here blocks the loop while it happens.
+Dialled dial(const char* host, uint16_t port, const sentry::Credentials& credentials);
+
+Socket socket();
+// A reason a person can read, for the last connection that ended. Never a secret and never
+// a number on its own.
+const char* why_closed();
+
+// Hand bytes to the connection. Returns how many it took, which is zero when the
+// connection is not open or the send window is full; the caller keeps what was not taken.
+size_t send(const uint8_t* bytes, size_t size);
+
+// Take bytes that arrived, oldest first. Zero when there are none.
+size_t receive(uint8_t* out, size_t capacity);
+
+// Close it, and let go of everything the connection held — including the copy of the
+// private key mbedTLS made.
+void hang_up();
+
 const char* name_of(Joined joined);
+const char* name_of(Dialled dialled);
 
 }  // namespace net
 

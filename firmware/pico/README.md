@@ -28,8 +28,9 @@ cmake --build build/pico-host
 ctest --test-dir build/pico-host --output-on-failure
 ```
 
-Sixteen suites: `json`, `command`, `control`, `event`, `lease`, `topics`, `mqtt`, `client`,
-`session`, `store`, `identity`, `timebase`, `spool`, `input`, `sensors`, `pins`. The `command` suite
+Seventeen suites: `json`, `command`, `control`, `event`, `lease`, `topics`, `mqtt`,
+`client`, `session`, `store`, `identity`, `credentials`, `timebase`, `spool`, `input`,
+`sensors`, `pins`. The `command` suite
 reads the fixtures in
 `contracts/satellite/v1/control/fixtures/`, the same files `tests/unit/test_satellite_control.py`
 and `satellite/tests/unit/test_control_contracts.py` read, so a fixture the hub accepts and
@@ -109,7 +110,8 @@ onto the `RP2350` volume that appears. The board reboots into the firmware.
 `src/device/main.cpp` is one small program and not a satellite. It brings up USB serial and
 the wireless chip, names itself from the board's own serial number, makes its boot id from
 `pico_rand`, reads the die temperature through `sensors.cpp` and publishes it with the same
-`write_event` the host tests exercise. It has no clock of its own, so it publishes nothing
+`write_event` the host tests exercise — to the serial line, to the queue in `spool.cpp`,
+and, once it has been told who it is and given a certificate, to the broker. It has no clock of its own, so it publishes nothing
 until something tells it the time — a board that stamped readings from the moment it booted
 would be writing timestamps nobody measured.
 
@@ -119,19 +121,28 @@ What it listens for on the serial line:
 |---|---|
 | `provision <json>` | The identity and the network, as `read_provisioning` reads them. It lives in RAM: flash is PICO-02. |
 | `join` | Joins that network and starts asking `pool.ntp.org` what time it is. |
-| `status` | Address, signal strength, whether the clock is synced, how many answers arrived. |
+| `credentials <json>` | The authority, the certificate and the key, as PEM. Nothing prints any of it back. |
+| `connect` | Opens the one connection this node makes, and keeps making it again if it drops. |
+| `disconnect` | Closes it and stops trying. |
+| `status` | Address, signal, clock, credentials, socket, what the client thinks and what is queued. |
 | `time <unix_ms>` | The time, for a board with no network to ask. |
 | `sample` | A reading now, rather than at the next interval. |
 
-The record holds a passphrase, so it is handed over rather than committed:
+The record holds a passphrase and points at a private key, so it is handed over rather than
+committed:
 
 ```sh
-firmware/pico/tools/provision_board.py --record .local/pico-provisioning.json --join
+firmware/pico/tools/provision_board.py --record .local/pico-provisioning.json --join --connect
 ```
 
-`.local/` is ignored by git. Nothing prints the passphrase back — not the tool, not the
-board — and `identity.cpp` refuses a record with a key for a network it was never given,
-because joining the wrong network is worse than refusing to join one.
+`.local/` is ignored by git. Nothing prints the passphrase or the key back — not the tool,
+not the board — and `identity.cpp` refuses a record with a key for a network it was never
+given, because joining the wrong network is worse than refusing to join one. The three PEM
+files are the ones `scripts/satellite_admin.py` issues: the authority this node checks the
+broker against, and the certificate and key it answers with. `credentials.cpp` refuses a
+private key offered as a certificate, which is the mistake that happens at a serial port,
+and the board will not open a connection without all three — there is no plaintext path to
+the same broker to fall back to.
 
 The check that makes it worth having:
 
@@ -151,8 +162,11 @@ ok  board-temperature seq=1 33.13 °C valid clock=synced at 2026-09-17 11:56:26.
 3 events from pico-cde2f882a116bf77, judged by the hub's models and the schema
 ```
 
-The binary is 327 kB of text and 6.9 kB of static RAM, most of it the wireless firmware and
-TinyUSB; `arm-none-eabi-size build/pico2w/sentry_firmware.elf` says so on any change.
+The binary is 488 kB of text and 112 kB of static RAM, most of it the wireless firmware,
+TinyUSB and mbedTLS; `arm-none-eabi-size build/pico2_w/sentry_firmware.elf` says so on any
+change. The TLS half of that is the reason `src/device/sentry_mbedtls_config.h` exists:
+one curve, one key exchange, one cipher, a 4 kB record in and 2 kB out. What is not
+compiled in cannot be negotiated down to.
 
 The joining and the time have been watched to work on the same board, on 2026-09-17:
 
@@ -170,6 +184,33 @@ that publishes is running on lwIP's stack. Every event published after it carrie
 `clock_status: synced`, and the timestamps it writes agree with this machine's clock to
 within 10 ms — which is the whole point of asking the network rather than a person.
 
+And then the broker itself, on the same board and the same afternoon:
+
+```
+# credentials: authority yes, certificate yes, key yes
+# connecting to 192.168.11.240:8883
+# the broker accepted this node
+# listening on sentry/v1/nodes/pico-ingresso/commands
+# online, as pico-ingresso
+# node=pico-ingresso … clock=synced answers=1
+# credentials=yes socket=open mqtt=online queued=0 coalesced=1 dropped=0
+```
+
+That is a real mutual-TLS handshake against a real Mosquitto with `require_certificate
+true` and `use_identity_as_username true`, an ACL generated from the hub's own registry,
+and a node registered and approved with `satellite_admin.py` as a `pico-2w-sensor`. What
+came out the other side, watched with `mosquitto_sub` as the hub:
+
+```
+sentry/v1/nodes/pico-ingresso/state  {"schema_version":1,…,"online":true,…}
+sentry/v1/nodes/pico-ingresso/events {"schema_version":1,"event":{…"board.temperature"…}}
+```
+
+The certificate's dates are checked, which needs a clock: mbedTLS is given the time the
+network last said it was, and nothing at all before an answer has arrived, so a board that
+has not been told the time does not connect rather than accepting an expired certificate
+it has no way to judge.
+
 ## What is in here
 
 | Path | What it is |
@@ -186,6 +227,7 @@ within 10 ms — which is the whole point of asking the network rather than a pe
 | `include/sentry/lease.h`, `src/protocol/lease.cpp` | Permission with an end to it, measured on this node's clock, and the memory of the last 64 commands answered. |
 | `include/sentry/store.h`, `src/core/store.cpp` | The framing that lets an interrupted write be recognised as one, and the rule for choosing between the two configuration slots. |
 | `include/sentry/identity.h`, `src/core/identity.cpp` | The provisioning record — the node id and where the broker is — and the boot id that must differ every boot. |
+| `include/sentry/credentials.h`, `src/core/credentials.cpp` | The authority, the certificate and the key: what each one has to be, taken whole or not at all, and a `forget()` that overwrites the key. |
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
 | `tools/emit.cpp`, `tools/unpack.cpp`, `tools/mqtt_emit.cpp`, `tools/client_run.cpp` | Write events, packets, a whole connection and configuration slots for the cross-checks above. |
 | `src/device/main.cpp` | The one program that runs on a board: USB serial, the LED, the die temperature, and the same event writer as everything else. |
@@ -215,13 +257,18 @@ fails here, in a second, rather than at link time on a target with neither.
   two answers is, what happens when the network goes away mid-interval, and whether a node
   that has lost its clock should go back to `unsynced` rather than keep stamping readings
   from a counter nobody has checked.
-- The socket under the MQTT client. `mqtt.cpp` writes and reads the packets, `client.cpp`
-  decides what is in flight and when a link has stopped being one, `session.cpp` says what
-  order things happen in and `lease.cpp` says what permission is worth — all of it checked
-  against implementations that have never seen it. What none of them has is a socket: no
-  TLS handshake, no certificates, no lwIP connection, and nothing that reconnects a real
-  one. No board has spoken to the broker, so the compatibility run against a live one that
-  PICO-03 asks for has **not** been done.
+- Answering the hub. A board connects, announces itself and publishes; a command that
+  arrives is counted and then ignored. The lease, the ACK, the grant and the revocation —
+  `lease.cpp` and `command.cpp` know what they are and nothing on the board acts on them
+  yet, so `T09`–`T12` are **not executed**.
+- Health, and saying what was given up. `spool.cpp` counts what it coalesced and dropped
+  and `status` prints it, but nothing publishes a `health` message, so the hub sees a node
+  that is online and nothing about how it is doing.
+- The failure cases of the handshake. The good one has been watched; a wrong authority, a
+  certificate for another name, an expired one and a revoked one have not, so `T06` and
+  `T07` are **not executed** even though the code paths for them are the same ones.
+- Both clients at once through the broker: a Linux node speaking MQTT 5 and this one
+  speaking 3.1.1, with the hub reading from both. `T13` is **not executed**.
 - Any sensor driver at all. What is here is the part of one that has no hardware in it:
   `input.cpp` decides what a level means, `sensors.cpp` decides what a scratchpad or an
   ADC count means, and `pins.cpp` decides whether a configuration may start. Nothing has
