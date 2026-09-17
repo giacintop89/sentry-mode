@@ -102,8 +102,11 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
     set(SENTRY_BLE src/device/ble_none.cpp)
   endif()
   add_executable(sentry_firmware src/device/main.cpp ${SENTRY_NET} ${SENTRY_BLE}
-                                 src/device/onewire.cpp
+                                 src/device/onewire.cpp src/device/i2s.cpp
                                  src/device/flash_vault.cpp src/device/reset_reason.cpp)
+  # The I²S receiver is a PIO program, assembled at build time into a header this build
+  # includes. It is the one piece of this firmware that is not C++.
+  pico_generate_pio_header(sentry_firmware ${CMAKE_CURRENT_LIST_DIR}/src/device/i2s.pio)
   # lwipopts.h lives beside them, because what of lwIP this firmware compiles in is part of
   # the firmware and not of whoever builds it.
   target_include_directories(sentry_firmware PRIVATE src/device)
@@ -113,6 +116,9 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
     pico_rand
     pico_unique_id
     hardware_adc
+    # The microphone: a state machine that clocks it and two channels that empty the FIFO.
+    hardware_pio
+    hardware_dma
     # The vault: erasing and programming the sectors at the end of the part, and the reset
     # this program asks for when its own loop stops turning.
     hardware_flash

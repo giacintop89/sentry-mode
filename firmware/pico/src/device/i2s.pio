@@ -1,0 +1,73 @@
+; An I²S receiver, in the only place it can be: the state machine beside the pins.
+;
+; This board is the master. It drives the bit clock and the word select and reads the
+; microphone's data line, which is what a MEMS microphone expects — those parts have no
+; clock of their own.
+;
+; The frame is the Philips one, 32 bits a channel: the word select changes on the falling
+; edge that begins the last bit of the current word, so the first bit of the next word is
+; sampled one whole clock later. Getting that edge wrong by one bit is the difference
+; between a microphone and a noise generator, so the last bit of each channel is written
+; out rather than left in the loop.
+;
+; Every instruction is one PIO cycle and every bit is two — one to take the clock low, one
+; to take it high and sample — so a frame is 128 cycles and the state machine runs at 128
+; times the sample rate.
+
+.program i2s_rx
+.side_set 2                  ; bit 0 is the bit clock, bit 1 is the word select
+
+.wrap_target
+    set x, 29        side 0b00   ; the left word: clock low, word select low
+left_bits:
+    in pins, 1       side 0b01   ; rising edge, and the bit the microphone put up
+    jmp x-- left_bits   side 0b00
+    in pins, 1       side 0b01   ; bit 31
+    nop              side 0b10   ; the falling edge the word select changes on
+    in pins, 1       side 0b11   ; bit 32, with the word select already on the right
+    set x, 29        side 0b10   ; the right word
+right_bits:
+    in pins, 1       side 0b11
+    jmp x-- right_bits side 0b10
+    in pins, 1       side 0b11
+    nop              side 0b00   ; and back, one bit before the left word begins
+    in pins, 1       side 0b01
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+// The state machine, the pins it owns and the rate it runs at. `data` is the microphone's
+// output; `clock` is the bit clock and `clock + 1` is the word select, because a side-set
+// takes consecutive pins.
+static inline void i2s_rx_program_init(PIO pio, uint sm, uint offset, uint data, uint clock,
+                                       uint rate) {
+  pio_sm_config config = i2s_rx_program_get_default_config(offset);
+  sm_config_set_in_pins(&config, data);
+  sm_config_set_sideset_pins(&config, clock);
+  // Shifted left, so the first bit off the wire is the most significant one — which is
+  // what I²S sends first — and pushed as soon as a whole word is in.
+  sm_config_set_in_shift(&config, false, true, 32);
+  sm_config_set_fifo_join(&config, PIO_FIFO_JOIN_RX);
+
+  pio_sm_set_consecutive_pindirs(pio, sm, data, 1, false);
+  pio_sm_set_consecutive_pindirs(pio, sm, clock, 2, true);
+  pio_gpio_init(pio, data);
+  pio_gpio_init(pio, clock);
+  pio_gpio_init(pio, clock + 1);
+  // A MEMS microphone drives its half of the frame and lets go of the other half, so for
+  // half of every frame this line is held by nobody. Pulled down, that half reads as
+  // silence; left floating it reads as whatever the room's mains hum put on the pad, and
+  // this board would measure a level of a wire rather than of a room. It is also what
+  // makes a board with no microphone on it read as silent rather than as a loud one.
+  gpio_set_pulls(data, false, true);
+
+  // 128 cycles a frame, and the divider is 8.8 fixed point: the rate is as close to what
+  // was asked for as the system clock allows, which for 16 kHz is within a few parts in a
+  // thousand. A level detector does not care; anything that resampled would.
+  const float divider = (float)clock_get_hz(clk_sys) / (float)(rate * 128u);
+  sm_config_set_clkdiv(&config, divider);
+
+  pio_sm_init(pio, sm, offset, &config);
+}
+%}

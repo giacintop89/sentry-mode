@@ -48,6 +48,7 @@
 #include <cstring>
 
 #include "ble.h"
+#include "i2s.h"
 #include "flash_vault.h"
 #include "hardware/adc.h"
 #include "hardware/watchdog.h"
@@ -210,6 +211,10 @@ struct Live {
   // has never been covered, which reads as unknown — which is what a source with no
   // scanner behind it should say.
   sentry::Watch watch;
+  // What the microphone has been hearing. The sound itself is gone by the time this has
+  // been updated: a level, a state, and a count of the blocks it was decided from.
+  sentry::Activity activity;
+  uint32_t blocks = 0;
   bool has_last = false;
   sentry::Value last;
   const char* unit = nullptr;
@@ -579,6 +584,58 @@ void serve_the_radio(uint64_t now_ms) {
   }
 }
 
+// That something was loud. It is the whole of what a microphone produces on this board:
+// no sound leaves it, nothing is recorded, and there is no way to ask for either.
+void take_an_acoustic_reading(const sentry::Planned& source, Live& state, bool active,
+                              bool baseline) {
+  uint64_t moment = 0;
+  char stamped[32] = {};
+  char event_id[sentry::kUuidText] = {};
+  if (!moment_of(moment, stamped, sizeof(stamped), event_id)) return;
+
+  sentry::Reading reading;
+  reading.event_id = event_id;
+  reading.node_id = node_id;
+  reading.source_id = source.source_id;
+  reading.boot_id = boot_id;
+  reading.sequence = sequence++;
+  reading.kind = source.microphone.event_kind;
+  reading.occurred_at = stamped;
+  reading.clock = clock_.status_at(moment);
+  reading.quality = sentry::Quality::kValid;
+  reading.value = sentry::Value::of(active);
+  ++state.readings;
+
+  // A noise that started is not replaceable by a noise that stopped, and the first one
+  // after a configuration is where things stand rather than news.
+  offer_the_reading(state, reading, baseline, sentry::Kept::kTransition);
+}
+
+// The microphone's half of the loop: every block the DMA has finished since the last turn,
+// measured and handed to `acoustic.cpp`, which has never seen a pin. The samples are gone
+// when this returns — read once, turned into one number, and the buffer handed back.
+//
+// Time is counted in the sound that was actually heard rather than on the clock. A block
+// that was never captured, because this loop was busy elsewhere, is not silence: a hold
+// that timed out across a gap would be this board deciding a room went quiet during the
+// one stretch it could not hear it.
+void serve_the_microphone(const sentry::Planned& source, Live& state) {
+  constexpr size_t kMostPerTurn = 4;
+  constexpr double kBlockSeconds =
+      static_cast<double>(i2s::kFramesPerBlock) / static_cast<double>(i2s::kRate);
+  const int16_t* samples = nullptr;
+  size_t count = 0;
+  for (size_t taken = 0; taken < kMostPerTurn && i2s::next(samples, count); ++taken) {
+    ++state.blocks;
+    const sentry::Activity::Change change =
+        state.activity.step(sentry::dbfs(samples, count), kBlockSeconds);
+    if (change != sentry::Activity::Change::kNothing) {
+      take_an_acoustic_reading(source, state, change == sentry::Activity::Change::kStarted,
+                               false);
+    }
+  }
+}
+
 // What a wire came to mean. The level is read here and judged in `input.cpp`, which is
 // where the settling, the debounce and the polarity live — and which has never seen a pin.
 void take_a_gpio_reading(const sentry::Planned& source, Live& state, sentry::Report report,
@@ -645,6 +702,10 @@ void read_the_sources() {
       // Time passing with the radio listening and nothing heard. The sightings were fed in
       // above; this is the only thing that can conclude an absence.
       if (state.watch.quiet(now_ms)) take_a_presence_reading(source, state);
+      continue;
+    }
+    if (source.driver == sentry::Driver::kMicrophone) {
+      serve_the_microphone(source, state);
     }
   }
 }
@@ -678,6 +739,10 @@ void take_every_baseline() {
       // hub that has just granted this node is asking for exactly that. A watch still
       // waiting for its first sighting says unknown, which is the honest answer.
       take_a_presence_reading(source, state);
+    } else if (source.driver == sentry::Driver::kMicrophone) {
+      // Whether the room is loud right now, which is false on a microphone that has not
+      // heard a block yet. The agent says the same thing at the same moment.
+      take_an_acoustic_reading(source, state, state.activity.active(), true);
     }
   }
 }
@@ -732,6 +797,17 @@ void start_the_plan() {
         std::printf("# %s: the watch refused what the plan agreed to\n", source.source_id);
       }
       wants_the_radio = true;
+    } else if (source.driver == sentry::Driver::kMicrophone) {
+      if (!state.activity.configure(source.microphone.how)) {
+        std::printf("# %s: the listener refused what the plan agreed to\n", source.source_id);
+      }
+      // The plan has already refused a second microphone, so this is the only one asking.
+      if (!i2s::listen(static_cast<uint>(source.microphone.pin),
+                       static_cast<uint>(source.microphone.clock_pin),
+                       source.microphone.left)) {
+        std::printf("# %s: the microphone would not start: %s\n", source.source_id,
+                    i2s::trouble());
+      }
     }
   }
   // One radio, however many devices are watched with it. Asked for after the loop rather
@@ -755,6 +831,10 @@ void stop_the_plan() {
       gpio_deinit(static_cast<uint>(source.adc.pin));
     } else if (source.driver == sentry::Driver::kOneWire) {
       onewire::give_back(static_cast<uint>(source.onewire.pin));
+    } else if (source.driver == sentry::Driver::kMicrophone) {
+      // This one is given back, unlike the radio: it holds three pins and keeps a clock
+      // running on one of them, and the next plan may want them for something else.
+      i2s::stop();
     }
   }
   // The radio is not given back here. What comes next is `start_the_plan`, which asks for
@@ -925,6 +1005,20 @@ bool write_announcement() {
           "absent_after_seconds",
           sentry::Value::of(static_cast<double>(source.ble.how.absent_after_ms) / 1000.0, 1)};
       options[index][at++] = {"event_kind", sentry::Value::of(source.ble.event_kind)};
+    } else if (source.driver == sentry::Driver::kMicrophone) {
+      options[index][at++] = {"pin",
+                              sentry::Value::of(static_cast<int64_t>(source.microphone.pin))};
+      options[index][at++] = {
+          "clock_pin", sentry::Value::of(static_cast<int64_t>(source.microphone.clock_pin))};
+      options[index][at++] = {"channel",
+                              sentry::Value::of(source.microphone.left ? "left" : "right")};
+      options[index][at++] = {"activity_threshold_dbfs",
+                              sentry::Value::of(source.microphone.how.threshold_dbfs, 1)};
+      options[index][at++] = {"activity_min_seconds",
+                              sentry::Value::of(source.microphone.how.min_seconds, 1)};
+      options[index][at++] = {"activity_hold_seconds",
+                              sentry::Value::of(source.microphone.how.hold_seconds, 1)};
+      options[index][at++] = {"event_kind", sentry::Value::of(source.microphone.event_kind)};
     } else if (source.driver == sentry::Driver::kGpio) {
       options[index][at++] = {"pin", sentry::Value::of(static_cast<int64_t>(source.gpio.pin))};
       options[index][at++] = {"active_high", sentry::Value::of(source.gpio.input.active_high)};
@@ -1040,6 +1134,21 @@ bool write_a_health_report() {
       // Why it is not hearing, when it is not. The same field a probe that fell off its
       // wire would use, and the hub shows it the same way.
       if (running.at(index).enabled) sources[index].error = ble::trouble();
+    }
+    if (running.at(index).driver == sentry::Driver::kMicrophone) {
+      // Like a wire and not like a temperature: what health is asked is whether the room
+      // is loud now, which the listener knows whether or not anything was published about
+      // it. A microphone that has not measured a block yet says so rather than saying the
+      // room is quiet, which is a thing it has not heard.
+      const bool heard = live[index].activity.has_level();
+      sources[index].has_last = heard;
+      sources[index].last = sentry::Value::of(live[index].activity.active());
+      sources[index].unit = nullptr;
+      sources[index].quality =
+          heard ? sentry::Quality::kValid : sentry::Quality::kUnknown;
+      sources[index].has_age = heard;
+      sources[index].last_reading_age_seconds = 0.0;
+      if (running.at(index).enabled) sources[index].error = i2s::trouble();
     }
     if (running.at(index).driver == sentry::Driver::kGpio && live[index].has_last) {
       // A wire is different from a measurement. The last event from a pin is the last time
@@ -1212,7 +1321,10 @@ const char* beyond_this_firmware(sentry::Action action) {
     case sentry::Action::kAudioStart:
     case sentry::Action::kAudioRenew:
     case sentry::Action::kAudioStop:
-      return "this node has no microphone";
+      // A microphone it may well have. What it has no way to do is send what the
+      // microphone heard: there is no encoder here, no room to hold a second of sound and
+      // no stream for it to go out on. `audio.activity` is the whole of what it says.
+      return "this node sends no sound";
     default:
       return nullptr;
   }
@@ -1514,6 +1626,20 @@ void say_the_plan() {
                   static_cast<unsigned long>(ble::missed()),
                   ble::listening() ? "" : "not listening ",
                   static_cast<long long>(live[index].readings));
+    } else if (source.driver == sentry::Driver::kMicrophone) {
+      char loudness[16] = "none";
+      if (live[index].activity.has_level()) {
+        std::snprintf(loudness, sizeof(loudness), "%.1f", live[index].activity.level());
+      }
+      std::printf(
+          "#   %s microphone pin=%d clock=%d %s level=%s %s blocks=%lu missed=%lu "
+          "%sreadings=%lld\n",
+          source.source_id, source.microphone.pin, source.microphone.clock_pin,
+          source.microphone.left ? "left" : "right", loudness,
+          live[index].activity.active() ? "loud" : "quiet",
+          static_cast<unsigned long>(live[index].blocks),
+          static_cast<unsigned long>(i2s::missed()), i2s::running() ? "" : "not listening ",
+          static_cast<long long>(live[index].readings));
     } else if (source.driver == sentry::Driver::kAdc) {
       std::printf("#   %s adc pin=%d output=%s every=%lus readings=%lld\n", source.source_id,
                   source.adc.pin, source.adc.volts ? "volts" : "ratio",
