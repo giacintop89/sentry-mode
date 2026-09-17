@@ -93,10 +93,15 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
   # stack in the image, and no dead code pretending there might be one.
   if(PICO_CYW43_SUPPORTED)
     set(SENTRY_NET src/device/net.cpp)
+    # The same chip carries the Bluetooth controller, so the board that has a network also
+    # has a scanner. A board without one gets the half that says so and no BTstack.
+    set(SENTRY_BLE src/device/ble.cpp)
   else()
     set(SENTRY_NET src/device/net_wired.cpp)
+    set(SENTRY_BLE src/device/ble_none.cpp)
   endif()
-  add_executable(sentry_firmware src/device/main.cpp ${SENTRY_NET} src/device/onewire.cpp
+  add_executable(sentry_firmware src/device/main.cpp ${SENTRY_NET} ${SENTRY_BLE}
+                                 src/device/onewire.cpp
                                  src/device/flash_vault.cpp src/device/reset_reason.cpp)
   # lwipopts.h lives beside them, because what of lwIP this firmware compiles in is part of
   # the firmware and not of whoever builds it.
@@ -121,7 +126,14 @@ if(SENTRY_PICO_TARGET STREQUAL "device")
       # TCP client here to fall back to.
       pico_lwip_mbedtls
       pico_mbedtls
+      # The Bluetooth half of the same chip: the host stack, and the transport that reaches
+      # the controller over the bus the Wi-Fi side already uses.
+      pico_btstack_ble
+      pico_btstack_cyw43
     )
+    # Which makes cyw43_arch load the firmware with the controller in it. Without this the
+    # chip comes up with Wi-Fi only and the transport has nothing to talk to.
+    target_compile_definitions(sentry_firmware PRIVATE CYW43_ENABLE_BLUETOOTH=1)
   endif()
   target_compile_options(sentry_firmware PRIVATE -Wall -Wextra -Wshadow -Werror)
   # Over USB, so one cable carries the power and everything this program says. The UART

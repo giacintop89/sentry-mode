@@ -26,6 +26,7 @@
 //   forget [what]          erase one of those, or all of them: the recovery verb
 //   tear <what>            write half a record, on purpose, to see the next boot refuse it
 //   hang                   stop feeding the watchdog, on purpose, to watch it fire
+//   deafen                 stop the scanner, on purpose, to see presence go unknown
 //
 // Until something tells it the time — SNTP, or that command — it publishes nothing. A board
 // with no clock could stamp its readings from the moment it booted and call that a
@@ -46,6 +47,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "ble.h"
 #include "flash_vault.h"
 #include "hardware/adc.h"
 #include "hardware/watchdog.h"
@@ -88,6 +90,9 @@ constexpr uint32_t kJoinPatienceMs = 20000;
 // thing it ever does in one turn is a TLS handshake; eight seconds is what the hardware
 // allows and several times what a turn takes.
 constexpr uint32_t kWatchdogMs = 8000;
+// How often a node that wants a scanner and has not got one asks again. The radio is on
+// the wireless chip, so until this board has joined a network there is nothing to ask.
+constexpr uint32_t kRadioPatienceMs = 5000;
 // How long a time source may say nothing before this node stops calling what it stamps
 // synced. lwIP asks again every hour; three of those with no answer is a source that has
 // gone, not one that is slow. Nothing stops being stamped — the offset is still the best
@@ -201,6 +206,10 @@ struct Live {
   // What it last read, for the health message. An event is gone once it has been
   // published; what the hub's page asks is what this source is reading now, and a node
   // that only ever reported a count leaves that question to the next transition.
+  // What the radio has made of one device. A watch that nobody configured is a watch that
+  // has never been covered, which reads as unknown — which is what a source with no
+  // scanner behind it should say.
+  sentry::Watch watch;
   bool has_last = false;
   sentry::Value last;
   const char* unit = nullptr;
@@ -488,6 +497,88 @@ void serve_a_onewire_probe(const sentry::Planned& source, Live& state, uint64_t 
   state.ready_ms = static_cast<uint32_t>(now_ms) + onewire::kConversionMs;
 }
 
+// Whether one device is here. The words are the Linux agent's and so is the judgement,
+// which is in `presence.cpp`; what is here is only the part that has a clock and a queue.
+//
+// Unknown is published with no value and a quality that says so, exactly as the agent
+// does: a node that cannot hear has not found out that the room is empty.
+void take_a_presence_reading(const sentry::Planned& source, Live& state) {
+  uint64_t moment = 0;
+  char stamped[32] = {};
+  char event_id[sentry::kUuidText] = {};
+  if (!moment_of(moment, stamped, sizeof(stamped), event_id)) return;
+
+  const sentry::Presence where = state.watch.state();
+  const bool nothing_known = where == sentry::Presence::kUnknown;
+
+  sentry::Reading reading;
+  reading.event_id = event_id;
+  reading.node_id = node_id;
+  reading.source_id = source.source_id;
+  reading.boot_id = boot_id;
+  reading.sequence = sequence++;
+  reading.kind = source.ble.event_kind;
+  reading.occurred_at = stamped;
+  reading.clock = clock_.status_at(moment);
+  reading.quality = nothing_known ? sentry::Quality::kUnknown : sentry::Quality::kValid;
+  if (!nothing_known) reading.value = sentry::Value::of(sentry::name_of(where));
+  ++state.readings;
+
+  // Somebody arriving is not replaceable by somebody else arriving, and the first state
+  // after unknown is where things stand rather than news — the same distinction a baseline
+  // makes everywhere else here.
+  offer_the_reading(state, reading, !nothing_known && state.watch.is_baseline(),
+                    sentry::Kept::kTransition);
+}
+
+// The radio's half of the loop: whether it is listening at all, and everything it heard
+// since the last turn. Nothing is matched here — `is_the_one` is in `presence.cpp` and has
+// never seen a radio.
+void serve_the_radio(uint64_t now_ms) {
+  bool anybody_watching = false;
+  for (size_t index = 0; index < running.size(); ++index) {
+    const sentry::Planned& source = running.at(index);
+    if (source.driver == sentry::Driver::kBle && source.enabled) anybody_watching = true;
+  }
+  // The controller is on the wireless chip, so a board that has not joined a network yet
+  // has nothing to start. Asked for again, here, rather than once at configuration time:
+  // a plan taken before the radio exists is still a plan that wants one.
+  static uint32_t ask_again_ms = 0;
+  if (anybody_watching && !ble::listening() &&
+      static_cast<int32_t>(static_cast<uint32_t>(now_ms) - ask_again_ms) >= 0) {
+    ask_again_ms = static_cast<uint32_t>(now_ms) + kRadioPatienceMs;
+    ble::listen();
+  }
+  for (size_t index = 0; index < running.size(); ++index) {
+    const sentry::Planned& source = running.at(index);
+    if (source.driver != sentry::Driver::kBle || !source.enabled) continue;
+    // Told first, and every turn: a scanner that has stopped makes every watch unknown
+    // before anything else is decided about them.
+    if (live[index].watch.covered(ble::listening(), now_ms)) {
+      take_a_presence_reading(source, live[index]);
+    }
+  }
+  if (!anybody_watching) return;
+
+  // Bounded, so that a room full of advertisements cannot keep this turn from ending. What
+  // is left waits one more turn, which is a millisecond or two.
+  constexpr size_t kMostPerTurn = 32;
+  ble::Sighting sighting;
+  for (size_t taken = 0; taken < kMostPerTurn && ble::next(sighting); ++taken) {
+    for (size_t index = 0; index < running.size(); ++index) {
+      const sentry::Planned& source = running.at(index);
+      if (source.driver != sentry::Driver::kBle || !source.enabled) continue;
+      if (!sentry::is_the_one(source.ble.watched, sighting.address, sighting.data,
+                              sighting.size)) {
+        continue;
+      }
+      if (live[index].watch.seen(sighting.at_ms, sighting.rssi, sighting.has_rssi)) {
+        take_a_presence_reading(source, live[index]);
+      }
+    }
+  }
+}
+
 // What a wire came to mean. The level is read here and judged in `input.cpp`, which is
 // where the settling, the debounce and the polarity live — and which has never seen a pin.
 void take_a_gpio_reading(const sentry::Planned& source, Live& state, sentry::Report report,
@@ -521,6 +612,7 @@ void take_a_gpio_reading(const sentry::Planned& source, Live& state, sentry::Rep
 // connection alive, so it does no waiting of its own: the debounce is time, not sleep.
 void read_the_sources() {
   const uint64_t now_ms = now_us() / 1000;
+  serve_the_radio(now_ms);
   for (size_t index = 0; index < running.size(); ++index) {
     const sentry::Planned& source = running.at(index);
     if (!source.enabled) continue;
@@ -547,6 +639,12 @@ void read_the_sources() {
     }
     if (source.driver == sentry::Driver::kOneWire) {
       serve_a_onewire_probe(source, state, now_ms);
+      continue;
+    }
+    if (source.driver == sentry::Driver::kBle) {
+      // Time passing with the radio listening and nothing heard. The sightings were fed in
+      // above; this is the only thing that can conclude an absence.
+      if (state.watch.quiet(now_ms)) take_a_presence_reading(source, state);
     }
   }
 }
@@ -575,6 +673,11 @@ void take_every_baseline() {
       // Rearmed rather than read: the next sample is the baseline, and a PIR that has not
       // settled yet will say so instead of pretending the room is empty.
       state.input.rearm(now_ms);
+    } else if (source.driver == sentry::Driver::kBle) {
+      // Said rather than rearmed: the watch already knows where the device stands, and a
+      // hub that has just granted this node is asking for exactly that. A watch still
+      // waiting for its first sighting says unknown, which is the honest answer.
+      take_a_presence_reading(source, state);
     }
   }
 }
@@ -583,6 +686,7 @@ void take_every_baseline() {
 // touched until a plan has been agreed to, which is what `plan.cpp` is for.
 void start_the_plan() {
   const uint64_t now_ms = now_us() / 1000;
+  bool wants_the_radio = false;
   for (size_t index = 0; index < running.size(); ++index) {
     const sentry::Planned& source = running.at(index);
     Live& state = live[index];
@@ -620,7 +724,22 @@ void start_the_plan() {
       state.due_ms = static_cast<uint32_t>(now_ms);
     } else if (source.driver == sentry::Driver::kBoard) {
       state.due_ms = static_cast<uint32_t>(now_ms);
+    } else if (source.driver == sentry::Driver::kBle) {
+      // The plan has already agreed this is something a watch can survive; this cannot
+      // fail for any other reason, and if it somehow did the watch would keep the defaults
+      // rather than run with half a configuration.
+      if (!state.watch.configure(source.ble.how)) {
+        std::printf("# %s: the watch refused what the plan agreed to\n", source.source_id);
+      }
+      wants_the_radio = true;
     }
+  }
+  // One radio, however many devices are watched with it. Asked for after the loop rather
+  // than inside it, so that eight sources are one scanner and not eight attempts at one.
+  if (wants_the_radio) {
+    if (!ble::listen()) std::printf("# the radio would not start: %s\n", ble::trouble());
+  } else {
+    ble::deaf();
   }
 }
 
@@ -638,6 +757,9 @@ void stop_the_plan() {
       onewire::give_back(static_cast<uint>(source.onewire.pin));
     }
   }
+  // The radio is not given back here. What comes next is `start_the_plan`, which asks for
+  // it again if anything in the new plan watches a device; switching the controller off
+  // between two plans that both want it would lose every watch for no reason.
 }
 
 // What this board runs when nobody has told it anything: the one thing it has without a
@@ -742,6 +864,9 @@ bool write_announcement() {
   // with what it was told, which is the only version of it that matters.
   static sentry::DeclaredOption options[sentry::kMaxPlanned][sentry::kMaxOptionsPerSource];
   static sentry::DeclaredSource declared[sentry::kMaxPlanned];
+  // The device a `ble` source watches, spelled out. It is kept here rather than on a stack
+  // because what a declared option holds is a pointer, and the message is written after.
+  static char watched[sentry::kMaxPlanned][40];
   const size_t count = running.size();
   for (size_t index = 0; index < count; ++index) {
     const sentry::Planned& source = running.at(index);
@@ -768,6 +893,38 @@ bool write_announcement() {
           "interval_seconds",
           sentry::Value::of(static_cast<double>(source.onewire.interval_ms) / 1000.0, 1)};
       options[index][at++] = {"event_kind", sentry::Value::of(source.onewire.event_kind)};
+    } else if (source.driver == sentry::Driver::kBle) {
+      // The device is said back the way it was written down. A watch reported as sixteen
+      // raw bytes is a watch nobody can check against the file they sent.
+      if (source.ble.watched.by_address) {
+        sentry::write_address(source.ble.watched.address, watched[index], sizeof(watched[0]));
+        options[index][at++] = {"address", sentry::Value::of(watched[index])};
+      } else {
+        sentry::write_uuid(source.ble.watched.uuid, watched[index], sizeof(watched[0]));
+        options[index][at++] = {"ibeacon_uuid", sentry::Value::of(watched[index])};
+        if (source.ble.watched.major >= 0) {
+          options[index][at++] = {
+              "ibeacon_major",
+              sentry::Value::of(static_cast<int64_t>(source.ble.watched.major))};
+        }
+        if (source.ble.watched.minor >= 0) {
+          options[index][at++] = {
+              "ibeacon_minor",
+              sentry::Value::of(static_cast<int64_t>(source.ble.watched.minor))};
+        }
+      }
+      options[index][at++] = {
+          "rssi_min", sentry::Value::of(static_cast<int64_t>(source.ble.how.rssi_min))};
+      options[index][at++] = {
+          "enter_sightings",
+          sentry::Value::of(static_cast<int64_t>(source.ble.how.enter_sightings))};
+      options[index][at++] = {
+          "enter_window_seconds",
+          sentry::Value::of(static_cast<double>(source.ble.how.enter_window_ms) / 1000.0, 1)};
+      options[index][at++] = {
+          "absent_after_seconds",
+          sentry::Value::of(static_cast<double>(source.ble.how.absent_after_ms) / 1000.0, 1)};
+      options[index][at++] = {"event_kind", sentry::Value::of(source.ble.event_kind)};
     } else if (source.driver == sentry::Driver::kGpio) {
       options[index][at++] = {"pin", sentry::Value::of(static_cast<int64_t>(source.gpio.pin))};
       options[index][at++] = {"active_high", sentry::Value::of(source.gpio.input.active_high)};
@@ -863,6 +1020,26 @@ bool write_a_health_report() {
       sources[index].last_reading_age_seconds = static_cast<double>(since) / 1000.0;
     } else {
       sources[index].has_age = false;
+    }
+    if (running.at(index).driver == sentry::Driver::kBle) {
+      // A watch is like a wire and not like a temperature: what health is asked is where
+      // the device stands now, which the watch knows whether or not anything was published
+      // about it. An unknown is reported as unknown rather than left out, because a source
+      // with nothing to say and a source that cannot hear are different things.
+      const sentry::Presence where = live[index].watch.state();
+      sources[index].has_last = where != sentry::Presence::kUnknown;
+      sources[index].last = sentry::Value::of(sentry::name_of(where));
+      sources[index].unit = nullptr;
+      sources[index].quality = where == sentry::Presence::kUnknown ? sentry::Quality::kUnknown
+                                                                   : sentry::Quality::kValid;
+      sources[index].has_age = live[index].watch.has_last_seen();
+      if (sources[index].has_age) {
+        const uint64_t since = moment / 1000 - live[index].watch.last_seen_ms();
+        sources[index].last_reading_age_seconds = static_cast<double>(since) / 1000.0;
+      }
+      // Why it is not hearing, when it is not. The same field a probe that fell off its
+      // wire would use, and the hub shows it the same way.
+      if (running.at(index).enabled) sources[index].error = ble::trouble();
     }
     if (running.at(index).driver == sentry::Driver::kGpio && live[index].has_last) {
       // A wire is different from a measurement. The last event from a pin is the last time
@@ -1319,6 +1496,24 @@ void say_the_plan() {
                   static_cast<unsigned long>(source.onewire.interval_ms / 1000),
                   live[index].converting ? "converting " : "",
                   static_cast<long long>(live[index].readings));
+    } else if (source.driver == sentry::Driver::kBle) {
+      char device[40] = {};
+      if (source.ble.watched.by_address) {
+        sentry::write_address(source.ble.watched.address, device, sizeof(device));
+      } else {
+        sentry::write_uuid(source.ble.watched.uuid, device, sizeof(device));
+      }
+      char loudness[16] = "none";
+      if (live[index].watch.has_rssi()) {
+        std::snprintf(loudness, sizeof(loudness), "%.0f", live[index].watch.rssi());
+      }
+      std::printf("#   %s ble %s %s rssi=%s sightings=%lu weak=%lu missed=%lu %sreadings=%lld\n",
+                  source.source_id, device, sentry::name_of(live[index].watch.state()),
+                  loudness, static_cast<unsigned long>(live[index].watch.sightings()),
+                  static_cast<unsigned long>(live[index].watch.too_weak()),
+                  static_cast<unsigned long>(ble::missed()),
+                  ble::listening() ? "" : "not listening ",
+                  static_cast<long long>(live[index].readings));
     } else if (source.driver == sentry::Driver::kAdc) {
       std::printf("#   %s adc pin=%d output=%s every=%lus readings=%lld\n", source.source_id,
                   source.adc.pin, source.adc.volts ? "volts" : "ratio",
@@ -1632,6 +1827,17 @@ void obey(const char* line) {
   }
   if (std::strncmp(line, "forget", 6) == 0 && (line[6] == '\0' || line[6] == ' ')) {
     forget_what_is_kept(line + 6);
+    return;
+  }
+  if (std::strcmp(line, "deafen") == 0) {
+    // On purpose, like `tear` and `hang`: the scanner stops while something is still being
+    // watched. What should follow is every watch going unknown at once — not absent, which
+    // is a thing this node would have had to hear in order to know — and then, a few
+    // seconds later, the loop asking for the radio again and the wait for absence starting
+    // over. It is the only way to see coverage loss without unsoldering an antenna.
+    ble::deaf();
+    std::printf("# the scanner is off; the loop will ask for it again in about %lu ms\n",
+                static_cast<unsigned long>(kRadioPatienceMs));
     return;
   }
   if (std::strcmp(line, "hang") == 0) {
