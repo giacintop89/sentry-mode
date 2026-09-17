@@ -25,7 +25,8 @@ cmake --build build/pico-host
 ctest --test-dir build/pico-host --output-on-failure
 ```
 
-Seven suites: `json`, `command`, `event`, `lease`, `store`, `identity`, `timebase`. The
+Eight suites: `json`, `command`, `event`, `lease`, `store`, `identity`, `timebase`,
+`spool`. The
 `command` suite reads the fixtures in
 `contracts/satellite/v1/control/fixtures/`, the same files `tests/unit/test_satellite_control.py`
 and `satellite/tests/unit/test_control_contracts.py` read, so a fixture the hub accepts and
@@ -68,7 +69,8 @@ bytes never made it, which must leave the previous configuration in charge.
 | `include/sentry/identity.h`, `src/core/identity.cpp` | The provisioning record — the node id and where the broker is — and the boot id that must differ every boot. |
 | `include/sentry/timebase.h`, `src/core/timebase.cpp` | A counter that wraps seen as one that does not, and what a reading may claim about its own timestamp. |
 | `tools/emit.cpp`, `tools/unpack.cpp` | Write events, and read configuration slots, for the two cross-checks above. |
-| `tests/` | The seven suites, and a tiny harness rather than a test framework. |
+| `include/sentry/spool.h`, `src/core/spool.cpp` | The queue for an outage: which readings collapse into a newer one, which are never dropped for them, and what is counted when something is given up. |
+| `tests/` | The eight suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
 no `malloc` to fail on a board with 264 kB. That is what makes the host build meaningful
@@ -88,5 +90,6 @@ fails here, in a second, rather than at link time on a target with neither.
   certificates and private key a real provisioning tool writes. `store.cpp` says what a
   record looks like and `pack_provisioning.py` writes one; neither has touched a sector.
 - SNTP. `Timebase` is told the time by something; nothing here is that something yet.
-- MQTT and TLS — PICO-03.
+- MQTT and TLS — PICO-03. `Spool` decides what to keep during an outage; nothing here
+  has yet had an outage, because nothing here has yet had a connection.
 - Any sensor driver at all.
