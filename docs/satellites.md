@@ -220,9 +220,16 @@ able to reach, which is one port on one machine and nothing else.
     systemctl reload mosquitto
 
 The hub stops believing the node the moment it is revoked: the session ends, the grants
-end, its retained snapshot is erased and its sensors are marked unavailable. Do the broker
-half as well, and check the connection is really gone — **reloading a broker does not close
-connections that are already open.**
+end, its retained snapshot is erased and its sensors are marked unavailable. A hub that is
+already running notices, because it asks the registry file again on every message rather
+than trusting what it read at startup — which is the only thing standing between a revoked
+node and the journal until the broker half is done. Do the broker half as well, and check
+the connection is really gone — **reloading a broker does not close connections that are
+already open.**
+
+Giving it back is `approve` again, and one thing is worth knowing: a node that is still
+connected stays offline until it says hello again, because a session begins at a `state`
+message. Restarting the node — or the bridge carrying it — is what brings it back.
 
 ## What you will see
 

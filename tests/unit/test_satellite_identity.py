@@ -210,3 +210,25 @@ def test_times_are_recorded_in_utc(registry, tmp_path):
     record = registry.approve("zero-entrance")
     assert record.approved_at.tzinfo is not None
     assert record.registered_at <= datetime.now(UTC)
+
+
+def test_a_node_revoked_from_the_shell_stops_being_believed_by_a_hub_that_is_running(tmp_path):
+    """The other direction of the same file, and the one that matters more.
+
+    `satellite_admin.py revoke` says the hub refuses the node either way, because a broker
+    that reloads its access control does not close the connections it already has. That is
+    only true if the hub notices: a registry read once and cached would leave a revoked
+    node publishing into the journal for as long as the hub stayed up.
+    """
+    path = tmp_path / "nodes.json"
+    crt = certificate(tmp_path, "zero-w")
+    from_the_shell = NodeRegistry(path)
+    from_the_shell.register(node_id="zero-w", certificate=crt)
+    from_the_shell.approve("zero-w")
+
+    running = NodeRegistry(path)
+    assert running.authenticate(node_id="zero-w").status == "approved"
+
+    from_the_shell.revoke("zero-w", reason="sold the house")
+    with pytest.raises(NotApproved, match="revoked"):
+        running.authenticate(node_id="zero-w")

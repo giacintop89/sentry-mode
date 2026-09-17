@@ -1,7 +1,7 @@
 PYTHON ?= python3
 BIN = .venv/bin
 
-.PHONY: setup test lint format status camera-test audio-test pico pico-device
+.PHONY: setup test lint format status camera-test audio-test pico pico-device pico-release
 setup:
 	$(PYTHON) -m venv .venv
 	$(BIN)/python -m pip install -e '.[dev]'
@@ -36,3 +36,8 @@ pico-device:
 	$(BIN)/python firmware/pico/tools/image_check.py --build-dir build/$(PICO_BOARD) \
 		--provisioning .local/pico-provisioning.json
 	@echo "flash: hold BOOTSEL, then copy build/$(PICO_BOARD)/sentry_firmware.uf2 onto RP2350"
+# What goes out with an image: the commit, the SDK under it, the hash of the file, what the
+# hub will let a node of that kind be asked for, and what this firmware still does not do.
+# It runs the host suites on the way past, so a manifest that says they passed saw them.
+pico-release: pico pico-device
+	$(BIN)/python firmware/pico/tools/release_manifest.py --build-dir build/$(PICO_BOARD)

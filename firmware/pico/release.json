@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "_": "The half of a release manifest that no tool can measure: how far each board and each capability has actually been taken, and what a release of this firmware does not do. tools/release_manifest.py merges it with what it can read off a build. Everything here is a claim somebody has to keep true, so it is short, and every entry names where the evidence is.",
+  "evidence": "firmware/pico/README.md",
+  "boards": {
+    "pico2_w": {
+      "platform": "pico-2w-sensor",
+      "state": "run on hardware",
+      "note": "The board these transcripts were taken on: provisioned, joined, granted, configured, revoked and reset."
+    },
+    "pico_w": {
+      "platform": "pico-w-sensor",
+      "state": "built only",
+      "note": "The same firmware for the RP2040. It builds for this board and has never been run on one."
+    },
+    "pico2": {
+      "platform": "pico-2-wired",
+      "state": "run on hardware",
+      "note": "Run as pico-cablato over scripts/pico_bridge.py: online, configured twice, events journalled, a killed bridge seen as offline, a watchdog reset recovered."
+    },
+    "pico": {
+      "platform": "pico-wired",
+      "state": "built only",
+      "note": "The wired build for the RP2040. It builds for this board and has never been run on one."
+    }
+  },
+  "capabilities": {
+    "sensors": {
+      "state": "run on hardware",
+      "note": "gpio, adc, onewire and the board's own temperature. A pin has been read, debounced and reported, but by the board driving its own pad: no PIR, no contact and no DS18B20 has ever answered."
+    },
+    "presence": {
+      "state": "run on hardware",
+      "note": "One iBeacon, watched for a thousand sightings in one room. An address-based watch is written and tested but has never followed a phone, which rotates its address."
+    },
+    "audio": {
+      "state": "experimental",
+      "note": "The I2S receiver has run for minutes with the blocks unbroken and the silence measuring as silence, on three pins that have never had a microphone on them. The live stream to the hub is proved against the hub's own gateway, not against a room."
+    },
+    "bridge": {
+      "state": "run on hardware",
+      "note": "A board with no radio, carried over USB by scripts/pico_bridge.py. The bridge publishes under the node's own certificate and decides nothing."
+    },
+    "snapshot": {
+      "state": "not built",
+      "note": "PICO-10. It needs an SPI camera with a JPEG FIFO, and no such module has been on this board; nothing in this firmware pretends there is one. video.start is refused by name."
+    }
+  },
+  "limitations": [
+    "Every board here is experimental in the hub's own catalogue, and shown that way. No board has been through an acceptance matrix.",
+    "A power cut, as opposed to a reset. Everything proved so far used the watchdog, which resets the chip without taking the power off it.",
+    "Keeping the time, as opposed to getting it once. A board up for a day and the drift between two answers are unexamined.",
+    "A certificate issued for another name, an expired one and a revoked one have never been offered to the broker.",
+    "Four of the six reset reasons are read from bits nothing here has set, and an RP2040 cannot tell a brown-out from a power-on at all.",
+    "Every event goes out with queued_ms 0: the queue does not record when a reading was put in it."
+  ]
+}

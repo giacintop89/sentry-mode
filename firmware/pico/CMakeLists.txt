@@ -205,6 +205,12 @@ add_executable(sentry_audio_emit tools/audio_emit.cpp)
 target_link_libraries(sentry_audio_emit PRIVATE sentry_protocol)
 target_compile_options(sentry_audio_emit PRIVATE -Wall -Wextra -Werror)
 
+# Says what this firmware knows about each board it builds for — the reserved pins and the
+# limits — so that tools/release_manifest.py writes down the code's answer, not its own.
+add_executable(sentry_board_emit tools/board_emit.cpp)
+target_link_libraries(sentry_board_emit PRIVATE sentry_protocol)
+target_compile_options(sentry_board_emit PRIVATE -Wall -Wextra -Werror)
+
 add_executable(sentry_link_emit tools/link_emit.cpp)
 target_link_libraries(sentry_link_emit PRIVATE sentry_protocol)
 target_compile_options(sentry_link_emit PRIVATE -Wall -Wextra -Werror)

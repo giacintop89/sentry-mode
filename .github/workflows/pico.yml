@@ -59,6 +59,12 @@ jobs:
       - name: A decoder written from the specification reads the packets
         run: python firmware/pico/tools/mqtt_check.py --build-dir build/pico-host
 
+      - name: The hub's own reader takes the blocks the firmware writes
+        run: python firmware/pico/tools/audio_check.py --build-dir build/pico-host
+
+      - name: The two ends of the USB cable are put against each other
+        run: python firmware/pico/tools/link_check.py --build-dir build/pico-host
+
       - name: The firmware reads back records it did not frame
         run: python firmware/pico/tools/pack_provisioning.py --build-dir build/pico-host --verify
 
@@ -104,6 +110,19 @@ jobs:
       - name: Nothing in the image that belongs on a board
         run: python firmware/pico/tools/image_check.py --build-dir build/${{ matrix.board }}
 
+      # The manifest asks the firmware what each board reserves rather than saying so
+      # itself, so the host build of that one tool is part of describing an image.
+      - name: What the firmware says about the board it was built for
+        run: |
+          python -m pip install "pydantic>=2"
+          cmake -S firmware/pico -B build/pico-host -G Ninja
+          cmake --build build/pico-host --target sentry_board_emit
+
+      - name: The manifest that goes with the image
+        run: |
+          python firmware/pico/tools/release_manifest.py \
+            --build-dir build/${{ matrix.board }} --no-checks
+
       - uses: actions/upload-artifact@v4
         with:
           name: sentry-firmware-${{ matrix.board }}
@@ -111,3 +130,4 @@ jobs:
             build/${{ matrix.board }}/sentry_firmware.uf2
             build/${{ matrix.board }}/sentry_firmware.elf
             build/${{ matrix.board }}/sentry_firmware.elf.map
+            build/${{ matrix.board }}/manifest.json

@@ -1095,6 +1095,110 @@ The two wired platforms are in the catalogue as `pico-wired` and `pico-2-wired`,
 `ble` driver and no stream: there is no Bluetooth on the chip, and the hub hears a
 microphone over a second TLS connection the board makes, which this board cannot make.
 
+### Taken away, and given back
+
+`PICO-11` asks for the revocations to be watched rather than assumed, and watching them
+found one. `satellite_admin.py revoke` prints "the hub refuses this node either way",
+because reloading a broker's access control does not close the connections it already has —
+so the hub is the layer that has to notice. It did not. `authenticate` looked at the
+registry file again only when the record it had cached was already a refusal, which catches
+a node approved a moment ago and misses a node revoked a moment ago. A revoked node went on
+publishing into the journal, and would have until the hub was restarted.
+
+    22:22:39  satellite_admin.py revoke --node pico-cablato
+    22:23:37  board.temperature  recorded    (from a node that had been revoked a minute ago)
+    22:24:07  board.temperature  recorded
+
+The fix is one line and one stat per message: ask the file every time, in both directions.
+`test_a_node_revoked_from_the_shell_stops_being_believed_by_a_hub_that_is_running` is the
+test, and the rest of the revocation was then watched on the board:
+
+    22:25:14  # revoke bc4fbef6-…: applied        the lease, answered by the node
+    22:25:23  the hub restarted with the fix; nothing from pico-cablato recorded after this
+    22:28:53  # grant=none … queued=7             the board keeps reading and holds them
+    22:29:45  # online, as pico-cablato           it announces, and gets no session at all
+    22:30:24  satellite_admin.py approve --node pico-cablato
+    22:31:55  pico-cablato is online in epoch 105 with 3 sources
+
+The gap between 22:30:24 and 22:31:55 is the last line of that transcript and is worth
+naming: a node approved again while it is already connected stays offline until it says
+hello again, because a session begins at a `state` message and the retained one was
+delivered when the hub subscribed. Restarting the bridge — or the node — is what produced
+the last line. A node approved for the first time does not have this problem, because it
+connects after it is approved.
+
+### What goes out with an image
+
+A `.uf2` on somebody's desk says nothing about itself, so a build can write down what it is:
+
+    make pico-release PICO_BOARD=pico2_w        # build/pico2_w/manifest.json
+
+Almost all of it is measured rather than declared — the commit, the SDK and the four
+submodules under it, the sha256 and the size of the image, which half of the firmware was
+actually compiled into it, what the hub's catalogue will let a node of that kind be asked
+for, and the pins the board keeps for itself. The pins and the limits are asked of the
+firmware rather than written down beside it: `tools/board_emit.cpp` prints what `pins.h`,
+`plan.h` and `vault.h` say, and `tools/release_manifest.py` copies the answer.
+
+The two halves are checked against each other on the way past, and a manifest is refused
+rather than written when they disagree: an image with no TLS stack for a board the hub
+would offer Bluetooth to, a hub that would send more sources than this firmware plans, or a
+configuration larger than one vault slot holds. It also runs the host suites and the
+cross-checks, so a manifest that says they passed is a manifest that watched them; with
+`--no-checks` it says nothing about them rather than saying they passed.
+
+What cannot be measured — how far each board and each capability has really been taken, and
+what this firmware does not do — is in `release.json`, which is the one file to read before
+telling somebody a board is ready. `tests/unit/test_pico_release.py` ties it to the things
+it can be tied to: every board it names is a platform in the hub's catalogue, every
+microcontroller platform the hub offers is a board somebody can build, and the boards are
+the boards the workflow builds.
+
+### Installing one, and getting it back
+
+The whole of it, from a board out of its bag to a node in the journal:
+
+1. **Build and flash.** `make pico-device PICO_BOARD=pico2_w`, hold BOOTSEL while plugging
+   the board in, and copy `build/pico2_w/sentry_firmware.uf2` onto the drive that appears.
+   A board already running this firmware does not need the button: opening its port at 1200
+   baud puts it back in the bootloader.
+2. **Give it a name and a key.** `satellite_admin.py node-key --node pico-ingresso` makes
+   the key and the request, `sign` issues the certificate, and `register` puts it in the
+   registry as waiting. The key never leaves the machine it was made on except over the
+   cable, in the next step.
+3. **Provision it over the cable.** `tools/provision_board.py` writes the identity, the
+   authority, the certificate and the key into the board's flash, through the same console
+   as everything else. `status` on that console says `provisioned=yes`.
+4. **Approve it.** `satellite_admin.py approve --node pico-ingresso`, then `acl` to write
+   the broker's access control and `kill -HUP` the broker. The node announces itself and
+   the hub gives it an epoch.
+5. **A board with no radio** skips the network and is carried instead: the same three steps,
+   and then `scripts/pico_bridge.py --config <file>` on the machine it is plugged into, with
+   that port mapped to that node id. See **A board with no radio**, above.
+
+Getting it back is the same list, backwards, and each step is one somebody may need on its
+own:
+
+- **It is running the wrong firmware, or none.** Hold BOOTSEL and copy a `.uf2` on. Nothing
+  in the vault is touched by flashing: the board comes back as itself, with its identity,
+  its credentials and its configuration. A firmware that laid the vault out differently is
+  the one case where they are lost, and it is deliberate — the record version changes and
+  old bytes fail to read rather than being guessed at.
+- **Its certificate is wrong, or expired.** `forget key` on the console overwrites it —
+  `certificate` and `authority` are the other two, and any of the three leaves the identity
+  alone — and `credentials <json>` puts a new set in. The board says `no certificate to
+  connect with` in between and keeps reading its sensors.
+- **It should not be trusted any more.** `satellite_admin.py revoke`, then `acl` and a
+  broker reload. The hub refuses it from the next message, as above; the broker stops it
+  reconnecting. Both, because a reload does not close an open connection.
+- **It is a different board now.** Register the new one under a new name and revoke the old.
+  A name is never reused for another board: the fingerprint in the registry is what makes a
+  certificate belong to a node, and reusing a name would make two boards one history.
+- **Nobody knows what it is doing.** `status` over the console says what it is provisioned
+  as, whether it has credentials, whether it is connected, what its clock is worth and what
+  it is holding. On a bridged board the same line says whether the cable is open and whether
+  a bridge has said hello.
+
 ## What is in here
 
 | Path | What it is |
@@ -1133,6 +1237,7 @@ microphone over a second TLS connection the board makes, which this board cannot
 | `src/device/media.h`, `src/device/media.cpp` | The second connection: dial, greet, and send while the hub is listening. Four blocks of queue, the oldest unsent one dropped when it fills, and the hole marked so the hub can fill it. |
 | `include/sentry/link.h`, `src/protocol/link.cpp` | What crosses the cable to a board with no radio: the frame, its counter and its CRC-32, and a reader that resynchronises on the magic rather than giving up. |
 | `src/device/bridge.h`, `src/device/bridge.cpp` | The USB port on a wired board: frames out, frames in, and the console carried inside them so that no text ever shares the channel unmarked. |
+| `tools/board_emit.cpp`, `tools/release_manifest.py`, `release.json` | What one build of this firmware is: the commit, the SDK, the hash of the image, the pins the board reserves — asked of the firmware — and the half no tool can measure, which is how far each board has really been taken. |
 | `tests/` | The twenty-three suites, and a tiny harness rather than a test framework. |
 
 Everything under `src/protocol` is pure: no SDK, no clock, no network, no allocation, and
@@ -1155,6 +1260,11 @@ fails here, in a second, rather than at link time on a target with neither.
   honest word for what it is worth. That rule has never been watched happening. A board up
   for a day, the drift between two answers, and a network that goes away mid-interval are
   all still unexamined, and `T16`'s UTC jump is **not executed**.
+- A node approved again while it is already connected. A session begins at a `state`
+  message, and the retained one was delivered when the hub subscribed, so a node that was
+  revoked and then approved again stays offline in a hub that would now accept it — until
+  it says hello again, which a reset or a restarted bridge does. Watched happening on
+  2026-09-17, and left as it is rather than fixed in the same breath as the refusal.
 - A power cut, as opposed to a reset. Everything above was proved with the watchdog, which
   resets the chip without taking the power off it. What a half-finished flash write does
   when the supply actually sags — the part is mid-erase and the voltage is falling — is not

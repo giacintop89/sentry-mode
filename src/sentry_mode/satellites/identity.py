@@ -320,11 +320,13 @@ class NodeRegistry:
         with. One of them disagreeing is not a detail to log and carry on from; it is
         either a misconfiguration or somebody trying something.
         """
-        record = self.get(node_id)
-        if record is None or not record.may_publish:
-            # A name nobody has heard of, or one that is not approved yet, is the case
-            # where the file on disk may have moved on: look again before refusing.
-            self.refresh()
+        # The file on disk may have moved on since it was last read, and it moves in both
+        # directions: a node approved from the shell a moment ago, and a node revoked from
+        # the shell a moment ago. Looking again only when there was already a reason to
+        # refuse would catch the first and miss the second — a hub that keeps taking
+        # messages from a node somebody has just thrown out, for as long as it runs. So the
+        # question is asked every time; when the file has not moved it is one `stat`.
+        self.refresh()
         record = self.require(node_id)
         if not record.may_publish:
             raise NotApproved(f"{node_id} is {record.status}")
