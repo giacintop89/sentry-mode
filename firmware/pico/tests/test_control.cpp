@@ -77,6 +77,24 @@ TEST(a_goodbye_fits_in_the_will_the_client_can_actually_send) {
   CHECK(goodbye.find("agent_version") == std::string::npos);  // nothing optional in a will
 }
 
+TEST(the_longest_name_a_node_may_have_still_leaves_room_for_its_goodbye) {
+  // 40 characters is the longest name the contract allows, and this is the case that
+  // decides whether the compact will was compact enough: 192 bytes of payload and 62 of
+  // topic is 254 of the 255 lwIP can express. One byte. Anything added to the required
+  // part of a state message takes that byte, and the failure would be a node with a long
+  // name that silently never registers a will.
+  const char* longest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  CHECK(std::strlen(longest) == 40);
+  char topic[sentry::kMaxTopicText] = {};
+  CHECK(sentry::topic(sentry::kTopicPrefix, longest, Channel::kState, topic, sizeof(topic)));
+  char buffer[sentry::kMaxWillBytes];
+  size_t size = write_goodbye(longest, "2c9a7f38-16d4-4b9e-9a0c-77f0b2d5e611",
+                              "9b1d6e44-0f27-4a83-8c55-1d3e7a9042bb", std::strlen(topic),
+                              buffer, sizeof(buffer));
+  CHECK(size > 0);
+  CHECK(size + std::strlen(topic) <= sentry::kMaxWillBytes);
+}
+
 TEST(a_goodbye_that_would_not_fit_is_refused_rather_than_registered) {
   char buffer[sentry::kMaxWillBytes];
   // A topic long enough to push the will past what the client can express.

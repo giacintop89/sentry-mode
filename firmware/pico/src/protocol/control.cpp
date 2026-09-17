@@ -138,17 +138,25 @@ size_t write_state(const State& state, char* buffer, size_t capacity) {
 
 size_t write_goodbye(const char* node_id, const char* boot_id, const char* connection_id,
                      size_t topic_bytes, char* buffer, size_t capacity) {
-  State leaving;
-  leaving.node_id = node_id;
-  leaving.boot_id = boot_id;
-  leaving.connection_id = connection_id;
-  leaving.online = false;
-  size_t size = write_state(leaving, buffer, capacity);
-  if (size == 0) return 0;
-  // The will is written by the client with 8-bit lengths. A goodbye that does not fit is
-  // not a goodbye that gets truncated; it is a CONNECT that fails, so it fails here.
-  if (size + topic_bytes > kMaxWillBytes) return 0;
-  return size;
+  if (!is_name(node_id) || !is_uuid(boot_id) || !is_uuid(connection_id)) return 0;
+
+  // Only the required fields, and not even an empty `sources`. That is not tidiness: with
+  // the longest name the contract allows, the five fields come to 192 bytes and the topic
+  // to 62, which is 254 of the 255 lwIP can express. An empty array would cost 13 of them
+  // and the node with the long name would silently have no will at all.
+  Writer writer(buffer, capacity);
+  writer.object_open();
+  put_who(writer, node_id, boot_id);
+  writer.key("connection_id");
+  writer.string(connection_id);
+  writer.key("online");
+  writer.boolean(false);
+  writer.object_close();
+  if (!writer.ok()) return 0;
+  // A goodbye that does not fit is not a goodbye that gets truncated; it is a CONNECT that
+  // fails, months from now, on a board. So it fails here instead.
+  if (writer.size() + topic_bytes > kMaxWillBytes) return 0;
+  return writer.size();
 }
 
 size_t write_health(const Health& health, char* buffer, size_t capacity) {

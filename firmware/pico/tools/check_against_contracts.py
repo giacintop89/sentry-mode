@@ -87,11 +87,15 @@ def check_control(binary: Path) -> int:
         # A goodbye is the will the broker holds, and lwIP writes a will with 8-bit
         # lengths: topic and payload together have to fit in 255 bytes.
         if name == "state" and document["online"] is False:
-            topic = f"sentry/v1/nodes/{document['node_id']}/state"
-            if len(payload) + len(topic) > 255:
+            # Measured for the longest name the contract allows, not for the one that
+            # happens to be in the fixture: that is the case with one byte to spare.
+            longest = 40 - len(document["node_id"])
+            topic = f"sentry/v1/nodes/{'a' * 40}/state"
+            carried = len(payload) + longest + len(topic)
+            if carried > 255:
                 raise SystemExit(
-                    f"the goodbye is {len(payload)} bytes and its topic {len(topic)}, "
-                    "which is more than a will can carry"
+                    f"a goodbye from a node with the longest allowed name would be "
+                    f"{carried} bytes with its topic, which is more than a will can carry"
                 )
 
     written = {name for name in MESSAGES if name != "command"}
