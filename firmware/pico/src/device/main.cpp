@@ -327,6 +327,20 @@ bool prepare_the_connection() {
 // The retained state that says this node is here. It is the one thing published before the
 // node is online, because it is what makes it online.
 bool write_announcement() {
+  // The one source this board has, declared so that the hub can show it and name it in a
+  // reading rather than seeing a node with nothing on it. It is soldered in: there is no
+  // configuration behind it, which is why `config_revision` stays unsaid.
+  const sentry::DeclaredOption options[] = {
+      {"measure", sentry::Value::of("temperature")},
+      {"interval_seconds", sentry::Value::of(static_cast<double>(kIntervalMs) / 1000.0, 1)},
+  };
+  sentry::DeclaredSource source;
+  source.source_id = "board-temperature";
+  source.kind = "board";
+  source.enabled = true;
+  source.options = options;
+  source.option_count = sizeof(options) / sizeof(options[0]);
+
   sentry::State here;
   here.node_id = node_id;
   here.boot_id = boot_id;
@@ -334,6 +348,8 @@ bool write_announcement() {
   here.online = true;
   here.firmware_version = "pico-0.1.0";
   here.profile = "sensor-presence";
+  here.sources = &source;
+  here.source_count = 1;
   outgoing_size = sentry::write_state(here, outgoing, sizeof(outgoing));
   saying = Saying::kAnnouncement;
   return outgoing_size > 0;

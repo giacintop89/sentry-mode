@@ -319,6 +319,52 @@ measure it leaves out: there is no free-heap figure, because nothing here alloca
 Both of the messages above were handed to the hub's Pydantic model and to the published
 schema, which took them.
 
+### The hub, and the other node
+
+None of the above involved the hub itself: `mosquitto_pub` was standing in for it. So the
+last thing was to stop standing in. With Sentry Mode running on this machine, its satellite
+subsystem connected to the same broker, and a Raspberry Pi Zero W and a simulated Linux
+node already on it speaking MQTT 5, the board was plugged in and told to connect:
+
+```
+2026-09-17 15:49:35 INFO satellites.service zero-simulated is online in epoch 15 with 1 sources
+2026-09-17 15:49:35 INFO satellites.service zero-w is online in epoch 16 with 2 sources
+2026-09-17 15:49:35 INFO satellites.service pico-ingresso is online in epoch 17 with 0 sources
+```
+
+and the board, a second later, on its serial line:
+
+```
+# online, as pico-ingresso
+# grant 08fbfbe7-…: applied
+# grant=a661a265-… epoch=18 expires_in=272s owed=0 answered=1 unanswered=0
+```
+
+That is a hub granting a microcontroller it has never met, and the microcontroller taking
+it. The hub's own journal, a few minutes later, has 42 events from `pico-ingresso` beside
+3 379 from the simulated node and 116 from the Pi Zero W — one broker, one ACL, MQTT 3.1.1
+and MQTT 5 side by side, which is `T13`. Of those 42, the hub classified one as `initial`
+and the rest as `live`: the baseline arrived as a baseline and nothing else did.
+
+The `0 sources` in that third line was the board saying nothing about what it has. It now
+declares its one source in the same retained state, and the hub's satellites page shows it:
+
+```json
+{"source_id":"pico-ingresso.board-temperature","name":"board-temperature","kind":"board",
+ "role":"sensor","state":"ready","declared":true,"enabled":true,"supported":true,
+ "options":{"measure":"temperature","interval_seconds":2.0},"driver":"running"}
+```
+
+`supported` is the hub checking that a `board` driver is something a `pico-2w-sensor` may
+have, from its own platform catalogue, rather than taking the node's word for it.
+
+One thing in that run was not the firmware's doing and is worth writing down anyway: the
+hub had been running since before the board was registered, and an older build of it could
+not read the registry file that `satellite_admin.py` had rewritten, so it went on serving
+the two nodes it already knew and never saw the third. Nothing in any log said so — the
+reload is one `stat` and a refusal to reload is silence. A hub that has been up for longer
+than the registry it is reading is a thing to check first.
+
 Two of those lines were not there the first time. `stop` used to be the node closing the
 socket, and the broker did what a broker does when a client vanishes: it published the
 will, so the hub saw the node go offline twice, once because it was told to stop and once
@@ -383,8 +429,9 @@ fails here, in a second, rather than at link time on a target with neither.
 - The rest of the failure cases of the handshake. A wrong authority has been watched, and
   refused; a certificate issued for another name, an expired one and a revoked one have
   not, so the rest of `T06` and all of `T07` are **not executed**.
-- Both clients at once through the broker: a Linux node speaking MQTT 5 and this one
-  speaking 3.1.1, with the hub reading from both. `T13` is **not executed**.
+- What a source last read, in the health message. The node reports how many readings each
+  source has taken and whether its driver is running, but not the last value, so the hub's
+  page shows a source that is ready and a reading it has to wait for an event to learn.
 - Any sensor driver at all. What is here is the part of one that has no hardware in it:
   `input.cpp` decides what a level means, `sensors.cpp` decides what a scratchpad or an
   ADC count means, and `pins.cpp` decides whether a configuration may start. Nothing has
