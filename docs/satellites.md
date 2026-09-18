@@ -345,6 +345,14 @@ sends is old. Over two seconds the hub says so once, and says so again when it s
 That pair is from the hub being stopped for seven hours on 2026-09-18 and started again:
 three nodes, each one line each way, and nothing else about them had changed.
 
+Two seconds was chosen rather than measured, and the first look at it says it is at least
+in a sensible place. Of 101,235 journalled readings over a day and a half — a wired board,
+a Pi Zero W and two other nodes — 99.53% waited less than 50 ms and 0.35% waited more than
+two seconds, with 118 readings in between; everything in that upper heap belongs to a
+broker that was down, a hub that had been stopped or a node being revoked. So nothing a
+working node does comes near the line. Whether two seconds is the right place for it on a
+busier network is a different question, and one measurement here does not answer it.
+
 The events that do count are handed to Sentry, where `sensor_event`, `threshold` and
 `sequence` rules can act on them; see [rules, second version](rules-v2.md). While a node
 is offline, the rules that listen to it are paused or stop Sentry, as the rules' fault

@@ -1600,12 +1600,33 @@ fails here, in a second, rather than at link time on a target with neither.
   minute — and the second of them found a defect in the console's own `time` verb. What is
   still unexamined is the drift between two answers on a board up for a day: every clock
   here has been moved on purpose, and none has been left alone long enough to wander.
-- Two seconds is a number somebody chose. It is what separates a correction from a step,
-  and it was picked from what a crystal plausibly loses between two answers rather than
-  measured on this hardware over a long enough run to be sure. A board whose time source
-  answers once an hour and whose crystal is worse than assumed would call an ordinary
-  correction a step, which costs a queue its `synced` and nothing else; the error is in the
-  safe direction, but it is an assumption and not a measurement.
+- Two seconds is a number somebody chose, and it is two different numbers. The one that
+  separates a correction from a step was picked from what a crystal plausibly loses between
+  two answers, and nothing here has measured it: a board whose time source answers once an
+  hour and whose crystal is worse than assumed would call an ordinary correction a step,
+  which costs a queue its `synced` and nothing else — the error is in the safe direction,
+  but it is an assumption.
+
+  The other one, which separates a node that is behind from one that is busy, has now been
+  looked at. Every reading in the journal carries how long it waited, and 101,235 of them
+  between 2026-09-17 09:18 and 2026-09-18 16:36, across four nodes — the wired board, a
+  Pi Zero W, a simulated agent and the node that has been off — fall into two heaps:
+
+  ```
+  under 50 ms   100,764    99.53%
+  50 ms to 2 s      118     0.12%
+  over 2 s          353     0.35%
+  ```
+
+  The first heap is the machine working: 5 ms at the median on the wired board, 23 ms on an
+  agent over a network. The second heap is not a busier version of the first — every reading
+  in it belongs to a broker that was down, a hub that had been stopped for seven hours or a
+  node being revoked and approved again, and the smallest of them is measured in seconds
+  while the largest is three minutes. Between them is a valley a hundred and eighteen
+  readings wide, and two seconds is in the middle of it, which is the useful thing to know
+  about a threshold: it is not sitting on the edge of the ordinary. What this does not say
+  is that two seconds is *right* — one house, one network, a day and a half, and one of the
+  four nodes simulated — only that on this network it is nowhere near anything normal.
 - What is queued when the clock steps, on a board. The sweep is tested on host and the
   detection is watched on hardware, but a bridged node's queue is empty almost all the time
   — see the next point — so the two have never been seen together on a board. That needs
@@ -1654,7 +1675,8 @@ fails here, in a second, rather than at link time on a target with neither.
   coalesced reading reports its own wait, not the one it replaced. The hub reads it now —
   `queue.waited` on the node, and one line when a node crosses two seconds and one when it
   comes back — which was watched happening on 2026-09-18 with three nodes at once, after the
-  hub had been stopped for seven hours. What is still a guess is the two seconds.
+  hub had been stopped for seven hours. The two seconds have now been looked at rather than
+  only chosen: see below.
 - A revoked certificate, as opposed to a revoked node. Four certificates have now been
   offered to this broker and refused or allowed on purpose — another authority, an expired
   one, a genuine one for a name nobody registered, and one node's certificate publishing
@@ -1720,4 +1742,4 @@ them are waiting on hardware rather than on a decision.
 | A power cut | A supply that can be pulled mid-write | The watchdog resets the chip without taking the power off it, and a `tear` writes half a record on purpose. Neither is the supply sagging during an erase. |
 | Two boards at once | A second board | `T39`. One bridge carries a list of them and the code is written for it; there has only ever been one. |
 | `PICO-10`, the snapshot | An Arducam SPI module | Declared `not built` in the manifest rather than written and untested. `T32` and `T33` go with it. |
-| A threshold that was measured | A house, and nodes in it, over long enough | Two seconds separates a node that is behind from one that is busy, and two seconds is a number somebody chose. The same is true of the two seconds that tell a clock's step from its correction. |
+| A threshold that was measured | More than one house, and months rather than days | The first measurement is above: on this network the wait is bimodal and two seconds sits in the empty part of it. What that does not say is whether the valley is the network's or the house's, and the clock's own two seconds — the one that tells a step from a correction — has no measurement at all behind it. |
