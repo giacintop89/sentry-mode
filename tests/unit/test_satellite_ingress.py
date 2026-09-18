@@ -223,3 +223,14 @@ def test_no_setting_forgets_a_receipt_while_its_event_could_still_arrive():
     )
     shortest_memory = next(rule.ge for rule in fields["dedup_days"].metadata if hasattr(rule, "ge"))
     assert shortest_memory * 86400 >= longest_window
+
+
+def test_how_long_a_reading_waited_comes_back_on_the_receipt(door):
+    # The number is in the journal already. It is on the receipt because the journal is
+    # history and this is the one thing that says a node is falling behind right now.
+    receipt = door.accept("zero-entrance", envelope(queued_ms=4300))
+    assert receipt.stored and receipt.waited_ms == 4300
+    # A reading the door refuses waited too, and a node sending nothing but refusals is
+    # the one whose wait is worth knowing.
+    again = door.accept("zero-entrance", envelope(sequence=1, queued_ms=9000))
+    assert again.classification == "historic" and again.waited_ms is None

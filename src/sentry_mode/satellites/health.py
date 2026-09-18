@@ -8,9 +8,22 @@ things that go in the journal; this is the current picture.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
+
+log = logging.getLogger(__name__)
+
+# A reading that waited longer than this is a node that could not send when it wanted to.
+# The board publishes as soon as it has a link and a grant, so a quiet one reports single
+# milliseconds; two seconds is well past a burst of baselines after a reconfiguration and
+# well short of an outage anybody would notice another way.
+BEHIND_MS = 2000
+
+# How long the worst wait is worth remembering. After this it is history rather than a
+# picture of now, and the next reading's own wait becomes the worst again.
+WORST_FOR_SECONDS = 300.0
 
 
 @dataclass
@@ -28,6 +41,10 @@ class NodeHealth:
     accepted: int = 0
     refused: int = 0
     reasons: dict[str, int] = field(default_factory=dict)
+    waited_ms: int | None = None
+    worst_waited_ms: int | None = None
+    worst_waited_at: float | None = None
+    behind: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -43,6 +60,16 @@ class NodeHealth:
                 "accepted": self.accepted,
                 "refused": self.refused,
                 "reasons": dict(self.reasons),
+            },
+            # What the node said about how long its last reading waited, and the worst it
+            # has said lately. The node measures this on its own monotonic clock, so it
+            # survives the hub and the node disagreeing about what time it is.
+            "waited": {
+                "last_ms": self.waited_ms,
+                "worst_ms": self.worst_waited_ms,
+                "worst_at": self.worst_waited_at,
+                "behind": self.behind,
+                "behind_over_ms": BEHIND_MS,
             },
         }
 
@@ -80,6 +107,36 @@ class HealthBoard:
                 if isinstance(value, dict):
                     setattr(entry, name, value)
 
+    def waited(self, node_id: str, waited_ms: int | None) -> None:
+        """How long the node held the reading that has just arrived.
+
+        Nothing else the hub sees says this. A node that has fallen behind is online, its
+        heartbeats arrive, its sources are ready, and the only difference is that what it
+        sends is old — which is exactly what this number is. It is logged when it crosses,
+        once, and logged again when it comes back, because an operator needs the second
+        line as much as the first.
+        """
+        if waited_ms is None:
+            return
+        with self._lock:
+            entry = self._entry(node_id)
+            now = self._clock()
+            entry.waited_ms = waited_ms
+            stale = entry.worst_waited_at is None or now - entry.worst_waited_at > WORST_FOR_SECONDS
+            if stale or entry.worst_waited_ms is None or waited_ms >= entry.worst_waited_ms:
+                entry.worst_waited_ms = waited_ms
+                entry.worst_waited_at = now
+            behind = waited_ms > BEHIND_MS
+            if behind and not entry.behind:
+                log.warning(
+                    "%s is falling behind: its last reading waited %d ms before it could be sent",
+                    node_id,
+                    waited_ms,
+                )
+            elif entry.behind and not behind:
+                log.info("%s has caught up: its last reading waited %d ms", node_id, waited_ms)
+            entry.behind = behind
+
     def accepted(self, node_id: str) -> None:
         with self._lock:
             self._entry(node_id).accepted += 1
@@ -112,4 +169,4 @@ class HealthBoard:
             }
 
 
-__all__ = ["HealthBoard", "NodeHealth"]
+__all__ = ["BEHIND_MS", "WORST_FOR_SECONDS", "HealthBoard", "NodeHealth"]

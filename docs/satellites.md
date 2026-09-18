@@ -312,6 +312,28 @@ reaches a rule. Everything else is kept with its reason:
 Heartbeats are not written down. The latest one from each node replaces the one before
 and is shown with the node's status.
 
+**How long a reading waited.** Every event carries the number of milliseconds the node held
+it before it could be sent, measured on the node's own monotonic clock — so it does not
+depend on the node and the hub agreeing about what time it is. The hub keeps the last one
+and the worst of the last five minutes, and shows both under the node's `queue.waited` in
+`/api/satellites`:
+
+```json
+"waited": {"last_ms": 42, "worst_ms": 108324, "behind": false, "behind_over_ms": 2000}
+```
+
+It is the one number that says a node has fallen behind while everything else about it
+still looks right: it is online, its heartbeats arrive, its sources are ready, and what it
+sends is old. Over two seconds the hub says so once, and says so again when it stops:
+
+```
+07:21:01 WARNING pico-cablato is falling behind: its last reading waited 108324 ms before it could be sent
+07:21:01 INFO    pico-cablato has caught up: its last reading waited 31 ms
+```
+
+That pair is from the hub being stopped for seven hours on 2026-09-18 and started again:
+three nodes, each one line each way, and nothing else about them had changed.
+
 The events that do count are handed to Sentry, where `sensor_event`, `threshold` and
 `sequence` rules can act on them; see [rules, second version](rules-v2.md). While a node
 is offline, the rules that listen to it are paused or stop Sentry, as the rules' fault

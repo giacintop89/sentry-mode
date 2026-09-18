@@ -144,7 +144,10 @@ def _node(node: dict) -> dict:
         # Only what this kind of board can measure. A microcontroller has no load average,
         # and a page that showed one as 0 would be showing a number nobody took.
         "board": platforms.visible_board(chosen, health.get("board") or {}),
-        "queue": health.get("queue") or {},
+        # What the node says about its own queue, and what the hub measured about the same
+        # queue from the other end: the wait each reading reported before it arrived. The
+        # node can only say how much is waiting; this is how long it waited.
+        "queue": {**(health.get("queue") or {}), "waited": health.get("waited") or {}},
         "sources": sources,
         "errors": errors,
         "configuration": node.get("configuration"),

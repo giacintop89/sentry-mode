@@ -1551,9 +1551,10 @@ fails here, in a second, rather than at link time on a target with neither.
   millisecond it arrived, and `queued_ms` is the difference when the frame is written, so
   the journal shows 5 ms on a quiet board and 13–19 ms in the moment after a
   reconfiguration, when the baselines are taken and several readings queue at once. A
-  coalesced reading reports its own wait, not the one it replaced. What is missing is at
-  the other end: the hub records the number and nothing reads it, so a node falling behind
-  is still noticed by something else or not at all.
+  coalesced reading reports its own wait, not the one it replaced. The hub reads it now —
+  `queue.waited` on the node, and one line when a node crosses two seconds and one when it
+  comes back — which was watched happening on 2026-09-18 with three nodes at once, after the
+  hub had been stopped for seven hours. What is still a guess is the two seconds.
 - A revoked certificate, as opposed to a revoked node. Four certificates have now been
   offered to this broker and refused or allowed on purpose — another authority, an expired
   one, a genuine one for a name nobody registered, and one node's certificate publishing
@@ -1620,5 +1621,5 @@ them are waiting on hardware rather than on a decision.
 | A power cut | A supply that can be pulled mid-write | The watchdog resets the chip without taking the power off it, and a `tear` writes half a record on purpose. Neither is the supply sagging during an erase. |
 | Two boards at once | A second board | `T39`. One bridge carries a list of them and the code is written for it; there has only ever been one. |
 | `PICO-10`, the snapshot | An Arducam SPI module | Declared `not built` in the manifest rather than written and untested. `T32` and `T33` go with it. |
-| The hub reading `queued_ms` | A decision about what to do with it | The number is measured, published and recorded. Nothing looks at it, so a node falling behind is noticed by something else or not at all. |
+| A threshold that was measured | A house, and nodes in it, over long enough | Two seconds separates a node that is behind from one that is busy, and two seconds is a number somebody chose. The same is true of the two seconds that tell a clock's step from its correction. |
 | A node approved again while connected | A decision, then a change in the hub | Watched on 2026-09-17 and left as it is: a session begins at a retained `state`, so a node revoked and re-approved stays offline until it says hello again. |

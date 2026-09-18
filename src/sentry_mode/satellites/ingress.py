@@ -111,6 +111,10 @@ class Receipt:
     stored: bool = False
     reason: str | None = None
     event: NormalizedEvent | None = None
+    waited_ms: int | None = None
+    """How long the node held this reading before it could send it, as the node measured it.
+    It is on the receipt rather than only in the journal because it is the one number that
+    says a node is falling behind while everything else about it still looks healthy."""
     settle: bool = True
     """Whether the satellite may be told to let this message go. It is false only when the
     hub failed to write it down, because a message the hub lost is one worth sending again."""
@@ -335,6 +339,7 @@ class EventIngress:
                 stored=True,
                 reason=event.reason,
                 event=event if event.eligible else None,
+                waited_ms=event.queued_ms,
             )
         if outcome == ID_REUSED:
             # The same identifier over different contents is not a retry. Nothing is

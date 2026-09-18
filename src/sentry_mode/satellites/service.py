@@ -780,6 +780,10 @@ class SatelliteService:
             self._settle(message)
             return
         receipt = self.ingress.accept(message.node_id, document, retained=message.retained)
+        # Before anything is decided about the event: a reading that arrived late is still
+        # a reading that waited, and a node that is only sending refusals is exactly the
+        # one worth knowing the wait of.
+        self.health.waited(message.node_id, receipt.waited_ms)
         if receipt.settle:
             self._settle(message)
         else:

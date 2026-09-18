@@ -692,8 +692,11 @@ sotto *What is left to do*; questa è la stessa lista nell'ordine in cui convien
    stata una.
 9. **`PICO-10`.** Serve un modulo SPI Arducam; finché non c'è resta `not built` nel manifest,
    e con esso `T32` e `T33`.
-10. **Decisioni, non hardware.** Che cosa fa l'hub di `queued_ms`, che nessuno legge; e un
-    nodo riapprovato mentre è già connesso, che resta offline finché non ridice di esserci.
+10. **Decisioni, non hardware.** Un nodo riapprovato mentre è già connesso, che resta
+    offline finché non ridice di esserci. `queued_ms` invece è chiuso: l'hub lo legge, lo
+    mostra sotto `queue.waited` del nodo e dice una riga quando un nodo supera i due secondi
+    e una quando rientra — visto il 18 settembre 2026 su tre nodi insieme. Resta da misurare
+    la soglia, che per ora è scelta.
 
 ## 13. Build, release e regole di consegna
 
