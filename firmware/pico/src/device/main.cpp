@@ -141,6 +141,9 @@ sentry::Woke woke = sentry::Woke::kUnknown;
 bool come_back_on_its_own = false;
 // When the last answer from the time source arrived, on this board's own clock.
 uint64_t time_answered_at_us = 0;
+// Whether this node has already said that its time source went quiet. The clock is told
+// every turn once it has, and the person reading the console needs telling once.
+bool said_the_time_went_quiet = false;
 char node_id[sentry::kMaxNodeIdText] = {};
 char boot_id[sentry::kUuidText] = {};
 char connection_id[sentry::kUuidText] = {};
@@ -906,10 +909,22 @@ void take_the_time_if_it_arrived() {
     if (clock_.synced() && time_answered_at_us != 0 &&
         now_us() - time_answered_at_us > kTimeGoesStaleUs) {
       clock_.lost();
+      if (!said_the_time_went_quiet) {
+        said_the_time_went_quiet = true;
+        // Nothing stops being stamped: the offset is still the best estimate this board
+        // has. What changes is what it claims about the stamp, and the hub reads exactly
+        // that to decide whether an event is live — so a node that has gone quiet in this
+        // particular way looks, from the hub, like one whose readings are all history.
+        std::printf(
+            "# nothing has said what time it is for %llu hours: what this node stamps is no "
+            "longer called synced\n",
+            static_cast<unsigned long long>(kTimeGoesStaleUs / (UINT64_C(3600) * 1000000)));
+      }
     }
     return;
   }
   answers_seen = answers.count;
+  said_the_time_went_quiet = false;
   // Read rather than extended: the answer was stamped inside lwIP's callback, before the
   // loop's own last reading of the counter, and handing an older value to `extend` would
   // look exactly like the counter going round.
@@ -1772,6 +1787,7 @@ void the_time_arrived(const uint8_t* payload, size_t size) {
   const bool first = !clock_.synced();
   const bool stepped = clock_.sync(unix_ms, now_us());
   time_answered_at_us = now_us();
+  said_the_time_went_quiet = false;
   ++answers_seen;
   if (first) {
     char stamped[32] = {};

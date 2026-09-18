@@ -1513,11 +1513,14 @@ fails here, in a second, rather than at link time on a target with neither.
 - Keeping the time, as opposed to getting it once. There is a rule: three hours with no
   answer from whatever tells this node the time and it stops calling what it stamps
   `synced`, without stopping stamping — the offset is still the best estimate it has, and
-  `unknown` is the honest word for what it is worth. That rule has never been watched
-  happening, and three hours is longer than any session here has spent waiting for it. The
-  jump itself has now been done, both ways, and is written up above; what is still
-  unexamined is the slow half — a board up for a day, the drift between two answers, and a
-  network that goes away mid-interval.
+  `unknown` is the honest word for what it is worth. The rule says so on the console now —
+  one line, when the three hours are up, and not again until something answers — and taking
+  the time source away from a wired board is `scripts/pico_bridge.py --time-every 0`, since
+  the bridge is the only source such a board has. That is the arrangement; the watching is
+  a run that is under way rather than something written up here, and the board carrying it
+  is running the firmware from before the line was added. The jump itself has been done,
+  both ways, and is written up above; what is still unexamined either way is the drift
+  between two answers on a board up for a day.
 - Two seconds is a number somebody chose. It is what separates a correction from a step,
   and it was picked from what a crystal plausibly loses between two answers rather than
   measured on this hardware over a long enough run to be sure. A board whose time source
