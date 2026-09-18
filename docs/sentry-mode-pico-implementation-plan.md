@@ -668,6 +668,8 @@ sono nel README del firmware con la trascrizione di ciò che è stato visto.
 Ciò che i verdetti qui sopra lasciano aperto, come elenco di cose da fare e non di cose da
 sapere. La versione lunga, con il perché di ognuna, è in [`firmware/pico/README.md`](../firmware/pico/README.md)
 sotto *What is left to do*; questa è la stessa lista nell'ordine in cui conviene affrontarla.
+Con il comando esatto e il criterio di riuscita di ognuna è
+[`docs/pico-cose-pendenti.md`](pico-cose-pendenti.md).
 
 1. **Rimettere in linea `pico-ingresso`.** Una `pico2_w`, `build/pico2_w/sentry_firmware.uf2`
    via BOOTSEL e un nuovo provisioning: la versione 2 dei record ha reso illeggibile tutto
