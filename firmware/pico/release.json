@@ -49,7 +49,7 @@
   "limitations": [
     "Every board here is experimental in the hub's own catalogue, and shown that way. No board has been through an acceptance matrix.",
     "A power cut, as opposed to a reset. Everything proved so far used the watchdog, which resets the chip without taking the power off it.",
-    "Keeping the time, as opposed to getting it once. A UTC jump has now been done on the board, both ways, and a step is told from a correction at two seconds — a number chosen rather than measured. A board up for a day, the drift between two answers, and the three-hour rule that stops calling a stamp synced are still unwatched.",
+    "Keeping the time, as opposed to getting it once. A UTC jump has been done on the board, both ways, and the three-hour rule that stops calling a stamp synced has been watched happening to the minute, with the node still online through it. A step is told from a correction at two seconds, which is a number chosen rather than measured, and the drift between two answers on a board left alone for a day is still unwatched: every clock here has been moved on purpose.",
     "A certificate listed as revoked is not refused: there is no CRL in this configuration, and revocation is the registry and the access list. Four other bad certificates have been offered to the broker and refused; none of them from the board itself.",
     "Four of the six reset reasons are read from bits nothing here has set, and an RP2040 cannot tell a brown-out from a power-on at all.",
     "How long a reading waited is measured by the board and read by the hub, which says so when a node crosses two seconds and when it comes back. Two seconds is a number chosen rather than measured, as is the two that tells a clock's step from its correction.",

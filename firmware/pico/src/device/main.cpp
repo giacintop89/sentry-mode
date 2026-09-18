@@ -2392,6 +2392,13 @@ void obey(const char* line) {
       return;
     }
     const bool stepped = clock_.sync(unix_ms, now_us());
+    // An answer, and dated as one: without this the three-hour rule would take the clock
+    // away again on the next turn of the loop, because the last answer would still be the
+    // one from before. Watched on 2026-09-18, on a board whose clock had just gone quiet:
+    // `time taken` was printed, the readings went on being called `unknown`, and nothing
+    // said why.
+    time_answered_at_us = now_us();
+    said_the_time_went_quiet = false;
     std::printf("# time taken: %lld\n", static_cast<long long>(unix_ms));
     if (stepped) the_clock_stepped();
     return;

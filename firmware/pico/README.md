@@ -964,6 +964,55 @@ The second line is the bridge's own fifteen-second time frame, putting it back. 
 is up to date has an empty queue, so on a healthy link the sweep finds nothing to do and the
 line is all that is seen; what it does to a queue that is not empty is `test_spool.cpp`,
 because a bridged node's queue never fills — see below.
+
+### And then the time stopped arriving
+
+The other half of the same rule, and the one that had never been watched: three hours with
+no answer from whatever tells this node the time, and it stops calling what it stamps
+`synced`. Nothing stops being stamped — the offset is still the best estimate the board has
+— but `unknown` is what the stamp is now worth, and the hub reads exactly that.
+
+Taking a time source away from a board with no radio means taking away the bridge, which is
+its only one: `scripts/pico_bridge.py --time-every 0`. On 2026-09-18 the last time frame
+reached `pico-cablato` at about 07:41:27, and nothing else about the node was touched — the
+cable stayed plugged in, the broker stayed up, the readings went on arriving every thirty
+seconds. What the hub's journal has, for one source, is the rule to the minute:
+
+```
+10:40:57  board-temperature  synced   live      eligible=1
+10:41:27  board-temperature  unknown  historic  time_uncertain  eligible=0
+10:41:57  board-temperature  unknown  historic  time_uncertain  eligible=0
+```
+
+Three hours to the minute, and the node was still online through all of it: heartbeats
+arriving, three sources ready, uptime unbroken at 38,220 seconds. That is the point of the
+rule — a node that has lost its clock is not a node that has gone away, and it is still
+worth listening to; it just stops being something a rule may act on. The board says so on
+its console now, once, rather than letting the hub be the only place the change shows.
+
+**And the recovery was broken.** Typing `time <unix_ms>` at a board in that state printed
+`# time taken`, and the readings went on being `unknown` anyway:
+
+```
+10:42:55  # time taken: 1789720975417
+10:42:57  board-temperature  unknown  historic  time_uncertain
+10:43:57  board-temperature  unknown  historic  time_uncertain
+```
+
+The console verb synchronised the clock and never said an answer had arrived, so the rule
+took it away again on the next turn of the loop — the last answer was still the one from
+three hours before. The bridge's own time frames set both, which is why this had never shown
+up: the only way to reach it is a board whose clock has already gone quiet, told the time by
+hand. Fixed where the verb is, and watched on the board after a flash — told the time once,
+at 10:45:07, with the bridge still under `--time-every 0` and nothing else telling it
+anything:
+
+```
+10:45:17  clock synced    10:45:49  clock synced
+10:45:28  clock synced    10:45:59  clock synced
+10:45:39  clock synced    10:46:09  clock synced
+```
+
 ### Whether somebody is here
 
 `PICO-06` asks for BLE presence on the same board that is already keeping a TLS connection
@@ -1513,14 +1562,11 @@ fails here, in a second, rather than at link time on a target with neither.
 - Keeping the time, as opposed to getting it once. There is a rule: three hours with no
   answer from whatever tells this node the time and it stops calling what it stamps
   `synced`, without stopping stamping — the offset is still the best estimate it has, and
-  `unknown` is the honest word for what it is worth. The rule says so on the console now —
-  one line, when the three hours are up, and not again until something answers — and taking
-  the time source away from a wired board is `scripts/pico_bridge.py --time-every 0`, since
-  the bridge is the only source such a board has. That is the arrangement; the watching is
-  a run that is under way rather than something written up here, and the board carrying it
-  is running the firmware from before the line was added. The jump itself has been done,
-  both ways, and is written up above; what is still unexamined either way is the drift
-  between two answers on a board up for a day.
+  `unknown` is the honest word for what it is worth. Both halves have now been watched on
+  the board and are written up above — the jump, both ways, and the three hours, to the
+  minute — and the second of them found a defect in the console's own `time` verb. What is
+  still unexamined is the drift between two answers on a board up for a day: every clock
+  here has been moved on purpose, and none has been left alone long enough to wander.
 - Two seconds is a number somebody chose. It is what separates a correction from a step,
   and it was picked from what a crystal plausibly loses between two answers rather than
   measured on this hardware over a long enough run to be sure. A board whose time source
@@ -1636,7 +1682,6 @@ them are waiting on hardware rather than on a decision.
 | The node with a radio, back | A `pico2_w` on a cable long enough to hold BOOTSEL, `build/pico2_w/sentry_firmware.uf2`, and provisioning again | `pico-ingresso` has been off since the vault moved. Record version 2 made everything it kept unreadable, which is the upgrade path working as written — but it still costs a cable and a minute, and nobody has been at the board. |
 | A queue that fills, on a board | The same node, and the broker taken away while it is on the air | The wired board hands its readings to the bridge and forgets them. `T14`'s full spool, `link_lost`, the coalescing and the clock-step sweep all want a node that keeps its own queue. |
 | A certificate offered *by* the board | The same node, and `forget certificate` followed by one that should be refused | Four certificates have been offered to this broker and answered for, but all of them from a Python client. The rest of `T06` and `T07` is the board's own handshake being refused. |
-| The three-hour rule, watched | A node left alone for three hours with nothing telling it the time | `clock=synced` becoming `unknown` on its own is written, tested on host and never seen. It is a long wait rather than a hard one. |
 | A sensor with wires on it | A PIR, a reed switch, a DS18B20 with a 4.7 kΩ pull-up, an I²S microphone | `T18` and `T19`. Everything on these paths has been exercised by the board driving its own pad or reading an empty bus. |
 | Forty-eight hours of it running | Time, and nothing else | `T40` asks for two days; the longest run here is thirty-five minutes, written up above. |
 | A power cut | A supply that can be pulled mid-write | The watchdog resets the chip without taking the power off it, and a `tear` writes half a record on purpose. Neither is the supply sagging during an erase. |

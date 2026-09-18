@@ -626,7 +626,7 @@ radio, che è la stessa scheda con la radio mai accesa — contro l'hub in eserc
 | T13 | Hardware | Nodo Zero in MQTT 5 e microcontrollore in 3.1.1 sullo stesso broker |
 | T14 | Parziale | Coda e PUBACK perso su host; la disconnessione su hardware. Una coda piena non si ottiene su una scheda cablata: è il bridge a possedere la connessione, e una lettura consegnata al cavo esce subito dalla coda — `queued=0` con il broker spento per quaranta secondi |
 | T15 | Parziale | Le letture trattenute arrivano dopo l'interruzione; la classificazione a journal è dell'hub e provata dai suoi test |
-| T16 | Parziale | Ora non sincronizzata: nessun evento live. Il salto UTC è stato eseguito il 18 settembre 2026 e ha trovato un difetto: un'ora in avanti e poi indietro, marche temporali non monotone, tutte dichiarate `synced`. Ora un passo oltre i due secondi è distinto da una correzione e ciò che è in coda smette di dichiararsi sincronizzato. Resta non vista scattare la regola delle tre ore senza risposte |
+| T16 | Superato | Ora non sincronizzata: nessun evento live. Il salto UTC, eseguito il 18 settembre 2026, ha trovato un difetto — un'ora avanti e poi indietro, marche non monotone, tutte dichiarate `synced` — e ora un passo oltre i due secondi è distinto da una correzione e ciò che è in coda smette di dichiararsi sincronizzato. La metà lenta è stata vista lo stesso giorno: tre ore al minuto senza risposte e la prima lettura `unknown`/`time_uncertain`, nodo ancora online. Anche questa ha trovato un difetto, nel verbo `time` della console, corretto e riprovato. Resta scelta, non misurata, la soglia dei due secondi |
 | T17 | Hardware | Baseline al boot e finestra di assestamento: nessuna falsa transizione |
 | T18 | Parziale | Debounce e polarità provati con la scheda che pilota il proprio pad; nessun PIR e nessun contatto reale |
 | T19 | Parziale | CRC e 85 °C su host, bus vuoto su hardware, nessuna sonda che risponda; I²C non è implementato |
@@ -656,11 +656,12 @@ Le tre righe più pesanti che restano sono `T40` (la durata), `T18`/`T19` (un se
 sui morsetti) e l'interruzione di alimentazione vera, che non è una riga della matrice ma è
 il limite dichiarato in testa al README del firmware.
 
-Il 18 settembre 2026 la matrice è stata ripresa su hardware e ha prodotto due correzioni,
+Il 18 settembre 2026 la matrice è stata ripresa su hardware e ha prodotto tre correzioni,
 che è il motivo per cui una riga non eseguita non si dichiara superata: il salto UTC di
-`T16`, e — fuori matrice — un broker riavviato che lasciava un nodo cablato invisibile
-all'hub mentre continuava a pubblicare. Entrambe sono nel README del firmware con la
-trascrizione di ciò che è stato visto.
+`T16`; le tre ore senza risposte della stessa riga, che hanno scoperto un verbo `time` di
+console incapace di far tornare indietro l'orologio; e — fuori matrice — un broker riavviato
+che lasciava un nodo cablato invisibile all'hub mentre continuava a pubblicare. Tutte e tre
+sono nel README del firmware con la trascrizione di ciò che è stato visto.
 
 ### 12.3 Azioni residue
 
@@ -679,8 +680,14 @@ sotto *What is left to do*; questa è la stessa lista nell'ordine in cui convien
 3. **`T06`/`T07` dalla scheda.** Quattro certificati sono già stati offerti a questo broker e
    rifiutati o accettati di proposito, ma tutti da un client Python. Manca l'handshake della
    scheda stessa rifiutato: `forget certificate` e poi uno che non deve passare.
-4. **`T16`, la metà lenta.** Tre ore senza risposte perché `clock` diventi `unknown` da solo.
-   È un'attesa, non una difficoltà.
+4. ~~**`T16`, la metà lenta.**~~ Fatta il 18 settembre 2026: ultima ora ricevuta alle
+   07:41:27 con `scripts/pico_bridge.py --time-every 0`, e alle 10:41:27 — tre ore al minuto
+   — la prima lettura `unknown`, `historic`, `time_uncertain`, con il nodo ancora online e
+   38.220 secondi di uptime ininterrotto. L'attesa ha trovato un difetto: il verbo `time`
+   della console risincronizzava l'orologio senza registrare che una risposta era arrivata,
+   così la regola lo riportava a `unknown` al giro dopo. Corretto e riprovato sulla scheda.
+   Resta non osservata la deriva fra due risposte su una scheda lasciata in pace un giorno:
+   ogni orologio qui è stato spostato apposta.
 5. **`T18`/`T19`, un sensore vero sui morsetti.** Un PIR, un contatto reed, un DS18B20 con
    la sua resistenza da 4,7 kΩ, un microfono I²S. Finora la scheda ha pilotato il proprio pad
    e letto un bus vuoto.
