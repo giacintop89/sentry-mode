@@ -197,7 +197,13 @@ provisioned, since the cable is the only way in:
     python scripts/pico_bridge.py --config ... --console pico-cablato
 
 Anything typed then goes to the board's console, and everything the board prints is logged
-with its name in front of it. `status` on a wired board reports the cable rather than a
+with its name in front of it. The bridge also tells the board what time it is, once a
+minute, because a board with no radio has nowhere else to ask; `--time-every SECONDS`
+changes that, and `--time-every 0` stops it altogether. Zero is for one thing only —
+watching a node's clock go from `synced` to `unknown` three hours after its time source
+went quiet, which on a board with no radio cannot be arranged any other way — and it says
+so in the log when it starts, so that the clock fault three hours later has a reason
+somebody can find. `status` on a wired board reports the cable rather than a
 radio: whether a host has the port open, whether a bridge has said hello, and how many
 frames were sent, read, thrown away or missed. Those last numbers are zero on a cable that
 is working.

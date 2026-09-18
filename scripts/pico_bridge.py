@@ -50,7 +50,12 @@ log = logging.getLogger("pico-bridge")
 
 TIME_EVERY = 60.0
 """How often the board is told what time it is. It has no clock of its own across a power
-cut and no network to ask, so this is the only thing that makes its readings stamped."""
+cut and no network to ask, so this is the only thing that makes its readings stamped.
+
+Zero means never, which `--time-every 0` asks for: a board that has been told the time once
+and then hears nothing more is how the three-hour rule — the one that stops a node calling
+what it stamps `synced` when its time source has gone — is watched happening, and there is
+no other way to take a time source away from a board that has no radio."""
 
 CONNECT_EVERY = 5.0
 """How often to try the broker again. A broker that is not there is not a reason to stop
@@ -463,7 +468,7 @@ class Carried:
             # until it is asked, so it is asked until it answers.
             self.said_hello_at = now
             self.write(link.Carries.HELLO, b"")
-        if now - self.told_the_time_at > TIME_EVERY:
+        if TIME_EVERY > 0 and now - self.told_the_time_at > TIME_EVERY:
             self.told_the_time_at = now
             unix_ms = int(time.time() * 1000)
             self.write(link.Carries.TIME, json.dumps({"unix_ms": unix_ms}).encode())
@@ -504,6 +509,7 @@ def run(broker: Broker, boards: list[Wired], console: str | None) -> int:
 
 
 def main() -> int:
+    global TIME_EVERY
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path(".local/pico-bridge.json"))
     parser.add_argument(
@@ -511,12 +517,26 @@ def main() -> int:
         metavar="NODE",
         help="send what is typed here to that board's console, for provisioning it",
     )
+    parser.add_argument(
+        "--time-every",
+        type=float,
+        default=TIME_EVERY,
+        metavar="SECONDS",
+        help="how often to tell the boards what time it is; 0 never tells them again",
+    )
     parser.add_argument("--verbose", action="store_true")
     arguments = parser.parse_args()
+    if arguments.time_every < 0:
+        raise SystemExit("--time-every takes seconds, or 0 for never")
+    TIME_EVERY = arguments.time_every
     logging.basicConfig(
         level=logging.DEBUG if arguments.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    if TIME_EVERY == 0:
+        # Said out loud, because a board whose stamps stop being called synced three hours
+        # from now is a thing somebody should be able to find the reason for in this log.
+        log.warning("nothing here will tell the boards what time it is")
     broker, boards = read_configuration(arguments.config)
     return run(broker, boards, arguments.console)
 

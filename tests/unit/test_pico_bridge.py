@@ -158,3 +158,37 @@ def test_a_broker_that_came_back_is_told_again_who_is_here(bridge):
     carried.client = None
     carried.let_go("the cable is gone")
     assert carried.state_payload is None
+
+
+def test_a_bridge_told_never_to_say_the_time_never_says_it(bridge, monkeypatch):
+    # The three-hour rule is a board hearing nothing from its time source, and a board on a
+    # cable has no other source to take away: the bridge is it. So the bridge can be told to
+    # stop, and then the only thing it must not do is tell the time anyway.
+    carried = bridge.Carried(
+        who=bridge.Wired(
+            node_id="pico-cablato",
+            port="/dev/ttyACM0",
+            certificate="node.crt",
+            key="node.key",
+        ),
+        broker=bridge.Broker(host="hub.local"),
+    )
+    written: list[tuple[object, bytes]] = []
+    carried.port = object()  # not None, so the cable counts as open
+    carried.state = {"online": True}  # and announced, so no hello is due either
+    carried.heard_at = 10_000.0
+    monkeypatch.setattr(
+        carried, "write", lambda carries, payload: written.append((carries, payload))
+    )
+    monkeypatch.setattr(carried, "reach_the_broker", lambda now: None)
+
+    monkeypatch.setattr(bridge, "TIME_EVERY", 60.0)
+    carried.keep_it_going(10_000.0)
+    assert [one[0] for one in written] == [bridge.link.Carries.TIME]
+
+    written.clear()
+    monkeypatch.setattr(bridge, "TIME_EVERY", 0.0)
+    carried.told_the_time_at = 0.0
+    carried.heard_at = 20_000.0  # the board is still talking; it is only the time that stops
+    carried.keep_it_going(20_000.0)
+    assert written == []
