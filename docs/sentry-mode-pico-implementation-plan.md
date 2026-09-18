@@ -4,7 +4,7 @@
 **Data:** 17 settembre 2026  
 **Repository:** `giacintop89/sentry-mode`  
 **Baseline verificata:** `b597535d23d077f91cab84b9ad48727d943868c5` su `main`  
-**Stato:** implementato. Il firmware è scritto, costruito per quattro schede e provato su hardware; `PICO-00`…`PICO-09` e `PICO-11` sono chiusi, `PICO-10` (snapshot JPEG) non è stato costruito perché non c'è una camera SPI da collegare, ed è dichiarato `not built` nel manifest. Le trascrizioni di ciò che è stato visto accadere — e l'elenco esplicito di ciò che non lo è stato — sono in [`firmware/pico/README.md`](../firmware/pico/README.md); il manifest di un'immagine lo produce `make pico-release`. Aggiornamento del 17 settembre 2026, a valle della prova live sull'hub di casa.  
+**Stato:** implementato. Il firmware è scritto, costruito per quattro schede e provato su hardware; `PICO-00`…`PICO-09` e `PICO-11` sono chiusi, `PICO-10` (snapshot JPEG) non è stato costruito perché non c'è una camera SPI da collegare, ed è dichiarato `not built` nel manifest. Le trascrizioni di ciò che è stato visto accadere — e l'elenco esplicito di ciò che non lo è stato — sono in [`firmware/pico/README.md`](../firmware/pico/README.md); il manifest di un'immagine lo produce `make pico-release`. Aggiornamento del 18 settembre 2026, a valle della prova live sull'hub di casa; i limiti dichiarati sono in fondo al README del firmware e le cose che restano da fare in [§12.3](#123-azioni-residue).  
 **Continuità:** estensione del sistema satelliti già presente, non porting dell'app Linux sul microcontrollore.
 
 > Primo risultato utile: un Pico W con PIR e contatto porta comunica con l'hub già esistente, riceve un grant, pubblica eventi validi e attiva una regola Sentry. La camera può rimanere sul Pi 5 o su uno Zero W. Audio e immagini non bloccano questo rilascio.
@@ -661,6 +661,39 @@ che è il motivo per cui una riga non eseguita non si dichiara superata: il salt
 `T16`, e — fuori matrice — un broker riavviato che lasciava un nodo cablato invisibile
 all'hub mentre continuava a pubblicare. Entrambe sono nel README del firmware con la
 trascrizione di ciò che è stato visto.
+
+### 12.3 Azioni residue
+
+Ciò che i verdetti qui sopra lasciano aperto, come elenco di cose da fare e non di cose da
+sapere. La versione lunga, con il perché di ognuna, è in [`firmware/pico/README.md`](../firmware/pico/README.md)
+sotto *What is left to do*; questa è la stessa lista nell'ordine in cui conviene affrontarla.
+
+1. **Rimettere in linea `pico-ingresso`.** Una `pico2_w`, `build/pico2_w/sentry_firmware.uf2`
+   via BOOTSEL e un nuovo provisioning: la versione 2 dei record ha reso illeggibile tutto
+   ciò che teneva, che è il percorso di aggiornamento scritto nel piano e costa un cavo e un
+   minuto. Da questa dipendono le tre righe successive.
+2. **`T14`, una coda piena su scheda.** Solo il nodo con radio possiede la propria coda: su
+   una cablata la consegna è il frame sul cavo e `queued` resta a zero. Con il nodo radio in
+   linea, spegnere il broker e guardare riempirsi la spool, il `link_lost`, la coalescenza e
+   la spazzata dopo un salto d'orologio.
+3. **`T06`/`T07` dalla scheda.** Quattro certificati sono già stati offerti a questo broker e
+   rifiutati o accettati di proposito, ma tutti da un client Python. Manca l'handshake della
+   scheda stessa rifiutato: `forget certificate` e poi uno che non deve passare.
+4. **`T16`, la metà lenta.** Tre ore senza risposte perché `clock` diventi `unknown` da solo.
+   È un'attesa, non una difficoltà.
+5. **`T18`/`T19`, un sensore vero sui morsetti.** Un PIR, un contatto reed, un DS18B20 con
+   la sua resistenza da 4,7 kΩ, un microfono I²S. Finora la scheda ha pilotato il proprio pad
+   e letto un bus vuoto.
+6. **`T40`, quarantotto ore.** La corsa più lunga qui è di trentacinque minuti.
+7. **Un'interruzione di alimentazione vera.** Il watchdog resetta il chip senza togliergli
+   corrente e `tear` scrive mezzo record di proposito: nessuno dei due è la tensione che cala
+   durante una cancellazione.
+8. **`T39`, due schede insieme.** Il bridge porta una lista di schede e finora ce n'è sempre
+   stata una.
+9. **`PICO-10`.** Serve un modulo SPI Arducam; finché non c'è resta `not built` nel manifest,
+   e con esso `T32` e `T33`.
+10. **Decisioni, non hardware.** Che cosa fa l'hub di `queued_ms`, che nessuno legge; e un
+    nodo riapprovato mentre è già connesso, che resta offline finché non ridice di esserci.
 
 ## 13. Build, release e regole di consegna
 

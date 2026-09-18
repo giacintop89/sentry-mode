@@ -1493,12 +1493,31 @@ fails here, in a second, rather than at link time on a target with neither.
   produced on the board and read on the hub; `button`, `brownout`, `software` and
   `debugger` are read from bits nothing here has set. An RP2040 cannot tell a brown-out
   from a power-on at all, and says `power` for both.
-- Keeping the time, as opposed to getting it once. There is a rule now: three of lwIP's
-  hourly polls with no answer and the node stops calling what it stamps `synced`, without
-  stopping stamping — the offset is still the best estimate it has, and `unknown` is the
-  honest word for what it is worth. That rule has never been watched happening. A board up
-  for a day, the drift between two answers, and a network that goes away mid-interval are
-  all still unexamined, and `T16`'s UTC jump is **not executed**.
+- Keeping the time, as opposed to getting it once. There is a rule: three hours with no
+  answer from whatever tells this node the time and it stops calling what it stamps
+  `synced`, without stopping stamping — the offset is still the best estimate it has, and
+  `unknown` is the honest word for what it is worth. That rule has never been watched
+  happening, and three hours is longer than any session here has spent waiting for it. The
+  jump itself has now been done, both ways, and is written up above; what is still
+  unexamined is the slow half — a board up for a day, the drift between two answers, and a
+  network that goes away mid-interval.
+- Two seconds is a number somebody chose. It is what separates a correction from a step,
+  and it was picked from what a crystal plausibly loses between two answers rather than
+  measured on this hardware over a long enough run to be sure. A board whose time source
+  answers once an hour and whose crystal is worse than assumed would call an ordinary
+  correction a step, which costs a queue its `synced` and nothing else; the error is in the
+  safe direction, but it is an assumption and not a measurement.
+- What is queued when the clock steps, on a board. The sweep is tested on host and the
+  detection is watched on hardware, but a bridged node's queue is empty almost all the time
+  — see the next point — so the two have never been seen together on a board. That needs
+  the node with a radio, which is the one with a queue of its own.
+- A bridged node does not own its connection, and does not know it has one. The bridge
+  holds the MQTT session; a reading handed to the cable has been delivered as far as the
+  firmware is concerned, so `queued` reads zero however long the broker has been away, and
+  everything the board says about its own queue is about a queue that never fills. The
+  broker going away and coming back is now handled at the bridge — it says the node's last
+  announcement again on every connect — but it is handled *there*, and a board that is told
+  nothing cannot be tested on what it does when told.
 - What the radio build leaves on an RP2040. The same image takes 168,832 bytes of static
   RAM on a Pico W and 168,448 on a Pico 2 W — near enough the same firmware — but the first
   part has 270,336 bytes and the second has 532,480. That is 99 kB for the heap, the TLS
@@ -1519,6 +1538,11 @@ fails here, in a second, rather than at link time on a target with neither.
   resets the chip without taking the power off it. What a half-finished flash write does
   when the supply actually sags — the part is mid-erase and the voltage is falling — is not
   something a `tear` verb can stand in for.
+- Why the last sector goes. It was watched going, twice, and the vault was moved off it and
+  off the two the SDK's flash bank wants — but what erases it during a BOOTSEL copy is not
+  something any document here names. Three sectors is a margin chosen from an observation,
+  not a boundary read out of a datasheet, and a part or a bootrom that wants four would
+  cost a configuration again before anybody noticed.
 - Every driver in the hub's catalogue for this platform is now here: `board`, `gpio`,
   `adc`, `onewire`, `ble` and `microphone`. A configuration naming anything else — a
   BME280, a camera — is refused by name. So is `video.start`, and it will stay refused:
@@ -1578,3 +1602,23 @@ fails here, in a second, rather than at link time on a target with neither.
   looks exactly like a measurement, and `sensors.cpp` only refuses a count the converter
   could not have produced. The readings above are that noise, honestly labelled and
   honestly meaningless.
+
+## What is left to do
+
+Every limit above is a thing that is not known. This is the shorter list: things that are
+known, and that somebody has to go and do. Each one says what it needs, because most of
+them are waiting on hardware rather than on a decision.
+
+| What | What it needs | Why it is not done |
+|---|---|---|
+| The node with a radio, back | A `pico2_w` on a cable long enough to hold BOOTSEL, `build/pico2_w/sentry_firmware.uf2`, and provisioning again | `pico-ingresso` has been off since the vault moved. Record version 2 made everything it kept unreadable, which is the upgrade path working as written — but it still costs a cable and a minute, and nobody has been at the board. |
+| A queue that fills, on a board | The same node, and the broker taken away while it is on the air | The wired board hands its readings to the bridge and forgets them. `T14`'s full spool, `link_lost`, the coalescing and the clock-step sweep all want a node that keeps its own queue. |
+| A certificate offered *by* the board | The same node, and `forget certificate` followed by one that should be refused | Four certificates have been offered to this broker and answered for, but all of them from a Python client. The rest of `T06` and `T07` is the board's own handshake being refused. |
+| The three-hour rule, watched | A node left alone for three hours with nothing telling it the time | `clock=synced` becoming `unknown` on its own is written, tested on host and never seen. It is a long wait rather than a hard one. |
+| A sensor with wires on it | A PIR, a reed switch, a DS18B20 with a 4.7 kΩ pull-up, an I²S microphone | `T18` and `T19`. Everything on these paths has been exercised by the board driving its own pad or reading an empty bus. |
+| Forty-eight hours of it running | Time, and nothing else | `T40` asks for two days; the longest run here is thirty-five minutes, written up above. |
+| A power cut | A supply that can be pulled mid-write | The watchdog resets the chip without taking the power off it, and a `tear` writes half a record on purpose. Neither is the supply sagging during an erase. |
+| Two boards at once | A second board | `T39`. One bridge carries a list of them and the code is written for it; there has only ever been one. |
+| `PICO-10`, the snapshot | An Arducam SPI module | Declared `not built` in the manifest rather than written and untested. `T32` and `T33` go with it. |
+| The hub reading `queued_ms` | A decision about what to do with it | The number is measured, published and recorded. Nothing looks at it, so a node falling behind is noticed by something else or not at all. |
+| A node approved again while connected | A decision, then a change in the hub | Watched on 2026-09-17 and left as it is: a session begins at a retained `state`, so a node revoked and re-approved stays offline until it says hello again. |

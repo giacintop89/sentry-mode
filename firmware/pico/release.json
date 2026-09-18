@@ -39,7 +39,7 @@
     },
     "bridge": {
       "state": "run on hardware",
-      "note": "A board with no radio, carried over USB by scripts/pico_bridge.py. The bridge publishes under the node's own certificate and decides nothing."
+      "note": "A board with no radio, carried over USB by scripts/pico_bridge.py. The bridge publishes under the node's own certificate and decides nothing — but it owns the MQTT session, so the board never learns that the connection was replaced and its own queue never fills."
     },
     "snapshot": {
       "state": "not built",
@@ -49,9 +49,12 @@
   "limitations": [
     "Every board here is experimental in the hub's own catalogue, and shown that way. No board has been through an acceptance matrix.",
     "A power cut, as opposed to a reset. Everything proved so far used the watchdog, which resets the chip without taking the power off it.",
-    "Keeping the time, as opposed to getting it once. A board up for a day and the drift between two answers are unexamined.",
+    "Keeping the time, as opposed to getting it once. A UTC jump has now been done on the board, both ways, and a step is told from a correction at two seconds — a number chosen rather than measured. A board up for a day, the drift between two answers, and the three-hour rule that stops calling a stamp synced are still unwatched.",
     "A certificate listed as revoked is not refused: there is no CRL in this configuration, and revocation is the registry and the access list. Four other bad certificates have been offered to the broker and refused; none of them from the board itself.",
     "Four of the six reset reasons are read from bits nothing here has set, and an RP2040 cannot tell a brown-out from a power-on at all.",
-    "How long a reading waited is measured by the board now; nothing on the hub reads the number it records, so a node falling behind is still noticed by something else or not at all."
+    "How long a reading waited is measured by the board now; nothing on the hub reads the number it records, so a node falling behind is still noticed by something else or not at all.",
+    "A bridged node's spool never fills: the frame on the cable is the delivery, so queued reads zero however long the broker has been away. Everything about a full queue on a board wants the node with a radio, which has been off since the vault moved.",
+    "The vault sits three erase sectors off the end of the part because the last one was watched disappearing during a BOOTSEL copy and the SDK's flash bank wants the other two. Three is a margin taken from an observation, not a boundary read out of a datasheet.",
+    "Record version 2 makes every record an earlier firmware wrote unreadable. That is the upgrade path working as written — a board comes back needing provisioning again — and it is a cable and a minute per board, not something a flash alone recovers from."
   ]
 }
