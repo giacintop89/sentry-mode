@@ -258,9 +258,14 @@ node and the journal until the broker half is done. Do the broker half as well, 
 the connection is really gone — **reloading a broker does not close connections that are
 already open.**
 
-Giving it back is `approve` again, and one thing is worth knowing: a node that is still
-connected stays offline until it says hello again, because a session begins at a `state`
-message. Restarting the node — or the bridge carrying it — is what brings it back.
+Giving it back is `approve` again, and a node that is still connected does not have to be
+restarted for it. A session begins at a `state` message, and the one that node sent was
+refused while it was revoked — so the hub keeps that message, one per node and only for a
+name the registry already knows, and reads it as soon as the node stops being refused.
+Approving through the hub's own API reads it there and then. Approving with
+`satellite_admin.py` does not go through the hub at all — it writes the registry file, and
+the hub finds out when it next reads it — so the held message is read on the first thing
+that node says afterwards, which is its next heartbeat: fifteen seconds at worst.
 
 ## What you will see
 

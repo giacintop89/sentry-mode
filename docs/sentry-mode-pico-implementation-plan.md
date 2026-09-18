@@ -692,11 +692,16 @@ sotto *What is left to do*; questa è la stessa lista nell'ordine in cui convien
    stata una.
 9. **`PICO-10`.** Serve un modulo SPI Arducam; finché non c'è resta `not built` nel manifest,
    e con esso `T32` e `T33`.
-10. **Decisioni, non hardware.** Un nodo riapprovato mentre è già connesso, che resta
-    offline finché non ridice di esserci. `queued_ms` invece è chiuso: l'hub lo legge, lo
+10. **Decisioni, non hardware.** Le due aperte sono chiuse. `queued_ms`: l'hub lo legge, lo
     mostra sotto `queue.waited` del nodo e dice una riga quando un nodo supera i due secondi
-    e una quando rientra — visto il 18 settembre 2026 su tre nodi insieme. Resta da misurare
-    la soglia, che per ora è scelta.
+    e una quando rientra — visto il 18 settembre 2026 su tre nodi insieme. Il nodo
+    riapprovato mentre è già connesso: l'hub tiene lo `state` che ha rifiutato — uno per
+    nodo, e solo per un nome che il registro conosce già — e lo rilegge appena quel nodo
+    smette di essere rifiutato. Approvando dall'API non si aspetta nulla; approvando da
+    `satellite_admin.py`, che scrive il file e non passa dall'hub, si aspetta il prossimo
+    heartbeat: quindici secondi al peggio, undici il 18 settembre 2026 sulla scheda cablata.
+    Resta da misurare la soglia dei due secondi, che per ora è scelta, come i due secondi
+    che distinguono uno scatto d'orologio da una correzione.
 
 ## 13. Build, release e regole di consegna
 

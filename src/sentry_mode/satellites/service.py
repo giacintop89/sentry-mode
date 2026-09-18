@@ -14,7 +14,7 @@ import queue
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable
 
 from sentry_mode.satellites import platforms
@@ -119,6 +119,9 @@ class SatelliteService:
         self._lock = threading.RLock()
         self._reported: dict[str, dict] = {}
         self._configurations: dict[str, dict] = {}
+        # One `state` per node that the registry knows about but has not approved. It is
+        # what a node says when it connects, and it is said once: see `approve`.
+        self._state_that_came_too_early: dict[str, Message] = {}
         # Video: satellite cameras become cameras of this hub, driven by leases.
         self.cameras = cameras
         self.inference = inference
@@ -243,6 +246,8 @@ class SatelliteService:
         this is refused whether or not the socket is still up.
         """
         self.nodes.revoke(node_id, reason=reason)
+        # Whatever it said before it was approved is not a thing to hold on to now.
+        self._state_that_came_too_early.pop(node_id, None)
         self.sessions.revoke(node_id)
         self.sessions.close(node_id, reason="revoked")
         self._end_video(node_id, "the node was revoked")
@@ -256,8 +261,24 @@ class SatelliteService:
             if record.ref.node == node_id:
                 self.sources.set_state(record.ref, SourceState.DISABLED)
 
-    def approve(self, node_id: str, *, certificate: str | None = None):
-        return self.nodes.approve(node_id, certificate=certificate)
+    def approve(self, node_id: str, *, certificate: str | None = None, pinned: str | None = None):
+        record = self.nodes.approve(node_id, certificate=certificate, pinned=pinned)
+        # A node approved while it is already connected has nothing left to say. A session
+        # begins at a `state` message; this node sent one, it arrived while the hub was
+        # still refusing the name, and nothing will send another until the node or its
+        # bridge restarts. So the hub keeps that one and reads it now — which is the
+        # difference between a node coming back when it is approved and a node coming back
+        # a minute and a half later when somebody thought to restart it.
+        #
+        # Approving from the shell does not come through here at all — `satellite_admin.py`
+        # writes the registry file and this process finds out when it next reads it — so the
+        # same held message is read by `handle` too, on the first thing the node says that is
+        # not refused. A heartbeat, in practice, which is fifteen seconds.
+        waiting = self._state_that_came_too_early.pop(node_id, None)
+        if waiting is not None:
+            log.info("%s was approved while connected: reading what it had already said", node_id)
+            self.handle(waiting)
+        return record
 
     # -- messages ----------------------------------------------------------------
 
@@ -273,9 +294,29 @@ class SatelliteService:
             "acks": self._on_ack,
             "events": self._on_events,
         }[message.channel]
-        if not self._authenticated(message.node_id):
+        refusal = self._authenticated(message.node_id)
+        if refusal is not None:
+            if refusal == "not_approved" and message.channel == "state":
+                # Kept, and only this: a name the registry already holds, one message, and
+                # the newest one replaces the one before it. A name nobody has ever heard of
+                # is refused as `unknown_node` and nothing about it is kept, which is what
+                # stops a stranger making the hub remember one message per name it invents.
+                # `qos=0` so that reading it later acknowledges nothing twice: this copy has
+                # been settled already.
+                self._state_that_came_too_early[message.node_id] = replace(message, qos=0)
             self._settle(message)
             return
+        waiting = self._state_that_came_too_early.pop(message.node_id, None)
+        if waiting is not None and message.channel != "state":
+            # This name was refused when it said hello and is not refused now, so somebody
+            # approved it in between — from the shell, most likely, which writes the
+            # registry file and never touches this process. The node is not going to say
+            # hello again: its connection never dropped. So what it already said is read
+            # now, before whatever it has just sent, because that is the message a session
+            # begins at. A `state` arriving here instead means the node did come back on
+            # its own, and the one being held is the older of the two.
+            log.info("%s is approved now: reading the hello it sent before it was", message.node_id)
+            self.handle(waiting)
         if message.channel == "events":
             budget = self._limiter.allow(message.node_id)
             if budget is not None:
@@ -335,8 +376,10 @@ class SatelliteService:
             return None
         return document
 
-    def _authenticated(self, node_id: str) -> bool:
-        """Counted in the total only: a name nobody approved does not get a health entry.
+    def _authenticated(self, node_id: str) -> str | None:
+        """Why this name was refused, or None when it was not.
+
+        Counted in the total only: a name nobody approved does not get a health entry.
 
         The broker's access control is what keeps a stranger off these topics at all, and a
         name that gets past it anyway must not be able to make the hub keep a record per
@@ -346,13 +389,14 @@ class SatelliteService:
             self.nodes.authenticate(node_id=node_id)
         except UnknownNode:
             self.counters.refuse("unknown_node")
+            return "unknown_node"
         except NotApproved:
             self.counters.refuse("not_approved")
+            return "not_approved"
         except WrongCertificate:
             self.counters.refuse("wrong_certificate")
-        else:
-            return True
-        return False
+            return "wrong_certificate"
+        return None
 
     def _on_state(self, message: Message, document: dict) -> None:
         """A node saying what it is. This is where a session begins and ends."""

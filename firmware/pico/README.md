@@ -1333,12 +1333,29 @@ test, and the rest of the revocation was then watched on the board:
     22:30:24  satellite_admin.py approve --node pico-cablato
     22:31:55  pico-cablato is online in epoch 105 with 3 sources
 
-The gap between 22:30:24 and 22:31:55 is the last line of that transcript and is worth
-naming: a node approved again while it is already connected stays offline until it says
-hello again, because a session begins at a `state` message and the retained one was
-delivered when the hub subscribed. Restarting the bridge — or the node — is what produced
-the last line. A node approved for the first time does not have this problem, because it
-connects after it is approved.
+The gap between 22:30:24 and 22:31:55 is the last line of that transcript, and it was the
+part left undone: a node approved again while it is already connected stayed offline until
+it said hello again, because a session begins at a `state` message and this one had been
+refused. Restarting the bridge is what produced that last line. A node approved for the
+first time never had the problem, because it connects after it is approved.
+
+It is done now, and the shape of the fix is where the message is kept. The hub holds the
+refused `state` — one per node, and only for a name the registry already knows, so that a
+stranger that got past the broker cannot make the hub remember one message per name it
+invents — and reads it when that node stops being refused. Approving through the hub reads
+it at once; approving from the shell does not come through the hub at all, since
+`satellite_admin.py` writes the registry file and the hub finds out when it next reads it,
+so the held message is read on the first thing the node says that is not refused. That is a
+heartbeat, and a heartbeat is fifteen seconds. Watched on the wired board on 2026-09-18,
+with nothing touched but the two shell commands:
+
+    07:36:16  satellite_admin.py revoke --node pico-cablato
+    07:36:20  the bridge is restarted: the node announces itself, and is refused
+    07:36:54  satellite_admin.py approve --node pico-cablato
+    07:37:05  pico-cablato is approved now: reading the hello it sent before it was
+    07:37:05  pico-cablato is online in epoch 137 with 3 sources
+
+Eleven seconds, and the eleven are the wait for the next heartbeat.
 
 ### Thirty-five minutes of nothing happening
 
@@ -1529,11 +1546,12 @@ fails here, in a second, rather than at link time on a target with neither.
   kilobytes of nothing, written into flash and copied out of it at boot. Flash is what this
   board has most of, and the alternatives are a section attribute the compiler refuses or a
   union with a constructor that does nothing, so it stays as it is and is written down here.
-- A node approved again while it is already connected. A session begins at a `state`
-  message, and the retained one was delivered when the hub subscribed, so a node that was
-  revoked and then approved again stays offline in a hub that would now accept it — until
-  it says hello again, which a reset or a restarted bridge does. Watched happening on
-  2026-09-17, and left as it is rather than fixed in the same breath as the refusal.
+- A node approved again while it is already connected waits for its next heartbeat. The
+  hub keeps the `state` it refused and reads it as soon as that node stops being refused,
+  which closes the minute and a half this used to cost — but approving from the shell does
+  not reach the hub, so the hub finds out when it next reads the registry file, and what
+  makes it read it is the node's next message. Fifteen seconds in the worst case, eleven in
+  the run written up above. Approving through the hub's own API has no wait at all.
 - A power cut, as opposed to a reset. Everything above was proved with the watchdog, which
   resets the chip without taking the power off it. What a half-finished flash write does
   when the supply actually sags — the part is mid-erase and the voltage is falling — is not
@@ -1622,4 +1640,3 @@ them are waiting on hardware rather than on a decision.
 | Two boards at once | A second board | `T39`. One bridge carries a list of them and the code is written for it; there has only ever been one. |
 | `PICO-10`, the snapshot | An Arducam SPI module | Declared `not built` in the manifest rather than written and untested. `T32` and `T33` go with it. |
 | A threshold that was measured | A house, and nodes in it, over long enough | Two seconds separates a node that is behind from one that is busy, and two seconds is a number somebody chose. The same is true of the two seconds that tell a clock's step from its correction. |
-| A node approved again while connected | A decision, then a change in the hub | Watched on 2026-09-17 and left as it is: a session begins at a retained `state`, so a node revoked and re-approved stays offline until it says hello again. |

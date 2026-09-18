@@ -684,3 +684,48 @@ def test_the_page_shows_each_source_with_its_reading_and_its_trouble(service):
     assert sources["tag"]["supported"] is False
     assert "temp: CRC mismatch" in node["errors"]
     assert overview({"enabled": False, "nodes": []})["nodes"] == []
+
+
+def test_a_node_approved_while_it_is_already_connected_does_not_wait_to_be_restarted(service):
+    # A session begins at a `state`, and this node sent one before anybody approved it. It
+    # will not send another: its cable never moved and its connection is still up. Watched
+    # on the hardware on 2026-09-17, where the node came back only when the bridge was
+    # restarted, a minute and a half after it was approved.
+    service.handle(message("state", hello()))
+    assert service.sessions.current("zero-entrance") is None
+    assert service.counters.reasons["not_approved"] == 1
+
+    # Approved from the shell, which writes the registry file and never touches this
+    # process: the hub finds out when it next reads it, and the next thing the node says is
+    # a heartbeat, not another hello.
+    approve(service)
+    service.handle(message("health", {"schema_version": 1, "node_id": "zero-entrance"}))
+
+    session = service.sessions.current("zero-entrance")
+    assert session is not None and str(session.connection_id) == CONNECTION
+    # And the sources it declared are the hub's, which is the rest of saying hello.
+    assert service.sources.require("zero-entrance.pir-1") is not None
+    # Read once: the second heartbeat is a heartbeat.
+    assert service._state_that_came_too_early == {}
+
+
+def test_a_node_approved_through_the_hub_does_not_even_wait_for_its_next_heartbeat(service):
+    service.handle(message("state", hello()))
+    service.approve("zero-entrance", pinned="a" * 64)
+    session = service.sessions.current("zero-entrance")
+    assert session is not None and str(session.connection_id) == CONNECTION
+
+
+def test_a_name_nobody_registered_leaves_nothing_behind_to_be_approved_later(service):
+    # The guard on the other side of the same door: a stranger that got past the broker
+    # must not be able to make the hub keep one message per name it invents.
+    service.handle(message("state", hello(), node_id="zero-garage"))
+    assert service.counters.reasons["unknown_node"] == 1
+    assert service._state_that_came_too_early == {}
+
+
+def test_what_a_node_said_before_it_was_approved_is_dropped_when_it_is_revoked(service):
+    service.handle(message("state", hello()))
+    assert "zero-entrance" in service._state_that_came_too_early
+    service.revoke("zero-entrance", reason="sold")
+    assert service._state_that_came_too_early == {}
