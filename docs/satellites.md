@@ -368,6 +368,13 @@ To look at the journal, copy it, or trim it:
     python scripts/satellite_admin.py journal --snapshot /var/backups/satellites.sqlite3
     python scripts/satellite_admin.py journal --forget-events-older-than 30
     python scripts/satellite_admin.py journal --forget-receipts-older-than 30
+    python scripts/satellite_admin.py journal --waits
+
+`--waits` is the distribution behind the threshold above: every journalled reading carries
+how long it waited, and this prints where they actually are — the median and the tails, one
+line per band, and the worst each node has had. It is how to check that the two seconds
+still falls between what a working node does and what an outage does, on a network that is
+not this one.
 
 Use `--snapshot` rather than copying the file: the journal runs in write-ahead mode, and
 a plain copy can be missing the newest events. Forgetting events leaves the receipts in

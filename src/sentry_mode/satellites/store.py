@@ -27,6 +27,13 @@ log = logging.getLogger(__name__)
 MIGRATIONS = "migrations"
 """The directory of `.sql` files shipped beside this module, applied in order once each."""
 
+WAIT_BANDS = (10, 50, 100, 250, 500, 1000, 2000, 5000, 10_000, 30_000, 60_000)
+"""Where one band of waiting ends and the next begins, in milliseconds.
+
+Wider as they go up, because what is being asked is which heap a reading belongs to and not
+what its exact millisecond was: a node that is working answers in tens of milliseconds, and
+a node that could not send answers in seconds or minutes."""
+
 STORED = "stored"
 DUPLICATE = "duplicate"
 ID_REUSED = "id_reused"
@@ -413,6 +420,75 @@ class Store:
             "size_bytes": size,
             **counts,
         }
+
+    def waits(self, *, node_id: str | None = None) -> dict:
+        """How long the journalled readings waited, as a distribution rather than a number.
+
+        The hub calls a node behind when one reading waited longer than a threshold, and a
+        threshold is a number somebody chose. Whether it is in a sensible place is a
+        question about where the readings actually are, and this is how to ask it: a
+        working node and a node that could not send are two different heaps, and what
+        matters is that the line falls between them rather than inside either.
+        """
+        where = " WHERE queued_ms IS NOT NULL"
+        parameters: tuple = ()
+        if node_id is not None:
+            where += " AND node_id = ?"
+            parameters = (node_id,)
+        with self._lock:
+            connection = self._require()
+            total = connection.execute(
+                f"SELECT COUNT(*) AS n FROM event_journal{where}", parameters
+            ).fetchone()["n"]
+            bands = []
+            for low, high in zip((0, *WAIT_BANDS), (*WAIT_BANDS, None), strict=True):
+                if high is None:
+                    query = f"SELECT COUNT(*) AS n FROM event_journal{where} AND queued_ms >= ?"
+                    counted = (*parameters, low)
+                else:
+                    query = (
+                        f"SELECT COUNT(*) AS n FROM event_journal{where}"
+                        " AND queued_ms >= ? AND queued_ms < ?"
+                    )
+                    counted = (*parameters, low, high)
+                bands.append(
+                    {
+                        "from_ms": low,
+                        "to_ms": high,
+                        "count": connection.execute(query, counted).fetchone()["n"],
+                    }
+                )
+
+            def at(fraction: float) -> int | None:
+                # Read out of the sorted column rather than into memory: a journal is
+                # allowed to be larger than the machine looking at it.
+                if total == 0:
+                    return None
+                offset = min(total - 1, int(total * fraction))
+                row = connection.execute(
+                    f"SELECT queued_ms FROM event_journal{where}"
+                    " ORDER BY queued_ms LIMIT 1 OFFSET ?",
+                    (*parameters, offset),
+                ).fetchone()
+                return None if row is None else row["queued_ms"]
+
+            spread = {
+                name: at(fraction)
+                for name, fraction in (("p50", 0.5), ("p90", 0.9), ("p99", 0.99), ("p999", 0.999))
+            }
+            # The worst is asked for rather than counted to: readings keep arriving while
+            # this runs, and a row counted by position is not the last row a moment later.
+            spread["max"] = connection.execute(
+                f"SELECT MAX(queued_ms) AS worst FROM event_journal{where}", parameters
+            ).fetchone()["worst"]
+            nodes = {}
+            if node_id is None:
+                for row in connection.execute(
+                    "SELECT node_id, COUNT(*) AS n, MAX(queued_ms) AS worst FROM event_journal"
+                    " WHERE queued_ms IS NOT NULL GROUP BY node_id"
+                ):
+                    nodes[row["node_id"]] = {"count": row["n"], "worst_ms": row["worst"]}
+        return {"count": total, "bands": bands, "spread": spread, "nodes": nodes}
 
     # -- keeping it small --------------------------------------------------------
 

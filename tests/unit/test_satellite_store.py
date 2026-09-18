@@ -164,3 +164,34 @@ def test_the_value_survives_the_round_trip_with_its_type(store):
     store.admit(entry(value=21.5, unit="C", event_id="11111111-2222-4333-8444-555555555555"))
     assert store.recent()[0]["value"] == "21.5"
     assert store.recent(node_id="somebody-else") == []
+
+
+def test_how_long_readings_waited_comes_back_as_two_heaps_and_not_one_number(store):
+    # Five readings a working node produced and two from one that could not send. The
+    # threshold that calls a node behind is a chosen number, so what is asked of the
+    # journal is where the readings are — and the answer has to keep the heaps apart.
+    for index, waited in enumerate((3, 7, 12, 40, 44, 9_000, 120_000)):
+        store.admit(
+            entry(
+                sequence=index + 1,
+                event_id=f"0f6c4a1e-9a5b-4c2d-8e11-5b7c9d0a1f{index:02d}",
+                queued_ms=waited,
+            )
+        )
+    summary = store.waits()
+    assert summary["count"] == 7
+    assert summary["spread"]["max"] == 120_000
+    assert summary["spread"]["p50"] == 40  # the fourth of seven, sorted
+    heaps = {
+        (band["from_ms"], band["to_ms"]): band["count"]
+        for band in summary["bands"]
+        if band["count"]
+    }
+    assert heaps == {(0, 10): 2, (10, 50): 3, (5_000, 10_000): 1, (60_000, None): 1}
+    # Nothing between fifty milliseconds and five seconds, which is the point: a line drawn
+    # at two seconds is drawn through an empty part of this.
+    assert summary["nodes"] == {"zero-entrance": {"count": 7, "worst_ms": 120_000}}
+    # And one node's share of it is the same question asked of one node.
+    assert store.waits(node_id="zero-entrance")["count"] == 7
+    assert store.waits(node_id="nobody")["count"] == 0
+    assert store.waits(node_id="nobody")["spread"]["p50"] is None

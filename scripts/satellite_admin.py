@@ -406,6 +406,8 @@ def journal(arguments) -> int:
                 older_than_seconds=arguments.forget_receipts_older_than * DAY
             )
             print(f"forgot {removed} receipts")
+        elif arguments.waits:
+            _print_waits(store.waits())
         else:
             print(json.dumps(store.status(), indent=2, sort_keys=True))
     except StoreUnavailable as error:
@@ -413,6 +415,33 @@ def journal(arguments) -> int:
     finally:
         store.close()
     return 0
+
+
+def _print_waits(summary: dict) -> None:
+    """How long readings waited, printed so that the two heaps are visible as heaps.
+
+    The number that decides a node is behind is a chosen one. What this shows is where the
+    readings actually are, which is the only thing that says whether the line between them
+    falls in an empty place or in the middle of what a working node does every day.
+    """
+    total = summary["count"]
+    if total == 0:
+        print("no reading in the journal says how long it waited")
+        return
+    spread = summary["spread"]
+    print(f"{total} readings say how long they waited, in milliseconds:")
+    print(
+        "  median {p50}   9 in 10 under {p90}   99 in 100 under {p99}"
+        "   999 in 1000 under {p999}   worst {max}".format(**spread)
+    )
+    for band in summary["bands"]:
+        if not band["count"]:
+            continue
+        edge = "and up" if band["to_ms"] is None else f"to {band['to_ms']}"
+        share = 100.0 * band["count"] / total
+        print(f"  {band['from_ms']:>6} {edge:>9}  {band['count']:>7}  {share:6.2f}%")
+    for name, about in sorted(summary["nodes"].items()):
+        print(f"  {name:<20} {about['count']:>7} readings, worst {about['worst_ms']} ms")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -489,6 +518,11 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--snapshot", type=Path, help="write a consistent copy here")
     action.add_argument("--forget-events-older-than", type=int, metavar="DAYS")
     action.add_argument("--forget-receipts-older-than", type=int, metavar="DAYS")
+    action.add_argument(
+        "--waits",
+        action="store_true",
+        help="show how long readings waited, as a distribution rather than a last value",
+    )
     return parser
 
 

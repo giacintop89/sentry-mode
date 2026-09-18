@@ -1626,7 +1626,9 @@ fails here, in a second, rather than at link time on a target with neither.
   readings wide, and two seconds is in the middle of it, which is the useful thing to know
   about a threshold: it is not sitting on the edge of the ordinary. What this does not say
   is that two seconds is *right* — one house, one network, a day and a half, and one of the
-  four nodes simulated — only that on this network it is nowhere near anything normal.
+  four nodes simulated — only that on this network it is nowhere near anything normal. The
+  numbers came from the journal and can be asked for again, on any hub, with
+  `scripts/satellite_admin.py journal --waits`.
 - What is queued when the clock steps, on a board. The sweep is tested on host and the
   detection is watched on hardware, but a bridged node's queue is empty almost all the time
   — see the next point — so the two have never been seen together on a board. That needs
