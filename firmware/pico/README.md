@@ -987,8 +987,10 @@ seconds. What the hub's journal has, for one source, is the rule to the minute:
 Three hours to the minute, and the node was still online through all of it: heartbeats
 arriving, three sources ready, uptime unbroken at 38,220 seconds. That is the point of the
 rule — a node that has lost its clock is not a node that has gone away, and it is still
-worth listening to; it just stops being something a rule may act on. The board says so on
-its console now, once, rather than letting the hub be the only place the change shows.
+worth listening to; it just stops being something a rule may act on. That first run was
+watched from the hub alone: the board it was on had nothing to say about it. It does now —
+one line on the console when the three hours are up, and not another until something
+answers — which is what the second run, below, was for.
 
 **And the recovery was broken.** Typing `time <unix_ms>` at a board in that state printed
 `# time taken`, and the readings went on being `unknown` anyway:
@@ -1011,6 +1013,37 @@ anything:
 10:45:17  clock synced    10:45:49  clock synced
 10:45:28  clock synced    10:45:59  clock synced
 10:45:39  clock synced    10:46:09  clock synced
+```
+
+That run was then left alone, which made it the second three hours as well as the proof of
+the fix — and this time the board said so itself, once, at exactly three hours from the
+moment it was told:
+
+```
+13:45:07  # nothing has said what time it is for 3 hours: what this node stamps is no longer called synced
+13:45:25  board-temperature  unknown  historic  time_uncertain
+```
+
+**Getting it back takes two things, not one.** The clock is one of them and the source's
+good name is the other. Told the time by hand at 13:45:53, the board went back to `synced`
+within seconds and its readings said `synced` — and the hub went on refusing them:
+
+```
+13:45:55  board-temperature  synced  historic  time_uncertain  eligible=0
+13:46:25  board-temperature  synced  historic  time_uncertain  eligible=0
+```
+
+That is the hub's rule rather than the board's, and it is the right way round: a source
+whose stamps were wrong stays out until it says where it is starting from again, because
+what makes a reading worth acting on is not the clock alone but a series nobody has lost
+track of. The bridge was restarted at 16:31:37, which is a new connection and therefore
+three baselines, and the source came back with the first ordinary reading after them:
+
+```
+16:31:37  board-temperature  synced  initial  initial_state
+16:31:37  pir-1              synced  initial  initial_state
+16:31:37  hall-noise         synced  initial  initial_state
+16:32:07  board-temperature  synced  live     eligible=1
 ```
 
 ### Whether somebody is here

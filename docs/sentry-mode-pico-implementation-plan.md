@@ -685,7 +685,11 @@ sotto *What is left to do*; questa è la stessa lista nell'ordine in cui convien
    — la prima lettura `unknown`, `historic`, `time_uncertain`, con il nodo ancora online e
    38.220 secondi di uptime ininterrotto. L'attesa ha trovato un difetto: il verbo `time`
    della console risincronizzava l'orologio senza registrare che una risposta era arrivata,
-   così la regola lo riportava a `unknown` al giro dopo. Corretto e riprovato sulla scheda.
+   così la regola lo riportava a `unknown` al giro dopo. Corretto, riflashata la scheda e
+   rifatte le tre ore: alle 13:45:07 la scheda lo ha detto da sé sulla console, una volta
+   sola. Il rientro vuole due cose: l'ora, e una nuova baseline — con l'orologio già
+   tornato `synced` le letture restavano `time_uncertain` fino ai tre `initial_state` delle
+   16:31:37, e la prima lettura ordinaria dopo di essi è tornata `live`.
    Resta non osservata la deriva fra due risposte su una scheda lasciata in pace un giorno:
    ogni orologio qui è stato spostato apposta.
 5. **`T18`/`T19`, un sensore vero sui morsetti.** Un PIR, un contatto reed, un DS18B20 con
