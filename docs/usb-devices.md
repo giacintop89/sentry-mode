@@ -47,13 +47,31 @@ v4l2-ctl -d /dev/video0 --set-fmt-video=width=1280,height=720,pixelformat=MJPG \
 | `WARN: Max Exit Latency too large`, `Could not enable U1 link state, xHCI error -22`, then `USB disconnect` | USB 3 link power management the device cannot negotiate. It drops off the bus as soon as it is asked to stream. |
 | `uas_eh_abort_handler`, `uas_eh_device_reset_handler`, `I/O error, dev sda` | A USB-SATA bridge misbehaving under the `uas` driver. Often blamed on the disk; usually the adapter. |
 | A device number that climbs steadily (`new SuperSpeed USB device number 31, 32, 33…`) | Something is re-enumerating in a loop. On a Pi 5 both USB 3 ports share one RP1 controller, so a flapping device disturbs the other port too. |
+| `over-current change #N` on several ports at once, with `can't read configurations, error -71` | The bus is in protection, not the device. Everything on those ports loses power together, so a board that is powered by the cable resets. |
 
 Count the churn rather than eyeballing it:
 
 ```bash
 sudo dmesg | grep -c "usb 4-1: new SuperSpeed"   # one device's re-enumerations
 sudo dmesg | grep -E "usb 4-1:|uvcvideo" | tail
+sudo dmesg | grep -c "over-current change"       # the bus cutting power, not one device
 ```
+
+**Over-current is not the same fault as the ones above**, and on a machine carrying a wired
+satellite it looks like a firmware problem when it is not. A Pico bridged over USB takes its
+power from the cable: when the port trips, the board loses power, comes back, announces
+itself and is given a new `boot_id`, so the hub reports a node that keeps restarting with
+`reset=power`. On 2026-09-19 that was 273 restarts in two and a half hours on this Pi — a
+webcam and a USB disk on the same bus — and it did not stop on its own, while
+`vcgencmd get_throttled` stayed at `0x0`, which is the thing that tells the two apart:
+
+- `get_throttled` other than `0x0` — the Pi's own supply is sagging. Use a better one.
+- `get_throttled` at `0x0` with `over-current change` climbing — the ports are tripping.
+  Move the board to a powered hub, or to a port with less on it.
+
+The board's own counters say the same thing from the other side: `comings.restarts` in
+`/api/satellites` climbing while `reset` stays `power` is a cable losing power, not a
+watchdog and not a crash, which report `watchdog` and their own reasons instead.
 
 ## Quirks
 

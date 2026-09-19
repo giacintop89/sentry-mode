@@ -1679,10 +1679,13 @@ fails here, in a second, rather than at link time on a target with neither.
   not reach the hub, so the hub finds out when it next reads the registry file, and what
   makes it read it is the node's next message. Fifteen seconds in the worst case, eleven in
   the run written up above. Approving through the hub's own API has no wait at all.
-- A power cut, as opposed to a reset. Everything above was proved with the watchdog, which
-  resets the chip without taking the power off it. What a half-finished flash write does
-  when the supply actually sags — the part is mid-erase and the voltage is falling — is not
-  something a `tear` verb can stand in for.
+- A power cut in the middle of a write, as opposed to one at rest. Power cuts themselves
+  are no longer hypothetical: on 2026-09-19 the USB port carrying this board tripped into
+  over-current again and again, and the board lost power and came back 273 times in two and
+  a half hours — and was still at it when this was written — every time with `reset=power`,
+  its provisioning, its credentials and revision 109 intact. That is the vault surviving a supply that goes away — with the flash idle. What a
+  half-finished write does when the voltage falls mid-erase is still not known, and a `tear`
+  verb cannot stand in for it.
 - Why the last sector goes. It was watched going, twice, and the vault was moved off it and
   off the two the SDK's flash bank wants — but what erases it during a BOOTSEL copy is not
   something any document here names. Three sectors is a margin chosen from an observation,

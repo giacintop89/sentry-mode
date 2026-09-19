@@ -64,7 +64,7 @@ manifest, e con esso `T32` e `T33`. `video.start` è rifiutato per nome.
 resetta il chip senza togliergli corrente, e `tear` scrive mezzo record apposta: nessuno dei
 due è la tensione che cala durante una cancellazione.
 
-Le mancanze di corrente del 19 settembre — una al riavvio del Pi e 267 per la porta che va
+Le mancanze di corrente del 19 settembre — una al riavvio del Pi e più di 270 per la porta che va
 in over-current, punto 1.8 — sono state vere: la scheda è tornata ogni volta con `reset
 power`, provisioning e configurazione intatti. Ma erano tutte a flash ferma. Contano come
 prova che il vault regge uno spegnimento qualunque; non come prova di uno a metà
@@ -73,8 +73,8 @@ cancellazione, che è quello che questa riga chiede.
 ### 1.8 La porta USB va in over-current, e la scheda si riavvia da sola
 
 **Comparso dopo il riavvio del Pi del 19 settembre, ed è la cosa più urgente qui.** La
-scheda ha ripreso corrente e poi l'ha persa in continuazione: **267 `boot_id` diversi in due
-ore**, ognuno con `reset=power`, e il bridge che vede la porta smettere di rispondere
+scheda ha ripreso corrente e poi l'ha persa in continuazione: **273 riavvii in due ore e
+mezza, e non si è fermato da solo**, ognuno con `reset=power`, e il bridge che vede la porta smettere di rispondere
 (`device reports readiness to read but returned no data`). Il kernel dice perché:
 
     usb usb3-port2: over-current change #292
@@ -89,7 +89,7 @@ in protezione. Sullo stesso bus ci sono una webcam Logitech e un disco USB.
 **Riuscita:** `comings.restarts` in `/api/satellites` che smette di salire, e nessun
 `over-current change` nuovo in `dmesg`.
 
-**Di buono:** la scheda ha retto 267 mancanze di corrente vere tornando ogni volta con
+**Di buono:** la scheda ha retto più di 270 mancanze di corrente vere tornando ogni volta con
 provisioning, credenziali e revisione 109 intatti. Non è la prova che chiede il punto 1.7 —
 quella vuole la corrente tolta *durante* una scrittura in flash — ma è la stessa cosa a
 flash ferma, 267 volte.

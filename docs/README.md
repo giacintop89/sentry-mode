@@ -33,6 +33,7 @@ and where its limits are.
 - [USB devices](usb-devices.md) — what the link allows, why devices drop out, kernel quirks.
 - [Release checklist](release-checklist.md) — the acceptance criteria, where each is checked, and what is not claimed.
 - [Roadmap](roadmap.md) — what is implemented and what comes next.
+- [Cose pendenti: satelliti Pico](pico-cose-pendenti.md) — cosa manca al sottosistema Pico, con il comando di ognuna e il criterio di riuscita.
 
 ## Plans
 
