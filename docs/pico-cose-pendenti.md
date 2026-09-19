@@ -1,6 +1,6 @@
 # Cose pendenti — sottosistema satelliti Pico
 
-Aggiornato il 18 settembre 2026.
+Aggiornato il 19 settembre 2026.
 
 Questo file è operativo: dice cosa manca, cosa serve per farlo, il comando esatto e come
 si vede che è riuscito. Il perché di ogni riga sta in [`firmware/pico/README.md`](../firmware/pico/README.md)
@@ -64,18 +64,38 @@ manifest, e con esso `T32` e `T33`. `video.start` è rifiutato per nome.
 resetta il chip senza togliergli corrente, e `tear` scrive mezzo record apposta: nessuno dei
 due è la tensione che cala durante una cancellazione.
 
+Il riavvio del Pi del 19 settembre è stato una mancanza di corrente vera — la scheda è
+tornata con `reset power`, provisioning e configurazione intatti — ma a flash ferma. Conta
+come prova che il vault regge uno spegnimento qualunque; non come prova di uno a metà
+cancellazione, che è quello che questa riga chiede.
+
 ## 2. In corso, senza bisogno di nessuno
 
 ### 2.1 `T40`, quarantotto ore
 
-La scheda cablata è su dal flash del 18 settembre alle 10:44, senza reset. Scade il **20
-settembre verso le 10:45**. Un campionatore scrive una riga ogni cinque minuti — uptime,
-clock, coda, temperatura, memoria — e i file stanno nella cartella temporanea di sessione,
-quindi **vanno copiati altrove prima che la sessione finisca** se servono come verbale.
+**Primo tentativo perso.** È partito dal flash del 18 settembre alle 10:44 ed è arrivato a
+circa 25 ore: il 19 settembre alle 12:11 il Pi si è riavviato, e con lui sono andati il
+bridge, il broker (che non parte da solo: `mosquitto` è `disabled`), la corrente sul cavo
+della scheda — che è tornata con `reset power` — e i log, che stavano in `/tmp`.
 
-**Riuscita:** 48 ore di righe senza un `reset` diverso da `power` e senza buchi.
+**Secondo tentativo in corso** dal 19 settembre alle 12:11, e scade il **21 settembre verso
+le 12:15**. Il campionatore scrive una riga ogni cinque minuti in `.local/long-run.log`, e il
+bridge scrive in `.local/bridge.log`: entrambi fuori da `/tmp`, quindi un riavvio non se li
+porta più via.
 
-**Lo rompe:** riflashare la scheda, staccare il cavo, riavviare l'hub.
+**Riuscita:** 48 ore di righe senza un `reset` e senza buchi.
+
+**Lo rompe:** riflashare la scheda, staccare il cavo, riavviare il Pi. Dopo un riavvio del
+Pi, rimettere in piedi a mano, in quest'ordine:
+
+    /usr/sbin/mosquitto -c .local/mosquitto-sentry.conf -d
+    # il bridge, con la FIFO della console tenuta aperta da uno scrittore
+    python scripts/pico_bridge.py --config .local/pico-bridge.json --console pico-cablato
+    curl -s -X POST localhost:8083/api/runtime/start -H 'X-Sentry-Mode-Control: 1'
+    setsid .local/long_run.sh &
+
+L'hub riparte da solo come servizio, ma con il runtime fermo: senza l'ultima `POST` il
+broker risulta `stopped` anche quando è su.
 
 ## 3. Deciso di non fare
 
