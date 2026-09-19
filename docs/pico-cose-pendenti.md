@@ -64,38 +64,55 @@ manifest, e con esso `T32` e `T33`. `video.start` è rifiutato per nome.
 resetta il chip senza togliergli corrente, e `tear` scrive mezzo record apposta: nessuno dei
 due è la tensione che cala durante una cancellazione.
 
-Il riavvio del Pi del 19 settembre è stato una mancanza di corrente vera — la scheda è
-tornata con `reset power`, provisioning e configurazione intatti — ma a flash ferma. Conta
-come prova che il vault regge uno spegnimento qualunque; non come prova di uno a metà
+Le mancanze di corrente del 19 settembre — una al riavvio del Pi e 267 per la porta che va
+in over-current, punto 1.8 — sono state vere: la scheda è tornata ogni volta con `reset
+power`, provisioning e configurazione intatti. Ma erano tutte a flash ferma. Contano come
+prova che il vault regge uno spegnimento qualunque; non come prova di uno a metà
 cancellazione, che è quello che questa riga chiede.
 
-## 2. In corso, senza bisogno di nessuno
+### 1.8 La porta USB va in over-current, e la scheda si riavvia da sola
 
-### 2.1 `T40`, quarantotto ore
+**Comparso dopo il riavvio del Pi del 19 settembre, ed è la cosa più urgente qui.** La
+scheda ha ripreso corrente e poi l'ha persa in continuazione: **267 `boot_id` diversi in due
+ore**, ognuno con `reset=power`, e il bridge che vede la porta smettere di rispondere
+(`device reports readiness to read but returned no data`). Il kernel dice perché:
 
-**Primo tentativo perso.** È partito dal flash del 18 settembre alle 10:44 ed è arrivato a
-circa 25 ore: il 19 settembre alle 12:11 il Pi si è riavviato, e con lui sono andati il
-bridge, il broker (che non parte da solo: `mosquitto` è `disabled`), la corrente sul cavo
-della scheda — che è tornata con `reset power` — e i log, che stavano in `/tmp`.
+    usb usb3-port2: over-current change #292
+    usb 3-2: can't read configurations, error -71
 
-**Secondo tentativo in corso** dal 19 settembre alle 12:11, e scade il **21 settembre verso
-le 12:15**. Il campionatore scrive una riga ogni cinque minuti in `.local/long-run.log`, e il
-bridge scrive in `.local/bridge.log`: entrambi fuori da `/tmp`, quindi un riavvio non se li
-porta più via.
+Non è l'alimentazione del Pi — `vcgencmd get_throttled` risponde `0x0` — è la porta che va
+in protezione. Sullo stesso bus ci sono una webcam Logitech e un disco USB.
 
-**Riuscita:** 48 ore di righe senza un `reset` e senza buchi.
+**Serve:** un hub USB alimentato per la scheda, o un'altra porta e un altro cavo. Finché non
+è risolto, nessuna corsa lunga sta in piedi e ogni misura di durata è falsata.
 
-**Lo rompe:** riflashare la scheda, staccare il cavo, riavviare il Pi. Dopo un riavvio del
-Pi, rimettere in piedi a mano, in quest'ordine:
+**Riuscita:** `comings.restarts` in `/api/satellites` che smette di salire, e nessun
+`over-current change` nuovo in `dmesg`.
 
-    /usr/sbin/mosquitto -c .local/mosquitto-sentry.conf -d
-    # il bridge, con la FIFO della console tenuta aperta da uno scrittore
-    python scripts/pico_bridge.py --config .local/pico-bridge.json --console pico-cablato
-    curl -s -X POST localhost:8083/api/runtime/start -H 'X-Sentry-Mode-Control: 1'
-    setsid .local/long_run.sh &
+**Di buono:** la scheda ha retto 267 mancanze di corrente vere tornando ogni volta con
+provisioning, credenziali e revisione 109 intatti. Non è la prova che chiede il punto 1.7 —
+quella vuole la corrente tolta *durante* una scrittura in flash — ma è la stessa cosa a
+flash ferma, 267 volte.
 
-L'hub riparte da solo come servizio, ma con il runtime fermo: senza l'ultima `POST` il
-broker risulta `stopped` anche quando è su.
+## 2. La corsa lunga
+
+### 2.1 `T40` — chiusa, su 25 ore invece di 48
+
+Chiusa il 19 settembre 2026 per decisione del proprietario: la corsa è durata 25,39 ore e
+si è interrotta per il riavvio del Pi, e si tengono buone quelle. Quello che c'è, per chi
+legge il verdetto:
+
+    boot 645b07cf   18 set 10:45:25 → 19 set 12:08:43   25,39 h
+    3.048 eventi: 2.712 live, 333 historic, 3 baseline
+    un solo boot_id; pausa massima fra due eventi 90 s
+
+Un solo `boot_id` vuol dire che non si è mai resettata; i 333 `historic` sono le tre ore di
+`time_uncertain` fatte apposta. L'evidenza è il giornale, `.local/satellites.sqlite3`,
+perché il log del campionatore stava in `/tmp` e il riavvio l'ha cancellato. Da oggi
+campionatore e bridge scrivono in `.local/long-run.log` e `.local/bridge.log`.
+
+**Se si volesse rifarla davvero** — 48 ore di fila — prima va risolto il punto 1.8, perché
+allo stato la scheda non resta accesa.
 
 ## 3. Deciso di non fare
 
@@ -107,7 +124,13 @@ broker risulta `stopped` anche quando è su.
   nessuna misura dietro, e per averne una serve una scheda lasciata in pace un giorno con la
   deriva fra due risposte annotata.
 
-## 4. Chiuso il 18 settembre 2026 — non rifarlo
+## 4. Chiuso — non rifarlo
+
+Il 19 settembre 2026:
+
+- `T40`, la corsa lunga, su 25 ore invece di 48 e per decisione: vedi 2.1.
+
+Il 18 settembre 2026:
 
 - Un nodo riapprovato mentre è già connesso: l'hub tiene lo `state` rifiutato e lo rilegge.
 - `T16` intero: il salto UTC in entrambi i versi e le tre ore senza risposte, viste al

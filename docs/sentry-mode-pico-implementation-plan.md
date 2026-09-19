@@ -650,11 +650,13 @@ radio, che è la stessa scheda con la radio mai accesa — contro l'hub in eserc
 | T37 | Parziale | Una regola ha scattato in test mode; le azioni reali restano decisione di chi abita la casa |
 | T38 | Hardware | Configurazione oltre le capacità: ack `failed` e messaggio chiaro, mai «applicato» |
 | T39 | Non eseguito | C'è una sola scheda |
-| T40 | Parziale | Trentacinque minuti di esercizio con heap e code stabili, non le 48 ore che questa sezione chiede |
+| T40 | Superato per decisione | 25,39 ore consecutive sulla scheda cablata, 18 settembre 2026 10:45:25 → 19 settembre 12:08:43, un solo `boot_id`, 3.048 eventi di cui 2.712 `live`, pausa massima fra due eventi 90 secondi, memoria e code invariate. Non sono le 48 ore che questa sezione chiede: la corsa si è interrotta per il riavvio del Pi, e il proprietario ha deciso il 19 settembre 2026 di tenere buone le 25 |
 
-Le tre righe più pesanti che restano sono `T40` (la durata), `T18`/`T19` (un sensore vero
-sui morsetti) e l'interruzione di alimentazione vera, che non è una riga della matrice ma è
-il limite dichiarato in testa al README del firmware.
+Le due righe più pesanti che restano sono `T18`/`T19` (un sensore vero sui morsetti) e
+l'interruzione di alimentazione vera, che non è una riga della matrice ma è il limite
+dichiarato in testa al README del firmware. `T40` è chiusa per decisione su 25 ore invece
+di 48, e la durata effettiva è scritta nella riga stessa perché chi legge il verdetto sappia
+che cosa ha in mano.
 
 Il 18 settembre 2026 la matrice è stata ripresa su hardware e ha prodotto tre correzioni,
 che è il motivo per cui una riga non eseguita non si dichiara superata: il salto UTC di
@@ -697,7 +699,8 @@ Con il comando esatto e il criterio di riuscita di ognuna è
 5. **`T18`/`T19`, un sensore vero sui morsetti.** Un PIR, un contatto reed, un DS18B20 con
    la sua resistenza da 4,7 kΩ, un microfono I²S. Finora la scheda ha pilotato il proprio pad
    e letto un bus vuoto.
-6. **`T40`, quarantotto ore.** La corsa più lunga qui è di trentacinque minuti.
+6. ~~**`T40`, quarantotto ore.**~~ Chiusa il 19 settembre 2026 per decisione del
+   proprietario sulle 25,39 ore effettivamente corse, non su 48.
 7. **Un'interruzione di alimentazione vera.** Il watchdog resetta il chip senza togliergli
    corrente e `tear` scrive mezzo record di proposito: nessuno dei due è la tensione che cala
    durante una cancellazione.

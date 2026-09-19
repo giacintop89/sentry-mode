@@ -1453,8 +1453,30 @@ doing every so often:
 Nothing moved that should not have: the heap is the same number half an hour apart, the
 queue is empty because everything was delivered, and of 66,164 blocks of audio the only one
 missed was missed at boot. The lease was renewed five times in that window without the node
-noticing. Thirty-five minutes is not a week, and this is the longest this firmware has been
-watched rather than the longest it has run.
+noticing.
+
+### Twenty-five hours of the same
+
+`T40` asks for forty-eight hours. What there is, is twenty-five: the board was flashed on
+2026-09-18 at 10:44 and ran until the machine carrying its bridge rebooted at 12:11 the next
+day, which cut the power to the cable. The journal is the record of it, because it is the
+one thing that survived — the sampler's own log was in `/tmp`, which that reboot cleared:
+
+```
+boot 645b07cf   2026-09-18 10:45:25 → 2026-09-19 12:08:43   25.39 h
+3,048 events: 2,712 live, 333 historic, 3 baselines
+one boot id throughout; longest gap between two events 90 s
+```
+
+One boot id for the whole of it is the thing worth saying twice: nothing reset, and the 333
+historic events are the three hours of `time_uncertain` written up above, which were done to
+the board on purpose. The 90-second gap is from the same stretch, when the only source still
+reporting was a temperature every thirty seconds. Memory and queue depth did not move.
+
+Twenty-five hours is not forty-eight, and this row was closed anyway: the owner of the
+project decided on 2026-09-19 to accept the run as it stands rather than start the two days
+again. The number is written here so that anybody reading the verdict knows which one they
+have.
 
 ### What goes out with an image
 
@@ -1740,7 +1762,6 @@ them are waiting on hardware rather than on a decision.
 | A queue that fills, on a board | The same node, and the broker taken away while it is on the air | The wired board hands its readings to the bridge and forgets them. `T14`'s full spool, `link_lost`, the coalescing and the clock-step sweep all want a node that keeps its own queue. |
 | A certificate offered *by* the board | The same node, and `forget certificate` followed by one that should be refused | Four certificates have been offered to this broker and answered for, but all of them from a Python client. The rest of `T06` and `T07` is the board's own handshake being refused. |
 | A sensor with wires on it | A PIR, a reed switch, a DS18B20 with a 4.7 kΩ pull-up, an I²S microphone | `T18` and `T19`. Everything on these paths has been exercised by the board driving its own pad or reading an empty bus. |
-| Forty-eight hours of it running | Time, and nothing else | `T40` asks for two days; the longest run here is thirty-five minutes, written up above. |
 | A power cut | A supply that can be pulled mid-write | The watchdog resets the chip without taking the power off it, and a `tear` writes half a record on purpose. Neither is the supply sagging during an erase. |
 | Two boards at once | A second board | `T39`. One bridge carries a list of them and the code is written for it; there has only ever been one. |
 | `PICO-10`, the snapshot | An Arducam SPI module | Declared `not built` in the manifest rather than written and untested. `T32` and `T33` go with it. |
