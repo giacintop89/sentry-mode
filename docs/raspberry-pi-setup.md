@@ -59,7 +59,10 @@ command; `sentry-mode-web` hosts the dashboard, serving the phone microphone vie
 local certificate in `.local/tls`. It binds plain HTTP 8083 to 127.0.0.1 and exposes only
 HTTPS 8443 to the network, so nothing reaches the controls in clear text and a browser on
 the node itself still uses `http://127.0.0.1:8083`. Drop `--https-host` from the unit's
-`ExecStart` to serve both listeners on every interface. Most setups need only
+`ExecStart` to serve both listeners on every interface. That binding is the usual reason a
+phone reports the dashboard as unreachable; [the web dashboard
+page](web-dashboard.md#when-it-cannot-be-reached) lists what to ask the node, in order.
+Most setups need only
 `sentry-mode-web`; enabling both means the idle unit also probes the camera and audio
 devices once at start. Create the certificate before installing:
 

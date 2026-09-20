@@ -21,7 +21,9 @@ frame the app, and framing grants the parent no access to control APIs.
 ignored `.local/tls/`. Only the public CA is served, at `/local-ca.crt`; private keys never
 leave the node. Trusting the CA is a manual, one-time step on each phone — the helper
 changes no device's trust settings. A certificate a phone already trusts can be supplied
-through the TLS options without `--tls-ca`.
+through the TLS options without `--tls-ca`. Until the CA is trusted the browser objects,
+and some apps turn that objection into "cannot connect" — a trust problem wearing a
+network problem's clothes ([web dashboard](web-dashboard.md#when-it-cannot-be-reached)).
 
 ## Secrets
 

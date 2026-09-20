@@ -48,6 +48,7 @@ v4l2-ctl -d /dev/video0 --set-fmt-video=width=1280,height=720,pixelformat=MJPG \
 | `uas_eh_abort_handler`, `uas_eh_device_reset_handler`, `I/O error, dev sda` | A USB-SATA bridge misbehaving under the `uas` driver. Often blamed on the disk; usually the adapter. |
 | A device number that climbs steadily (`new SuperSpeed USB device number 31, 32, 33…`) | Something is re-enumerating in a loop. On a Pi 5 both USB 3 ports share one RP1 controller, so a flapping device disturbs the other port too. |
 | `over-current change #N` on several ports at once, with `can't read configurations, error -71` | The bus is in protection, not the device. Everything on those ports loses power together, so a board that is powered by the cable resets. |
+| `camera_available: false` in `/api/status` while the dashboard loads normally | The camera is off the bus, or was re-enumerated after the node last looked. Nothing to do with the network the dashboard is reached over. |
 
 Count the churn rather than eyeballing it:
 

@@ -66,5 +66,46 @@ it, and it disarms itself after a few seconds. Phone microphone use inside a fra
 additionally requires a secure parent and delegated microphone permission; the standalone
 HTTPS Voice view remains available.
 
+## When it cannot be reached
+
+The command the Pi guide installs binds plain HTTP to loopback and only HTTPS to the
+network, so `http://<node>:8083` from a phone is refused by design: from anywhere but the
+node itself the dashboard lives at `https://<node>:8443`.
+
+Ask the node first, in this order:
+
+```bash
+pgrep -af "sentry-mode serve"                  # a server, and the flags it was given
+sudo ss -tlnp | grep -E ":8083|:8443"          # expect 127.0.0.1:8083 and 0.0.0.0:8443
+curl -sk -o /dev/null -w '%{http_code}\n' "https://$(hostname -I | awk '{print $1}'):8443/"
+openssl x509 -in .local/tls/server.crt -noout -dates -ext subjectAltName
+sudo nft list ruleset; sudo iptables -S        # usually nothing on a Pi
+```
+
+A `200` from the third command means the server answers on the address the network uses,
+and what is wrong lies between the client and the node rather than inside it.
+
+| What you see | What it is |
+|---|---|
+| Refused or hanging on port 8083 from another device | `--host 127.0.0.1`. That port exists only on the node; the network uses 8443. |
+| An empty reply or a reset connection on 8443 | An `http://` address against the TLS listener, which speaks only HTTPS. |
+| A certificate warning — or an app that calls the node unreachable without showing one | The certificate is signed by the node's own CA. Trust it once per device; some apps report an untrusted certificate as a failure to connect rather than as a warning. |
+| `unable to verify the first certificate` from `openssl s_client`, with nothing else wrong | Expected on a device that has not been given the CA. The node serves only the public half, at `/local-ca.crt`. |
+| The browser refuses the name you typed although the same node answers its IP | The certificate lists the addresses it was issued for. Reissue it naming the one you use: `python3 scripts/setup_phone_https.py 192.168.11.240 pi5 pi5.local`. |
+| Nothing answers, and other services on the same machine are silent too | The client is not on the node's network. |
+
+Answering and doing its work are different questions, and the node reports the second one
+itself:
+
+```bash
+curl -sk https://<node>:8443/api/runtime      # {"running": true, "error": null}
+curl -sk https://<node>:8443/api/status       # which devices the node found
+curl -sk https://<node>:8443/api/satellites   # "broker": "connected" once satellites are on
+```
+
+A page that loads while `/api/status` reports `camera_available: false` is a device
+problem, not a network one — a camera knocked off a bus in protection looks exactly like
+this ([USB devices](usb-devices.md)).
+
 See also: [hardware and devices](hardware-and-devices.md), [HTTP API](http-api.md),
 [security model](security.md).

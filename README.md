@@ -117,6 +117,11 @@ sentry-mode serve --host 127.0.0.1 --port 8083 --https-host 0.0.0.0 --https-port
   --tls-cert .local/tls/server.crt --tls-key .local/tls/server.key --tls-ca .local/tls/ca.crt
 ```
 
+With that split, `http://<node>:8083` answers only on the node itself and the network uses
+`https://<node>:8443`; when a phone cannot reach the dashboard, the checks that tell a
+binding, a scheme, a certificate and a network apart are in
+[the web dashboard page](docs/web-dashboard.md#when-it-cannot-be-reached).
+
 Both commands are also packaged as systemd units. `scripts/install_service.sh` renders
 `sentry-mode` (idle `run`) and `sentry-mode-web` (the dashboard on loopback HTTP 8083 and
 HTTPS 8443 for the network) against your checkout and account, enabling neither; see the
